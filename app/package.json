@@ -1,0 +1,35 @@
+{
+  "name": "hanehana",
+  "version": "0.1.0",
+  "description": "羽花 HaneHana — galgame 管理器：封面墙游戏库 + 多源元数据刮削 + Rust 下载引擎",
+  "main": "./out/main/index.js",
+  "author": "HaneHana",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "start": "electron-vite preview",
+    "build": "electron-vite build",
+    "dist": "electron-vite build && electron-builder --publish never",
+    "dist:dir": "electron-vite build && electron-builder --dir",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && vue-tsc --noEmit -p tsconfig.node.json"
+  },
+  "devDependencies": {
+    "@ant-design/icons-vue": "^7.0.1",
+    "@vitejs/plugin-vue": "^5.2.1",
+    "@vue/tsconfig": "^0.7.0",
+    "ant-design-vue": "^4.2.6",
+    "dayjs": "^1.11.13",
+    "electron": "44.1.0",
+    "electron-builder": "^25.1.8",
+    "electron-vite": "^2.3.0",
+    "typescript": "~5.6.3",
+    "vite": "^5.4.11",
+    "vue": "^3.5.13",
+    "vue-tsc": "^2.1.10"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
+  }
+}
