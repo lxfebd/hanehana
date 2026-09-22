@@ -23,6 +23,12 @@ body,
   text-rendering: optimizeLegibility;
 }
 
+/* antd AntApp 的包裹层是 #app 唯一子元素，必须固定高度，
+   否则滚动内容会把它撑破、flex 高度链在顶层断裂。 */
+.ant-app {
+  height: 100%;
+}
+
 * {
   box-sizing: border-box;
 }

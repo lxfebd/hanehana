@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 封面墙 —— 封面为主角（重构版）。
+ * 封面墙 —— 封面为主角（重构版）+ RecycleScroller 窗口化。
  *
  * 视觉要点：
  *   - 每张封面都有自己的一抹颜色：占位背景优先用刮削时提取的 g.color，
@@ -8,9 +8,19 @@
  *   - hover 抬起 + 封面微缩放（transform 走 GPU，不碰布局），
  *     选中态用主色描边 + 外发光。
  *   - 标题叠在封面底部渐晕上，白字带阴影，比放图下方干净。
- *   - 性能铁律不变：卡片内无 backdrop-filter。
+ *   - 性能铁律：卡片内无 backdrop-filter；DOM 窗口化靠 RecycleScroller。
+ *
+ * 虚拟化度量（§3.5 固定）：
+ *   - 网格：itemSize 324 = 封面 276 + 上间距 8 + 标题区 32 + 行距 8；
+ *     itemSecondarySize 200 = 卡槽 184 + 间距 16；cols = floor((w+16)/200)。
+ *   - 列表：itemSize 72 单列。
+ *   - 居中留白：layer wrapper 宽度 = cols*200 - 16，margin auto 居中。
+ *     item-view 是绝对定位 transform，居中必须收窄「定位坐标系」本身，
+ *     不能靠 item 内 padding。
  */
-import { computed } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RecycleScroller } from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Flower2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { library, selectGame } from '../stores/library'
@@ -23,6 +33,33 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [id: string] }>()
 const games = computed(() => props.games)
 const selected = computed(() => library.selectedId)
+
+const containerRef = ref<HTMLElement | null>(null)
+const cols = ref(1)
+let ro: ResizeObserver | null = null
+
+/** 网格列数：容器宽 + 16（补回最右间距）÷ 200 卡槽 */
+function updateCols(): void {
+  const el = containerRef.value
+  if (!el) return
+  cols.value = Math.max(1, Math.floor((el.clientWidth + 16) / 200))
+}
+
+onMounted(() => {
+  updateCols()
+  if (containerRef.value && 'ResizeObserver' in window) {
+    ro = new ResizeObserver(updateCols)
+    ro.observe(containerRef.value)
+  }
+})
+
+onBeforeUnmount(() => {
+  ro?.disconnect()
+  ro = null
+})
+
+/** 网格 wrapper 宽度 = cols*200 - 16，居中留白 */
+const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
 
 function coverSrc(g: Game): string {
   if (g.coverPath) return `file://${g.coverPath.replace(/\\/g, '/')}`
@@ -52,7 +89,7 @@ function click(g: Game): void {
 </script>
 
 <template>
-  <div class="cover-wall" :class="view">
+  <div ref="containerRef" class="cover-wall" :class="view">
     <!-- 空态 -->
     <div v-if="games.length === 0" class="empty glass">
       <Flower2 class="empty-icon" :size="40" :stroke-width="1.5" />
@@ -60,93 +97,99 @@ function click(g: Game): void {
       <div class="empty-hint">点左侧「扫描导入」选择游戏目录，自动识别 exe 入库</div>
     </div>
 
-    <!-- 网格视图 -->
-    <div v-else-if="view === 'grid'" class="grid">
-      <div
-        v-for="g in games"
-        :key="g.id"
-        class="cover-card"
-        :class="{ selected: selected === g.id }"
-        @click="click(g)"
-      >
-        <div class="cover-thumb" :style="{ background: placeholderBg(g) }">
-          <img v-if="coverSrc(g)" :src="coverSrc(g)" loading="lazy" :alt="g.title" />
-          <span v-else class="cover-letter">{{ g.title.slice(0, 1) }}</span>
+    <!-- 网格视图：窗口化 + 居中留白 -->
+    <RecycleScroller
+      v-else-if="view === 'grid'"
+      class="scroller"
+      :items="games"
+      :item-size="324"
+      :grid-items="cols"
+      :item-secondary-size="200"
+      key-field="id"
+      :page-mode="false"
+      :buffer="400"
+      item-class="grid-item-view"
+      list-class="grid-layer"
+    >
+      <template #default="{ item }">
+        <div class="cover-card" :class="{ selected: selected === item.id }" @click="click(item)">
+          <div class="cover-thumb" :style="{ background: placeholderBg(item) }">
+            <img v-if="coverSrc(item)" :src="coverSrc(item)" loading="lazy" :alt="item.title" />
+            <span v-else class="cover-letter">{{ item.title.slice(0, 1) }}</span>
 
-          <div v-if="library.runningIds.has(g.id)" class="cover-running">
-            <Activity :size="10" :stroke-width="2.5" /> 运行中
-          </div>
-          <div v-if="g.rating" class="cover-rating">
-            <Star class="num" :size="10" :fill="'#ffd666'" :stroke-width="0" /> {{ g.rating.toFixed(1) }}
-          </div>
+            <div v-if="library.runningIds.has(item.id)" class="cover-running">
+              <Activity :size="10" :stroke-width="2.5" /> 运行中
+            </div>
+            <div v-if="item.rating" class="cover-rating">
+              <Star class="num" :size="10" :fill="'#ffd666'" :stroke-width="0" /> {{ item.rating.toFixed(1) }}
+            </div>
 
-          <div class="cover-shade"></div>
-          <div class="cover-bottom">
-            <div class="cover-title" :title="g.title">{{ g.title }}</div>
-            <div class="cover-sub" v-if="fmtPlay(g.playMs)">{{ fmtPlay(g.playMs) }}</div>
+            <div class="cover-shade"></div>
+            <div class="cover-bottom">
+              <div class="cover-title" :title="item.title">{{ item.title }}</div>
+              <div class="cover-sub" v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </template>
+    </RecycleScroller>
 
-    <!-- 列表视图 -->
-    <div v-else class="list">
-      <div
-        v-for="g in games"
-        :key="g.id"
-        class="list-row"
-        :class="{ selected: selected === g.id }"
-        @click="click(g)"
-      >
-        <div class="list-thumb" :style="{ background: placeholderBg(g) }">
-          <img v-if="coverSrc(g)" :src="coverSrc(g)" loading="lazy" :alt="g.title" />
-          <span v-else class="list-letter">{{ g.title.slice(0, 1) }}</span>
-          <div v-if="library.runningIds.has(g.id)" class="list-running">
-            <Activity :size="10" :stroke-width="2.5" />
+    <!-- 列表视图：单列窗口化 -->
+    <RecycleScroller
+      v-else
+      class="scroller"
+      :items="games"
+      :item-size="72"
+      key-field="id"
+      :page-mode="false"
+      :buffer="400"
+      item-class="list-item-view"
+    >
+      <template #default="{ item }">
+        <div class="list-row" :class="{ selected: selected === item.id }" @click="click(item)">
+          <div class="list-thumb" :style="{ background: placeholderBg(item) }">
+            <img v-if="coverSrc(item)" :src="coverSrc(item)" loading="lazy" :alt="item.title" />
+            <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
+            <div v-if="library.runningIds.has(item.id)" class="list-running">
+              <Activity :size="10" :stroke-width="2.5" />
+            </div>
+          </div>
+          <div class="list-body">
+            <div class="list-title" :title="item.title">{{ item.title }}</div>
+            <div class="list-meta">
+              <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
+              <span v-if="item.rating"><Star class="num" :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span>
+              <span v-if="fmtPlay(item.playMs)">已玩 {{ fmtPlay(item.playMs) }}</span>
+            </div>
           </div>
         </div>
-        <div class="list-body">
-          <div class="list-title" :title="g.title">{{ g.title }}</div>
-          <div class="list-meta">
-            <span v-if="g.releaseDate">{{ g.releaseDate }}</span>
-            <span v-if="g.rating"><Star class="num" :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ g.rating.toFixed(1) }}</span>
-            <span v-if="fmtPlay(g.playMs)">已玩 {{ fmtPlay(g.playMs) }}</span>
-          </div>
-        </div>
-      </div>
-    </div>
+      </template>
+    </RecycleScroller>
   </div>
 </template>
 
 <style scoped>
 .cover-wall {
   flex: 1;
-  overflow-y: auto;
+  overflow: hidden;
   min-height: 0;
-  padding: 2px 2px 24px;
+  position: relative;
 }
 
-/* 空态 */
-.empty {
-  position: relative;
-  margin: 60px auto;
-  max-width: 380px;
-  padding: 40px 30px;
-  text-align: center;
-  border-radius: 20px;
+/* RecycleScroller 自己滚：撑满容器 */
+.scroller {
+  height: 100%;
 }
-.empty-icon {
-  color: rgba(255, 255, 255, 0.48);
-  margin-bottom: 12px;
-}
-.empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-.empty-hint { font-size: 13px; color: rgba(255, 255, 255, 0.5); }
 
 /* ============ 网格 ============ */
-.grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 18px 14px;
+/* item-view 是绝对定位（transform），网格行内每项水平偏移由 ESM 计算。
+   居中：把「定位坐标系」（item-wrapper）收窄到实际内容宽再 margin auto。 */
+.grid-layer :deep(.vue-recycle-scroller__item-wrapper) {
+  width: v-bind(gridWrapperW);
+  margin: 0 auto;
+}
+.grid-item-view {
+  display: inline-block;
 }
 .cover-card {
   cursor: pointer;
@@ -228,11 +271,13 @@ function click(g: Game): void {
 /* ============ 列表 ============ */
 .list-row {
   display: flex; align-items: center; gap: 14px;
-  padding: 8px 10px;
+  height: 68px;
+  padding: 0 10px;
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s ease;
-  margin-bottom: 2px;
+  margin: 2px 0;
+  box-sizing: border-box;
 }
 .list-row:hover { background: rgba(255, 255, 255, 0.06); }
 .list-row.selected { background: rgba(77, 163, 255, 0.14); }
