@@ -15,13 +15,14 @@ import {
 } from 'lucide-vue-next'
 import type { TaskRow } from '../../shared/types'
 import { matchesFilter, matchesQuery, rowName, rowState, sortRows, SORT_OPTIONS } from '../status'
-import { reportRejection, state, taskAction, removeTask } from '../store'
+import { downloads, removeTask, reportRejection, taskAction } from '../stores/downloads'
+import { library } from '../stores/library'
 import { fmtSpeed } from '../../shared/format'
 import TaskRowView from './TaskRow.vue'
 
 const counts = computed(() => {
-  const c = { all: state.rows.length, downloading: 0, paused: 0, done: 0, error: 0 }
-  for (const r of state.rows) {
+  const c = { all: downloads.rows.length, downloading: 0, paused: 0, done: 0, error: 0 }
+  for (const r of downloads.rows) {
     const st = rowState(r)
     if (st === 'downloading' || st === 'preparing') c.downloading++
     else if (st === 'paused') c.paused++
@@ -33,8 +34,8 @@ const counts = computed(() => {
 
 const visibleRows = computed(() =>
   sortRows(
-    state.rows.filter((r) => matchesFilter(rowState(r) || undefined, state.taskFilter) && matchesQuery(r, state.taskQuery)),
-    state.taskSort,
+    downloads.rows.filter((r) => matchesFilter(rowState(r) || undefined, downloads.taskFilter) && matchesQuery(r, downloads.taskQuery)),
+    downloads.taskSort,
   ),
 )
 
@@ -100,30 +101,30 @@ function onAll(action: string): void {
         v-for="f in FILTERS"
         :key="f.key"
         class="dl-filter"
-        :class="{ active: state.taskFilter === f.key }"
-        @click="state.taskFilter = f.key"
+        :class="{ active: downloads.taskFilter === f.key }"
+        @click="downloads.taskFilter = f.key"
       >
         <span>{{ f.label }}</span>
         <span class="cnt">{{ counts[f.key as keyof typeof counts] }}</span>
       </div>
       <div class="dl-spacer"></div>
-      <div class="dl-total" v-if="state.totalSpeed > 0">{{ fmtSpeed(state.totalSpeed) }}</div>
+      <div class="dl-total" v-if="downloads.totalSpeed > 0">{{ fmtSpeed(downloads.totalSpeed) }}</div>
     </aside>
 
     <main class="dl-main">
       <div class="dl-toolbar">
         <input
-          v-model="state.taskQuery"
+          v-model="downloads.taskQuery"
           class="search-input"
           placeholder="搜索文件名 / 链接…"
         />
         <Select
-          v-model:value="state.taskSort"
+          v-model:value="downloads.taskSort"
           :options="SORT_OPTIONS"
           size="small"
           style="width: 130px"
         />
-        <button class="glass-btn" title="新建下载" @click="state.addDialogOpen = true">
+        <button class="glass-btn" title="新建下载" @click="downloads.addDialogOpen = true">
           <Plus :size="16" />
         </button>
         <button class="glass-btn" title="全部开始" @click="onAll('start')">
@@ -148,12 +149,12 @@ function onAll(action: string): void {
           :key="r.id"
           :def="r.def"
           :snap="r.snap"
-          :selected="state.selectedId === r.id"
-          @select="state.selectedId = r.id"
+          :selected="library.selectedId === r.id"
+          @select="library.selectedId = r.id"
           @action="onAction(r, $event)"
         />
         <div v-if="visibleRows.length === 0" class="dl-empty">
-          {{ state.rows.length === 0 ? '还没有下载任务。点右上角「＋」新建，或从游戏站捕获直链。' : '没有符合条件的任务。' }}
+          {{ downloads.rows.length === 0 ? '还没有下载任务。点右上角「＋」新建，或从游戏站捕获直链。' : '没有符合条件的任务。' }}
         </div>
       </div>
     </main>

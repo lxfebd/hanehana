@@ -13,7 +13,7 @@
 import { computed } from 'vue'
 import { Activity, Flower2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
-import { selectGame, state } from '../store'
+import { library, selectGame } from '../stores/library'
 
 const props = defineProps<{
   games: Game[]
@@ -22,7 +22,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{ select: [id: string] }>()
 const games = computed(() => props.games)
-const selected = computed(() => state.selectedId)
+const selected = computed(() => library.selectedId)
 
 function coverSrc(g: Game): string {
   if (g.coverPath) return `file://${g.coverPath.replace(/\\/g, '/')}`
@@ -73,7 +73,7 @@ function click(g: Game): void {
           <img v-if="coverSrc(g)" :src="coverSrc(g)" loading="lazy" :alt="g.title" />
           <span v-else class="cover-letter">{{ g.title.slice(0, 1) }}</span>
 
-          <div v-if="state.runningIds.has(g.id)" class="cover-running">
+          <div v-if="library.runningIds.has(g.id)" class="cover-running">
             <Activity :size="10" :stroke-width="2.5" /> 运行中
           </div>
           <div v-if="g.rating" class="cover-rating">
@@ -101,7 +101,7 @@ function click(g: Game): void {
         <div class="list-thumb" :style="{ background: placeholderBg(g) }">
           <img v-if="coverSrc(g)" :src="coverSrc(g)" loading="lazy" :alt="g.title" />
           <span v-else class="list-letter">{{ g.title.slice(0, 1) }}</span>
-          <div v-if="state.runningIds.has(g.id)" class="list-running">
+          <div v-if="library.runningIds.has(g.id)" class="list-running">
             <Activity :size="10" :stroke-width="2.5" />
           </div>
         </div>

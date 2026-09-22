@@ -9,7 +9,7 @@
  */
 import { computed } from 'vue'
 import { Activity, Flower2, FolderOpen, Play, Star, Wand2 } from 'lucide-vue-next'
-import { state, launchGame, openScrape, refreshGames, selectedGame } from '../store'
+import { launchGame, library, openScrape, refreshGames, selectedGame } from '../stores/library'
 
 const g = computed(() => selectedGame.value)
 
@@ -89,7 +89,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
       <!-- 动作栏 -->
       <div class="actions">
         <button class="primary-btn" @click="launchGame(g.id)">
-          <span v-if="state.runningIds.has(g.id)"><Activity :size="16" /> 已在运行</span>
+          <span v-if="library.runningIds.has(g.id)"><Activity :size="16" /> 已在运行</span>
           <span v-else><Play :size="16" :fill="'currentColor'" /> 启动游戏</span>
         </button>
         <button class="ghost-btn" @click="openScrape(g.id, g.rawTitle || g.title)"><Wand2 :size="14" /> 刮削</button>

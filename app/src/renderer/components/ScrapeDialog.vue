@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { Modal, Spin } from 'ant-design-vue'
 import { Star } from 'lucide-vue-next'
-import { state, runSearch, applyScrapeResult } from '../store'
+import { applyScrapeResult, library, runSearch } from '../stores/library'
 
 const open = defineModel<boolean>('open')
 
@@ -11,7 +11,7 @@ const searching = ref(false)
 
 watch(open, (v) => {
   if (v) {
-    query.value = state.scrapeQuery
+    query.value = library.scrapeQuery
     searching.value = true
     runSearch(query.value).finally(() => (searching.value = false))
   }
@@ -42,13 +42,13 @@ async function apply(r: { provider: string; id: string; title: string }): Promis
         <Spin /> <span class="spin-text">搜索中…</span>
       </div>
 
-      <div v-if="state.scrapeWarnings.length" class="warnings">
-        <div v-for="(w, i) in state.scrapeWarnings" :key="i" class="warning">{{ w }}</div>
+      <div v-if="library.scrapeWarnings.length" class="warnings">
+        <div v-for="(w, i) in library.scrapeWarnings" :key="i" class="warning">{{ w }}</div>
       </div>
 
-      <div v-if="state.scrapeResults.length" class="results">
+      <div v-if="library.scrapeResults.length" class="results">
         <div
-          v-for="r in state.scrapeResults"
+          v-for="r in library.scrapeResults"
           :key="r.provider + r.id"
           class="result-card"
           @click="apply(r)"

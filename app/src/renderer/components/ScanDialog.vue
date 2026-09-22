@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import { Modal } from 'ant-design-vue'
-import { refreshGames } from '../store'
+import { refreshGames } from '../stores/library'
 
 const open = defineModel<boolean>('open')
 const dir = ref('')

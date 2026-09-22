@@ -1,19 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref, computed } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Settings, X } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
-import {
-  refreshGames,
-  state,
-  filteredGames,
-  initTasks,
-  addTask,
-  openSettings,
-  report,
-  reportRejection,
-} from './store'
+import { filteredGames, library, refreshGames } from './stores/library'
+import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
+import { ui } from './stores/ui'
 import type { Game } from '../shared/types'
 import CoverGrid from './components/CoverGrid.vue'
 import DetailPanel from './components/DetailPanel.vue'
@@ -24,25 +17,30 @@ import NewDownloadDialog from './components/NewDownloadDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 
 const bootInfo = ref('')
+let unsubPushes: Array<() => void> = []
 
 const filteredCount = computed(() => filteredGames.value.length)
+
 /** 当前页：library | downloads */
-const page = ref<'library' | 'downloads'>('library')
+const page = computed({
+  get: () => ui.page,
+  set: (v: 'library' | 'downloads') => (ui.page = v),
+})
 const addSubmitKey = ref(0)
 
 const allCategories = computed(() => {
   const set = new Set<string>()
-  for (const g of state.games) for (const c of g.categories) set.add(c)
+  for (const g of library.games) for (const c of g.categories) set.add(c)
   return [...set]
 })
 
 function catCount(c: string): number {
-  return state.games.filter((g: Game) => g.categories.includes(c)).length
+  return library.games.filter((g: Game) => g.categories.includes(c)).length
 }
 
 async function submitAddTask(input: { url: string; dest: string; threads: number; note: string; checksum: string }): Promise<void> {
   const ok = await addTask(input)
-  if (ok) state.addDialogOpen = false
+  if (ok) downloads.addDialogOpen = false
 }
 
 async function saveSettings(s: unknown): Promise<void> {
@@ -52,8 +50,8 @@ async function saveSettings(s: unknown): Promise<void> {
       report(r as never)
       return
     }
-    state.settings = r.settings
-    state.settingsOpen = false
+    downloads.settings = r.settings
+    ui.settingsOpen = false
   } catch (e) {
     reportRejection(e)
   }
@@ -68,11 +66,15 @@ onMounted(async () => {
     const info = await window.hh.hello()
     bootInfo.value = `${info.name} v${info.version}`
     await refreshGames()
-    await initTasks()
-    state.error = ''
+    unsubPushes = await initTasks()
+    library.error = ''
   } catch (e) {
     bootInfo.value = `连接主进程失败：${e instanceof Error ? e.message : String(e)}`
   }
+})
+
+onUnmounted(() => {
+  for (const unsub of unsubPushes) unsub()
 })
 </script>
 
@@ -93,12 +95,12 @@ onMounted(async () => {
             <div class="nav-item" :class="{ active: page === 'library' }" @click="page = 'library'">
               <LibraryBig :size="16" class="nav-ic" />
               <span>全部游戏</span>
-              <span class="count">{{ state.games.length }}</span>
+              <span class="count">{{ library.games.length }}</span>
             </div>
             <div class="nav-item" :class="{ active: page === 'downloads' }" @click="page = 'downloads'">
               <Download :size="16" class="nav-ic" />
               <span>下载任务</span>
-              <span class="count">{{ state.rows.filter((r) => r.snap?.state === 'downloading' || r.snap?.state === 'preparing' || (!r.snap && r.def.state === 'downloading')).length }}</span>
+              <span class="count">{{ downloads.rows.filter((r) => r.snap?.state === 'downloading' || r.snap?.state === 'preparing' || (!r.snap && r.def.state === 'downloading')).length }}</span>
             </div>
 
             <div v-if="page === 'library'" class="nav-section">分类</div>
@@ -107,15 +109,15 @@ onMounted(async () => {
               v-show="page === 'library'"
               :key="c"
               class="nav-item"
-              :class="{ active: state.categoryFilter === c }"
-              @click="state.categoryFilter = state.categoryFilter === c ? '' : c"
+              :class="{ active: library.categoryFilter === c }"
+              @click="library.categoryFilter = library.categoryFilter === c ? '' : c"
             >
               <span>{{ c }}</span>
               <span class="count">{{ catCount(c) }}</span>
             </div>
 
             <div class="nav-spacer"></div>
-            <div class="nav-item" @click="state.scanOpen = true">
+            <div class="nav-item" @click="library.scanOpen = true">
               <ScanSearch :size="16" class="nav-ic" />
               <span>扫描导入</span>
             </div>
@@ -130,30 +132,30 @@ onMounted(async () => {
             <template v-if="page === 'library'">
               <div class="toolbar">
                 <input
-                  v-model="state.keyword"
+                  v-model="library.keyword"
                   class="search-input glass"
                   placeholder="搜索游戏 / 标签 / 原文名…"
                 />
                 <div class="toolbar-count">{{ filteredCount }} 款</div>
                 <button
                   class="glass-btn"
-                  :class="{ active: state.view === 'grid' }"
+                  :class="{ active: library.view === 'grid' }"
                   title="网格视图"
-                  @click="state.view = 'grid'"
+                  @click="library.view = 'grid'"
                 ><LayoutGrid :size="16" /></button>
                 <button
                   class="glass-btn"
-                  :class="{ active: state.view === 'list' }"
+                  :class="{ active: library.view === 'list' }"
                   title="列表视图"
-                  @click="state.view = 'list'"
+                  @click="library.view = 'list'"
                 ><List :size="16" /></button>
               </div>
 
-              <CoverGrid :games="filteredGames" :view="state.view" @select="state.selectedId = $event" />
+              <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
 
-              <div v-if="state.error" class="error-banner glass">
-                {{ state.error }}
-                <button class="glass-btn" title="清除错误" @click="state.error = ''"><X :size="14" /></button>
+              <div v-if="library.error" class="error-banner glass">
+                {{ library.error }}
+                <button class="glass-btn" title="清除错误" @click="library.error = ''"><X :size="14" /></button>
               </div>
             </template>
 
@@ -164,32 +166,32 @@ onMounted(async () => {
           <DetailPanel v-if="page === 'library'" class="detail" />
         </div>
 
-        <ScanDialog v-model:open="state.scanOpen" />
-        <ScrapeDialog v-model:open="state.scrapeOpen" />
+        <ScanDialog v-model:open="library.scanOpen" />
+        <ScrapeDialog v-model:open="library.scrapeOpen" />
 
         <Modal
-          v-model:open="state.addDialogOpen"
+          v-model:open="downloads.addDialogOpen"
           :footer="null"
           :width="540"
           :destroy-on-close="true"
           title="新建下载"
         >
           <NewDownloadDialog
-            v-if="state.settings"
+            v-if="downloads.settings"
             :key="addSubmitKey"
-            :settings="state.settings"
+            :settings="downloads.settings"
             @submit="submitAddTask"
           />
         </Modal>
 
         <Modal
-          v-model:open="state.settingsOpen"
+          v-model:open="ui.settingsOpen"
           :footer="null"
           :width="600"
           :destroy-on-close="true"
           title="偏好设置"
         >
-          <SettingsDialog v-if="state.settings" :settings="state.settings" @save="saveSettings" />
+          <SettingsDialog v-if="downloads.settings" :settings="downloads.settings" @save="saveSettings" />
         </Modal>
       </div>
     </AntApp>
