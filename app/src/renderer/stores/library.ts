@@ -100,3 +100,8 @@ export async function applyScrapeResult(result: ScrapeCandidate): Promise<void> 
   }
   await refreshGames()
 }
+
+/** 渲染层缩略图 URL：有 thumbPath 才走 hh:// 协议，否则空（组件走占位色）。 */
+export function thumbUrl(g: Game): string {
+  return g.thumbPath ? `hh://thumb/${g.id}` : ''
+}
