@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
-import type { Settings, TaskDef, TaskState } from '../shared/types'
+import type { ErrorParams, Settings, TaskDef, TaskState } from '../shared/types'
 import { DEFAULT_SETTINGS } from '../shared/types'
 
 const TASK_STATES: readonly string[] = [
@@ -25,6 +25,20 @@ const TASK_STATES: readonly string[] = [
 /** 只认已知的状态字符串，别的（含人手改出来的值）一律当"从未跑过"。 */
 function isTaskState(v: unknown): v is TaskState {
   return typeof v === 'string' && TASK_STATES.includes(v)
+}
+
+/**
+ * 落盘的错误参数是不可信输入（tasks.json 可能被手改或写坏）：只留原始值的键，
+ * 数组和嵌套对象一律丢掉。界面会把这些值拼进给用户看的文案，形状必须先钉死，
+ * 否则一个 `[object Object]` 甚至一段脚本就进了通知正文。
+ */
+function normalizeErrorParams(v: unknown): ErrorParams {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return null
+  const out: Record<string, unknown> = {}
+  for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+    if (typeof val === 'string' || typeof val === 'number' || typeof val === 'boolean') out[k] = val
+  }
+  return out
 }
 
 /** 设置与任务记录所在目录。界面起不来时，兜底页要能把这个目录交到用户手里。 */
@@ -77,7 +91,9 @@ export function normalizeSettings(raw: unknown): Settings {
   const s: Settings = { ...DEFAULT_SETTINGS }
   if (raw && typeof raw === 'object') {
     const d = raw as Partial<Settings>
-    if (typeof d.threads === 'number') s.threads = clampInt(d.threads, 1, 64)
+    // 分片数上限 32 与设置页 InputNumber、IPC 入参校验同源：每一片是一条连接，
+    // 放更大的值只会把目标站点打成拒绝服务，自己也不会更快。
+    if (typeof d.threads === 'number') s.threads = clampInt(d.threads, 1, 32)
     if (typeof d.download_dir === 'string' && d.download_dir) s.download_dir = d.download_dir
     if (typeof d.proxy === 'string') s.proxy = d.proxy
     if (typeof d.user_agent === 'string') s.user_agent = d.user_agent
@@ -132,6 +148,10 @@ export class Store {
           total: typeof d.total === 'number' ? d.total : 0,
           downloaded: typeof d.downloaded === 'number' ? d.downloaded : 0,
           error: typeof d.error === 'string' ? d.error : '',
+          // 老记录没有码：留空串，界面退回原文匹配。有原文没码是合法状态，
+          // 反过来（有码没原文）不合法——那条原文才是排查凭据。
+          error_code: typeof d.error_code === 'string' ? d.error_code : '',
+          error_params: normalizeErrorParams(d.error_params),
           finished_at: typeof d.finished_at === 'number' ? d.finished_at : 0,
           // 老 tasks.json 没这个字段：空串 = 不校验。不能拿 undefined 去喂引擎，
           // 也不能顺手填个别的任务的哈希值——那会把一次正常下载判成校验失败。

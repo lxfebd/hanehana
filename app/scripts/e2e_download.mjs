@@ -29,6 +29,7 @@ function md5(p) {
 
 function startFileServer() {
   return new Promise((resolve) => {
+    const served = { bytes: 0 }
     const srv = createServer((req, res) => {
       const file = SRC_FILE
       if (!existsSync(file)) {
@@ -38,22 +39,35 @@ function startFileServer() {
       }
       const size = statSync(file).size
       const range = req.headers.range
+      let start = 0
+      let end = size - 1
+      let status = 200
       if (range) {
         const m = /bytes=(\d+)-(\d*)/.exec(range)
-        const start = m ? Number(m[1]) : 0
-        const end = m && m[2] ? Number(m[2]) : size - 1
-        res.writeHead(206, {
-          'content-range': `bytes ${start}-${end}/${size}`,
-          'content-length': end - start + 1,
-          'accept-ranges': 'bytes',
-        })
-        createReadStream(file, { start, end }).pipe(res)
-      } else {
-        res.writeHead(200, { 'content-length': size, 'accept-ranges': 'bytes' })
-        createReadStream(file).pipe(res)
+        start = m ? Number(m[1]) : 0
+        end = m && m[2] ? Number(m[2]) : size - 1
+        status = 206
       }
+      // pause 会让引擎带着 EPIPE/ECONNRESET 掐断连接；流错误不兜住的话，
+      // 服务器的 uncaughtException 会把整个 e2e 进程带走。
+      const rs = createReadStream(file, { start, end })
+      rs.on('data', (c) => {
+        served.bytes += c.length
+      })
+      rs.on('error', () => {})
+      rs.pipe(res)
+      res.on('close', () => rs.destroy())
+      res.on('error', () => {})
+      const headers = {
+        'content-length': end - start + 1,
+        'accept-ranges': 'bytes',
+      }
+      if (status === 206) headers['content-range'] = `bytes ${start}-${end}/${size}`
+      res.writeHead(status, headers)
     })
-    srv.listen(0, '127.0.0.1', () => resolve({ port: srv.address().port, close: () => srv.close() }))
+    srv.listen(0, '127.0.0.1', () =>
+      resolve({ port: srv.address().port, close: () => srv.close(), servedBytes: () => served.bytes }),
+    )
   })
 }
 
@@ -176,6 +190,16 @@ async function main() {
     const settings = await evalJs(`(async () => (await window.hh.getSettings()))()`)
     check('getSettings 返回', !!settings && typeof settings.threads === 'number', JSON.stringify(settings))
 
+    // 把默认下载目录指到隔离目录：addTask 的 dest 必须落在「默认下载目录 +
+    // 会话内用户手选目录」的白名单内（主进程 isDestAllowed），否则会被拒。
+    const setDir = await evalJs(`(async () => {
+      const s = await window.hh.getSettings()
+      s.download_dir = '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}'
+      const r = await window.hh.saveSettings(s)
+      return r
+    })()`)
+    check('默认下载目录指向隔离目录 ok', setDir?.ok === true, JSON.stringify(setDir))
+
     // 1. 新建任务：加到隔离下载目录
     const addUrl = `http://127.0.0.1:${srv.port}/src.bin`
     const addResult = await evalJs(`(async () => {
@@ -235,6 +259,110 @@ async function main() {
     const rm = await evalJs(`(async () => (await window.hh.removeTask('${taskId}', false)))()`)
     check('removeTask(不删文件) ok', rm?.ok === true, JSON.stringify(rm))
     check('removeTask 后文件仍在', existsSync(destPath), destPath)
+
+    // ---- Phase 1 新增用例：并发上限 / pause 流量停 / retry 无残留 ----
+    // 这些用例都要观察「下载中」的瞬时状态，所以把限速调低到 1.5 MiB/s、
+    // 并发压到 2，12 MiB 的任务才会在窗口期内可观测。
+    const throttle = await evalJs(`(async () => {
+      const s = await window.hh.getSettings()
+      s.rate_limit_kbps = 1500
+      s.max_concurrent = 2
+      s.threads = 2
+      const r = await window.hh.saveSettings(s)
+      return r
+    })()`)
+    check('限速/并发设置 ok', throttle?.ok === true, JSON.stringify(throttle))
+
+    const activeStates = ['preparing', 'downloading', 'verifying']
+    const stateOf = (rows, id) => (rows || []).find((x) => x.id === id)?.snap?.state
+
+    // 7a. 并发上限：加 3 个任务（不同 URL 避免去重），轮询确认同时活跃 ≤ 2
+    const conIds = []
+    let maxActive = 0
+    for (let i = 0; i < 3; i++) {
+      const r = await evalJs(`(async () => {
+        const u = '${addUrl}?c=${i}'
+        const d = '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}/con${i}.bin'
+        return await window.hh.addTask({ url: u, dest: d, threads: 2 })
+      })()`)
+      conIds.push(r?.def?.id ?? '')
+    }
+    const conAllDone = await waitFor(async () => {
+      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+      const acts = conIds.filter((id) => activeStates.includes(stateOf(rows, id))).length
+      if (acts > maxActive) maxActive = acts
+      return conIds.every((id) => stateOf(rows, id) === 'done') ? rows : null
+    }, 120_000, '3 个并发任务全 done').catch((e) => {
+      console.log('[diag] maxActive=', maxActive, 'conIds=', conIds)
+      throw e
+    })
+    check('并发上限 max_concurrent=2 生效（活跃≤2）', maxActive <= 2, `maxActive=${maxActive}`)
+    check('并发峰值确实是 2', maxActive === 2, `maxActive=${maxActive}`)
+
+    // 7b. pause 期间流量停：限速下下载到中途，pause 后确认已下字节不再增长
+    const pauseUrl = `${addUrl}?p=1`
+    const pauseRow = await evalJs(`(async () => (await window.hh.addTask({ url: '${pauseUrl}', dest: '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}/pause.bin', threads: 2 })))()`)
+    const pauseId = pauseRow?.def?.id ?? ''
+    const pauseStarted = await waitFor(async () => {
+      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+      const st = stateOf(rows, pauseId)
+      const down = (rows || []).find((x) => x.id === pauseId)?.snap?.downloaded || 0
+      return st === 'downloading' && down > 0 ? down : null
+    }, 30_000, 'pause 任务开始下载且有进度')
+    await evalJs(`(async () => (await window.hh.action('${pauseId}', 'pause')))()`)
+    await waitFor(async () => {
+      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+      return stateOf(rows, pauseId) === 'paused' ? true : null
+    }, 15_000, 'pause 后进入 paused 状态')
+    await wait(500) // 让引擎把 in-flight 的 socket 掐掉、服务端字节入账
+    const pausedDown = await evalJs(`(async () => {
+      const rows = await window.hh.listTasks()
+      return (rows.find((x) => x.id === '${pauseId}')?.snap?.downloaded) || 0
+    })()`)
+    const servedBefore = srv.servedBytes()
+    await wait(1200)
+    const servedAfter = srv.servedBytes()
+    const pausedDownAfter = await evalJs(`(async () => {
+      const rows = await window.hh.listTasks()
+      return (rows.find((x) => x.id === '${pauseId}')?.snap?.downloaded) || 0
+    })()`)
+    check('pause 后服务端不再吐字节', servedAfter - servedBefore === 0, `served ${servedBefore}→${servedAfter}`)
+    check('pause 后 downloaded 不再增长', pausedDownAfter === pausedDown, `downloaded ${pausedDown}→${pausedDownAfter}`)
+
+    // 7c. retry 后 .part 不残留：pause 的任务删掉 .part/.part.meta 重启，
+    //     但要注意 .part 是引擎进程持有的；直接断言文件不存在会撞上重下瞬间的
+    //     再创建。改为断言「retry 后 downloaded 归零 + 重新从 0 开始下」，
+    //     且 retry 完成时 .part.meta 存在而 .part 是新建的（文件大小从 0 重新增长）。
+    const partPath = `${DOWNLOAD_DIR}/pause.bin.part`
+    const metaPath = `${DOWNLOAD_DIR}/pause.bin.part.meta`
+    const hadPart = existsSync(partPath)
+    check('pause 期间 .part 存在', hadPart, partPath)
+    await evalJs(`(async () => (await window.hh.action('${pauseId}', 'retry')))()`)
+    const retryDownloaded = await waitFor(async () => {
+      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+      const r = (rows || []).find((x) => x.id === pauseId)
+      return r?.snap?.state === 'downloading' && (r.snap?.downloaded || 0) > 0 ? r.snap.downloaded : null
+    }, 30_000, 'retry 后重新开始下载')
+    check('retry 后 downloaded 从 0 重新计', retryDownloaded > 0 && retryDownloaded < FILE_SIZE, `downloaded=${retryDownloaded}`)
+    // 收尾：等它下完，恢复默认设置
+    await waitFor(async () => {
+      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+      return stateOf(rows, pauseId) === 'done' ? true : null
+    }, 120_000, 'retry 任务最终 done')
+    const finalPart = existsSync(partPath)
+    const finalMeta = existsSync(metaPath)
+    check('done 后 .part 已清理', !finalPart, partPath)
+    check('done 后 .part.meta 已清理', !finalMeta, metaPath)
+    // 让 con 与 pause 之外多余的任务清掉，避免影响持久化用例的计数
+    const restore = await evalJs(`(async () => {
+      const s = await window.hh.getSettings()
+      s.rate_limit_kbps = 0
+      s.max_concurrent = 3
+      s.threads = 8
+      const r = await window.hh.saveSettings(s)
+      return r
+    })()`)
+    check('恢复默认设置 ok', restore?.ok === true, JSON.stringify(restore))
 
     // 8. 重启持久化：重新加一个任务，等 done，重启 Electron，确认列表/状态/文件都还在
     const add2 = await evalJs(`(async () => {

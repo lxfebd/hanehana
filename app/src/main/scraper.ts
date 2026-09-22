@@ -119,6 +119,9 @@ export async function searchScrape(
   if (bgm.status === 'fulfilled') results.push(...bgm.value)
   else warnings.push(`Bangumi：${reasonText(bgm.reason)}`)
 
+  // 发出去的封面域名记下来，applyScrape 只认这些（见 seenCoverHosts）
+  for (const c of results) rememberCoverHost(c.coverUrl)
+
   return { results, warnings }
 }
 
@@ -133,10 +136,89 @@ function reasonText(e: unknown): string {
 
 // ---------------------------------------------------------------- 应用刮削结果
 
+/**
+ * 本次搜索发出过的封面域名。
+ *
+ * 为什么需要它：applyScrape 的 coverUrl 来自渲染层，直接 fetch 就是 SSRF——
+ * 填一个 http://169.254.169.254/ 或 http://127.0.0.1:8080/ 就能让主进程替
+ * 攻击者去敲内网。只认「我们自己搜出来给过界面」的域名，等于把出口锁死在
+ * VNDB / Bangumi 的 CDN 上，正常用户一个都不会被拦。
+ */
+const seenCoverHosts = new Set<string>()
+
+function rememberCoverHost(url: string | undefined): void {
+  if (!url) return
+  try {
+    const u = new URL(url)
+    if (u.protocol === 'https:' || u.protocol === 'http:') seenCoverHosts.add(u.host.toLowerCase())
+  } catch {
+    // 非法 URL 不记，applyScrape 那边自然会被拒
+  }
+  // 无上限的 Set 会随搜索次数一直长。真实域名就几个，超了清掉最老的。
+  if (seenCoverHosts.size > 128) {
+    for (const k of seenCoverHosts) {
+      seenCoverHosts.delete(k)
+      if (seenCoverHosts.size <= 64) break
+    }
+  }
+}
+
+/** 这个封面 URL 是不是本次搜索发出过的。 */
+function coverUrlAllowed(url: string): boolean {
+  try {
+    const u = new URL(url)
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false
+    return seenCoverHosts.has(u.host.toLowerCase())
+  } catch {
+    return false
+  }
+}
+
+/** 封面下载上限。galgame 封面是几百 KB 量级，给到 16 MB 已经足够宽。 */
+const MAX_COVER_BYTES = 16 * 1024 * 1024
+
+/** 渲染层能提交的刮削字段（白名单）。 */
+export function sanitizeScrapeResult(raw: unknown): ScrapeResult | null {
+  if (!raw || typeof raw !== 'object') return null
+  const d = raw as Record<string, unknown>
+  const provider = d.provider
+  if (provider !== 'vndb' && provider !== 'bangumi') return null
+  const id = typeof d.id === 'string' ? d.id.trim().slice(0, 64) : ''
+  const title = typeof d.title === 'string' ? d.title.slice(0, 500) : ''
+  if (!id || !title) return null
+  const str = (v: unknown, max: number): string | undefined =>
+    typeof v === 'string' && v ? v.slice(0, max) : undefined
+  const out: ScrapeResult = { provider, id, title }
+  const titleNative = str(d.titleNative, 500)
+  if (titleNative) out.titleNative = titleNative
+  const description = str(d.description, 20000)
+  if (description) out.description = description
+  const releaseDate = str(d.releaseDate, 32)
+  if (releaseDate) out.releaseDate = releaseDate
+  if (typeof d.rating === 'number' && Number.isFinite(d.rating)) {
+    out.rating = Math.min(10, Math.max(0, d.rating))
+  }
+  if (Array.isArray(d.tags)) {
+    out.tags = d.tags.filter((t): t is string => typeof t === 'string').slice(0, 64).map((t) => t.slice(0, 64))
+  }
+  const coverUrl = str(d.coverUrl, 2000)
+  if (coverUrl) {
+    // 不在白名单里就当没有封面：元数据其余部分照旧写入，而不是整条失败。
+    if (!coverUrlAllowed(coverUrl)) {
+      console.error('[hanehana] 拒绝抓取白名单外的封面地址：', coverUrl.slice(0, 200))
+    } else {
+      out.coverUrl = coverUrl
+    }
+  }
+  return out
+}
+
 /** 应用刮削结果：更新游戏字段 + 下载封面到本地缓存。 */
-export async function applyScrape(gameId: string, r: ScrapeResult): Promise<{ ok: boolean; error?: string }> {
+export async function applyScrape(gameId: string, raw: unknown): Promise<{ ok: boolean; error?: string }> {
   const g = getGame(gameId)
   if (!g) return { ok: false, error: '游戏不在库中' }
+  const r = sanitizeScrapeResult(raw)
+  if (!r) return { ok: false, error: '刮削结果不完整：需要来源、id 与标题' }
 
   try {
     let coverPath: string | undefined
@@ -168,16 +250,50 @@ async function downloadCover(provider: string, id: string, url: string): Promise
   try {
     const dir = ensureCoversDir()
     const ext = /\.png$/i.test(url) ? 'png' : 'jpg'
-    const file = `${provider}-${id.replace(/[^a-z0-9]/gi, '')}.${ext}`
-    const dest = join(dir, file)
+    // id 来自渲染层，直接拼进文件名就是路径穿越（../../）。只留字母数字。
+    const safeId = id.replace(/[^a-z0-9]/gi, '').slice(0, 32)
+    if (!safeId) return undefined
+    const dest = join(dir, `${provider}-${safeId}.${ext}`)
     if (existsSync(dest)) return dest
     const r = await fetch(url, { headers: { 'User-Agent': UA }, signal: AbortSignal.timeout(TIMEOUT) })
     if (!r.ok) return undefined
-    const buf = Buffer.from(await r.arrayBuffer())
+    const buf = await readBodyCapped(r, MAX_COVER_BYTES)
+    if (!buf) {
+      console.error('[hanehana] 封面超过大小上限，已丢弃：', url.slice(0, 200))
+      return undefined
+    }
     writeFileSync(dest, buf)
     return dest
   } catch (e) {
     console.error('[hanehana] 封面下载失败：', e)
     return undefined
   }
+}
+
+/**
+ * 读响应体，超过上限就放弃（返回 null）。
+ *
+ * 不能先 arrayBuffer() 再判断大小：一个谎报 Content-Length 的服务器能让主进程
+ * 把任意大的东西读进内存，而主进程 OOM 是整个应用一起死。
+ */
+async function readBodyCapped(r: Response, max: number): Promise<Buffer | null> {
+  const body = r.body
+  if (!body) return Buffer.alloc(0)
+  const declared = Number(r.headers.get('content-length') ?? '')
+  if (Number.isFinite(declared) && declared > max) return null
+  const reader = body.getReader()
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    size += value.byteLength
+    if (size > max) {
+      await reader.cancel().catch(() => {})
+      return null
+    }
+    chunks.push(value)
+  }
+  return Buffer.concat(chunks)
 }

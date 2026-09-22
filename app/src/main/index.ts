@@ -14,7 +14,7 @@
  */
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
 import { existsSync, statSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { release as osRelease } from 'node:os'
 import { Ipc } from '../shared/ipc'
@@ -22,8 +22,9 @@ import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
-import { loadGames, getGames, ensureCoversDir } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleOpenDir, handleLaunch, handleRunning, killAllRunning } from './games'
+import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
+import { handleScan, handleRemove, handleUpdate, handleOpenDir, handleLaunch, handleRunning, detachAllRunning } from './games'
+import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
 import { Manager } from './manager'
@@ -41,7 +42,8 @@ app.setAppUserModelId('com.hanehana.app')
 registerThumbProtocol()
 
 // 开发调试：设置 HANEHANA_DEBUG_PORT 时开启 CDP 端口，供 CDP 探针验证 UI。
-if (process.env.HANEHANA_DEBUG_PORT) {
+// 打包产物一律不开——CDP 端口等于把渲染进程的控制权开放给本机任意进程。
+if (process.env.HANEHANA_DEBUG_PORT && !app.isPackaged) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env.HANEHANA_DEBUG_PORT)
 }
 
@@ -245,7 +247,13 @@ function notifyTerminal(row: TaskRow): void {
       row.id,
     )
   } else if (st === 'error' && s.notify_on_error) {
-    const e = explainError(row.snap?.error || row.def.error)
+    // 原文和码取自同一份记录（理由同 TaskRow 的 err）：混着取会在
+    // 「快照已清空、tasks.json 还没落盘」的窗口里把新错误配上旧病因。
+    const snap = row.snap
+    const src = snap?.error
+      ? { raw: snap.error, code: snap.error_code, params: snap.error_params }
+      : { raw: row.def.error, code: row.def.error_code ?? '', params: row.def.error_params ?? null }
+    const e = explainError(src.raw, src.code, src.params)
     notify(
       frontmost,
       `${name} 下载失败`,
@@ -290,32 +298,93 @@ function err(error: string): { ok: false; error: string } {
   return { ok: false, error }
 }
 
+/**
+ * 用户在原生「选择目录」对话框里亲自选过的目录（小写绝对路径）。
+ *
+ * 下载路径必须落在「设置的默认目录」或这里面的某一棵子树内：引擎会照着这个
+ * 路径创建文件、预分配几个 GB 的 .part，路径由渲染层随意指定的话，一个被
+ * 注入的界面就能往启动项、系统目录里写东西。用户手选的目录是他自己授权的，
+ * 所以记下来放行；重启后清空——那时用户可以再选一次。
+ */
+const approvedDirs = new Set<string>()
+
+/** dest 是不是落在允许的目录树里（默认下载目录 + 本次会话用户手选的目录）。 */
+function isDestAllowed(dest: string, downloadDir: string): boolean {
+  const p = resolve(dest).toLowerCase()
+  const roots = [downloadDir, ...approvedDirs].filter((r): r is string => typeof r === 'string' && !!r)
+  for (const r of roots) {
+    const root = resolve(r).toLowerCase()
+    if (p === root || p.startsWith(root.endsWith(sep) ? root : root + sep)) return true
+  }
+  return false
+}
+
 function wireIpc(): void {
   const m = manager
   const s = store
 
-  ipcMain.handle(Ipc.Hello, () => ({ name: 'hanehana', version: app.getVersion() }))
+  // 引擎自检结果搭 hello 一起下去：设置页靠它说明「下载为什么不可用、怎么修」。
+  // 每次调用都重新查，用户在设置页点「重新检测」时不用重启应用。
+  ipcMain.handle(Ipc.Hello, () => {
+    const st = engineStatus()
+    return {
+      name: 'hanehana',
+      version: app.getVersion(),
+      engine_ok: st.ok,
+      engine_path: st.path,
+      engine_hint: st.hint,
+    }
+  })
 
   // 游戏库
   ipcMain.handle(Ipc.GameList, () => getGames())
-  ipcMain.handle(Ipc.GameScan, (_e, root: string) => handleScan(root))
-  ipcMain.handle(Ipc.GameRemove, (_e, id: string) => handleRemove(id))
-  ipcMain.handle(Ipc.GameUpdate, (_e, id: string, patch: unknown) => handleUpdate(id, patch as never))
-  ipcMain.handle(Ipc.GameLaunch, (_e, id: string) => handleLaunch(id))
+  ipcMain.handle(Ipc.GameScan, (_e, root: unknown) => {
+    if (typeof root !== 'string' || !root.trim() || root.length > 4000) {
+      throw new Error('请先选择要扫描的目录')
+    }
+    return handleScan(root.trim())
+  })
+  ipcMain.handle(Ipc.GameRemove, (_e, id: unknown) => {
+    if (!isId(id)) return err('游戏不存在')
+    handleRemove(id)
+    return { ok: true as const }
+  })
+  // patch 走白名单：渲染层能改哪些字段由主进程说了算，见 sanitizeGamePatch
+  ipcMain.handle(Ipc.GameUpdate, (_e, id: unknown, patch: unknown) => {
+    if (!isId(id)) return err('游戏不存在')
+    return handleUpdate(id, sanitizeGamePatch(patch))
+  })
+  ipcMain.handle(Ipc.GameLaunch, (_e, id: unknown) => {
+    if (!isId(id)) return { ok: false as const, error: '游戏不存在' }
+    return handleLaunch(id)
+  })
   ipcMain.handle(Ipc.GameRunning, () => handleRunning())
-  ipcMain.handle(Ipc.OpenDir, (_e, dir: string) => handleOpenDir(dir))
+  // 打开目录只接受磁盘上真实存在的路径：这个频道会在资源管理器里落地一个窗口，
+  // 不该由渲染层随便指定去哪儿。
+  ipcMain.handle(Ipc.OpenDir, (_e, dir: unknown) => {
+    if (typeof dir !== 'string' || !dir.trim() || dir.length > 4000) return
+    const p = dir.trim()
+    if (!existsSync(p)) return
+    handleOpenDir(p)
+  })
   ipcMain.handle(Ipc.PickDir, async () => {
     const opts: Electron.OpenDialogOptions = {
       properties: ['openDirectory'],
       title: '选择游戏目录',
     }
     const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    return r.canceled ? '' : r.filePaths[0] ?? ''
+    const picked = r.canceled ? '' : r.filePaths[0] ?? ''
+    // 用户在原生对话框里亲自选过的目录 = 授权写入点，下载路径沙箱认它（见 isDestAllowed）
+    if (picked) approvedDirs.add(resolve(picked).toLowerCase())
+    return picked
   })
 
   // 元数据刮削
   ipcMain.handle(Ipc.ScrapeSearch, (_e, title: string) => searchScrape(title))
-  ipcMain.handle(Ipc.ScrapeApply, (_e, gameId: string, result: unknown) => applyScrape(gameId, result as never))
+  ipcMain.handle(Ipc.ScrapeApply, (_e, gameId: unknown, result: unknown) => {
+    if (!isId(gameId)) return { ok: false as const, error: '游戏不存在' }
+    return applyScrape(gameId, result)
+  })
 
   // ---- 下载引擎 ----
   // 返回 rows（定义 + 实时快照）而不是裸 listDefs：渲染进程靠它恢复断点进度
@@ -327,6 +396,10 @@ function wireIpc(): void {
     if (!DOWNLOAD_URL_RE.test(url)) return err('下载地址无效：需要 http(s):// 或 ftp:// 开头')
     const dest = typeof raw.dest === 'string' ? raw.dest.trim() : ''
     if (dest.length > 4000) return err('保存路径过长')
+    // 空串 = 用设置里的默认下载目录（Manager 会补），那本身就是允许的根。
+    if (dest && !isDestAllowed(dest, s.loadSettings().download_dir)) {
+      return err('保存路径不在允许的目录内：请用「浏览」选目录，或在设置里改默认保存目录')
+    }
     const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 500) : ''
     // 校验和要么当场判掉，要么原样落盘。放一串读不懂的字符进去，代价是
     // 十几个 GB 下完之后才报「校验失败」，那时用户已经不知道差异出在哪了。
@@ -334,7 +407,10 @@ function wireIpc(): void {
     if (checksum === null) {
       return err('校验和看不懂：需要 32 位（MD5）/ 40 位（SHA-1）/ 64 位（SHA-256）十六进制，或写成 sha256:… 的形式')
     }
-    const threads = Number.isFinite(raw.threads) ? Number(raw.threads) : s.loadSettings().threads
+    // 分片数按设置页的同一区间夹住（1-32）：引擎会为每一片开一条连接，
+    // 传个 10 万进来就是自己给自己造一次对目标站点的拒绝服务。
+    const requested = Number.isFinite(raw.threads) ? Math.floor(Number(raw.threads)) : s.loadSettings().threads
+    const threads = Math.min(32, Math.max(1, Number.isFinite(requested) ? requested : 8))
     return { ok: true as const, ...m.add({ url, dest, threads, note, checksum }) }
   })
 
@@ -427,6 +503,10 @@ if (gotSingleInstanceLock) {
     // 启动后串行回填缺缩略图/主色的条目（逐张生成，不阻塞启动）
     backfillThumbs(getGames())
     store = new Store()
+    // 引擎自检：缺失只记日志 + 设置页提示，不拦启动。游戏库、刮削、启动游戏
+    // 都不需要引擎，为它挡下整个应用是把小问题变成大问题。
+    const engine = engineStatus()
+    if (!engine.ok) console.error('[engine] 下载引擎不可用：', engine.hint)
     const initialSettings = store.loadSettings()
     const initialDefs = store.loadTasks()
     manager = new Manager(
@@ -471,5 +551,5 @@ app.on('before-quit', () => {
   }
   releaseKeepAwake()
   manager?.shutdown()
-  killAllRunning()
+  detachAllRunning()
 })

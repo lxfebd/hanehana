@@ -19,11 +19,11 @@ export interface ScanResult {
   skipped: number
 }
 
-export function handleScan(root: string): ScanResult {
-  if (!isValidDir(root)) {
+export async function handleScan(root: string): Promise<ScanResult> {
+  if (!(await isValidDir(root))) {
     throw new Error('目录不存在或不可读：' + root)
   }
-  const hits = scanDir(root)
+  const hits = await scanDir(root)
   // 已入库的 exe 自动去重（addGames 内部按 exe 去重），这里统计跳过数
   const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
   const fresh = hits.filter((h) => !existing.has(h.exePath.toLowerCase()))
@@ -60,6 +60,14 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
   if (!existsSync(g.exePath)) return { ok: false, error: '启动文件不存在：' + g.exePath }
   if (runningProc.has(id)) return { ok: false, error: '游戏已在运行' }
 
+  // .lnk 不是可执行映像，CreateProcess 会以异步 error 事件炸出来；
+  // 快捷方式交给系统壳打开（代价：这条不计游玩时长）
+  if (/\.lnk$/i.test(g.exePath)) {
+    void shell.openPath(g.exePath)
+    updateGame(id, { lastPlayed: Date.now() })
+    return { ok: true }
+  }
+
   try {
     // LE 转区：优先用 Locale Emulator 的执行器（可配置，默认不启用）
     let cmd = g.exePath
@@ -78,6 +86,13 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     runningSince.set(id, Date.now())
     updateGame(id, { lastPlayed: Date.now() })
 
+    // spawn 的失败（ENOENT/EACCES/cwd 无效）走异步 error 事件；
+    // 没有监听器就是 uncaughtException 直接带走主进程
+    proc.on('error', (err) => {
+      console.error('[launch] 启动失败:', id, err.message)
+      runningProc.delete(id)
+      runningSince.delete(id)
+    })
     proc.on('exit', () => {
       const since = runningSince.get(id)
       if (since !== undefined) {
@@ -89,26 +104,25 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     })
     return { ok: true }
   } catch (e) {
+    runningProc.delete(id)
+    runningSince.delete(id)
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
 
 export function handleRunning(): string[] {
-  // 清理僵尸条目（进程已退但事件没到）
+  // 清理僵尸条目（进程已退但事件没到），两张表一起清，避免 runningSince 永久残留
   for (const [id, proc] of runningProc) {
-    if (proc.exitCode !== null || proc.killed) runningProc.delete(id)
+    if (proc.exitCode !== null || proc.killed) {
+      runningProc.delete(id)
+      runningSince.delete(id)
+    }
   }
   return [...runningProc.keys()]
 }
 
-/** 关闭所有仍在运行的游戏子进程（退出应用时调用）。 */
-export function killAllRunning(): void {
-  for (const proc of runningProc.values()) {
-    try {
-      proc.kill()
-    } catch {
-      // 进程可能已退出
-    }
-  }
+/** 应用退出时解除对游戏进程的跟踪。不 kill——用户正在玩的游戏不该被管理器带走。 */
+export function detachAllRunning(): void {
   runningProc.clear()
+  runningSince.clear()
 }

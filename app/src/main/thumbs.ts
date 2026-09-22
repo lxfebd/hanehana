@@ -11,11 +11,9 @@ import { app, nativeImage, protocol, net } from 'electron'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { getGame, updateGame, gameDataDir } from './gameStore'
+import { getGame, updateGame, isImageCachePath, thumbsDir } from './gameStore'
 import { coverColorOf } from './coverColor'
 import type { Game } from '../shared/types'
-
-export const thumbsDir = join(gameDataDir(), 'thumbs')
 
 /** 必须在 app.whenReady() 之前注册。 */
 export function registerThumbProtocol(): void {
@@ -41,6 +39,9 @@ export async function handleHhProtocol(req: Request): Promise<Response> {
     if (!g) return new Response('not found', { status: 404 })
     const p = host === 'thumb' ? (g.thumbPath ?? g.coverPath) : g.coverPath
     if (!p || !existsSync(p)) return new Response('not found', { status: 404 })
+    // 只服务图片缓存目录里的文件。games.json 是磁盘上的明文，改一个 coverPath
+    // 就能让这个协议去读任意本地文件（再把内容回给渲染层）——这里堵住这条路。
+    if (!isImageCachePath(p)) return new Response('not found', { status: 404 })
     return fetchLocal(p)
   } catch {
     return new Response('bad request', { status: 400 })

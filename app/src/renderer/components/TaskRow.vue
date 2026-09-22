@@ -72,6 +72,17 @@ const indeterminate = computed(
   () => !sizeKnown.value && !verifying.value && (state.value === 'downloading' || state.value === 'preparing'),
 )
 
+/**
+ * 当前该显示的那条错误。原文和码必须取自同一份记录：混着取（快照的原文 +
+ * 落盘定义的码）会在「重试后快照已清空、tasks.json 还没落盘」的窗口里
+ * 把新错误配上旧病因。
+ */
+const err = computed(() => {
+  const s = props.snap
+  if (s?.error) return { raw: s.error, code: s.error_code, params: s.error_params }
+  return { raw: props.def.error, code: props.def.error_code ?? '', params: props.def.error_params ?? null }
+})
+
 const sub = computed(() => {
   const got = fmtSize(downloaded.value)
   const range = sizeKnown.value ? fmtRange(downloaded.value, total.value) : `已下 ${got}`
@@ -79,10 +90,12 @@ const sub = computed(() => {
     const size = sizeKnown.value ? fmtSize(total.value) : got
     return finishedAt.value ? `${size} · 完成于 ${fmtTime(finishedAt.value)}` : `${size} · ${segN.value} 线程`
   }
-  if (state.value === 'error') return errorLine(props.snap?.error || props.def.error) || '下载失败'
+  if (state.value === 'error') {
+    return errorLine(err.value.raw, err.value.code, err.value.params) || '下载失败'
+  }
   if (state.value === 'downloading' || state.value === 'preparing') {
     const s = props.snap
-    const warn = s?.error ? ` · ${errorLine(s.error)}` : ''
+    const warn = s?.error ? ` · ${errorLine(s.error, s.error_code, s.error_params)}` : ''
     if (verifying.value) return `已下完 ${got} · 正在核对校验和`
     if (!sizeKnown.value) return `大小未知 · ${fmtSpeed(s?.speed ?? 0)} · 已下 ${got}${warn}`
     return `${fmtSpeed(s?.speed ?? 0)} · 剩余 ${fmtEta(s?.eta ?? 0)} · ${range}${warn}`

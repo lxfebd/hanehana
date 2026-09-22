@@ -107,6 +107,9 @@ export interface SegmentInfo {
   size: number
 }
 
+/** 引擎错误码的参数（状态码、字节数、期望/实际摘要…）。没有参数时是 null。 */
+export type ErrorParams = Record<string, unknown> | null
+
 /** 一个任务的实时快照。字段与 engine-rs Task::snapshot() 逐一对齐。 */
 export interface TaskSnapshot {
   url: string
@@ -122,6 +125,15 @@ export interface TaskSnapshot {
   eta: number
   state: TaskState
   error: string
+  /**
+   * 与 `error` 原文配套的稳定错误码，'' = 当前没有错误。
+   *
+   * 界面按码取文案（见 shared/errors.ts）。原文只留作排查凭据：以前界面靠正则去认
+   * 引擎的英文原话，引擎改一个词用户就看到「下载中断」，两边谁也不敢动字符串。
+   * 主进程自己判定的失败没有码，仍走原文匹配兜底。
+   */
+  error_code: string
+  error_params: ErrorParams
   threads: number
   segments: SegmentInfo[]
   /** 完成时间（Unix 秒浮点），未完成时为 0 */
@@ -140,6 +152,9 @@ export interface EngineEvent {
   data?: Partial<TaskSnapshot> & { state?: TaskState }
   total?: number
   error?: string
+  /** error 事件专用：稳定错误码 + 参数，与快照里的 error_code/error_params 同源。 */
+  code?: string
+  params?: ErrorParams
   message?: string
 }
 
@@ -238,6 +253,14 @@ export interface TaskDef {
   total: number
   downloaded: number
   error: string
+  /**
+   * 最后一次失败的错误码/参数。可选：老任务记录里没有这两个键，
+   * 读回来就是 undefined，界面退回原文匹配。
+   * 必须跟着 error 一起落盘，否则重启后「磁盘空间不足」这种一眼能看懂的
+   * 提示会退化成「下载中断」。
+   */
+  error_code?: string
+  error_params?: ErrorParams
   finished_at: number
   /**
    * 期望校验和，形如 `sha256:<hex>`；空串 = 不校验。
@@ -285,6 +308,21 @@ export interface StatusCounts {
   queued: number
   done: number
   error: number
+}
+
+/**
+ * Ipc.Hello 的应答：应用信息 + 引擎自检结论。
+ *
+ * 引擎状态搭 hello 一起走，而不是让渲染层去读文件系统——渲染进程是 sandbox 的，
+ * 它既看不见 process.resourcesPath，也不该为了「引擎在不在」拿到 fs 权限。
+ */
+export interface HelloInfo {
+  name: string
+  version: string
+  engine_ok: boolean
+  engine_path: string
+  /** 引擎缺失时「怎么修」的人话；engine_ok=true 时为空串。 */
+  engine_hint: string
 }
 
 /**

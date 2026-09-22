@@ -300,10 +300,13 @@ export class Manager {
     if (free === null) return // 读不到可用空间就不拦，不能让预检本身制造失败
     const need = Math.max(0, snap.total - snap.downloaded) + SPACE_RESERVE
     if (need <= free) return
-    // 文案保持英文并与引擎同源（not enough space），渲染层 errors.ts 会翻成中文
-    // 并给建议；这里 kill 而丢弃进度，所以用户腾出空间后点「继续下载」能接着下。
+    // 用引擎同一个码（no_space），渲染层 errors.ts 按码取文案并给建议；原文保持
+    // 英文与引擎同源，只作排查凭据。这里 kill 而不丢弃进度，所以用户腾出空间后
+    // 点「继续下载」能接着下。
     task.fail(
       `not enough space on disk: need ${need} bytes, only ${free} bytes free in ${dirname(d.dest)}`,
+      'no_space',
+      { need, free, dir: dirname(d.dest) },
     )
   }
 
@@ -319,6 +322,9 @@ export class Manager {
     d.total = snap.total
     d.downloaded = snap.downloaded
     d.error = snap.error
+    // 码跟着原文一起落盘：重启后界面才能继续按码取文案，而不是退化成「下载中断」。
+    d.error_code = snap.error_code
+    d.error_params = snap.error_params
     d.finished_at = snap.finished_at
     this.persist(this.listDefs())
     this.pushProgress(d.id)
@@ -370,29 +376,42 @@ export class Manager {
     this.maybeStart()
   }
 
-  /** 失败任务重试 / 已完成任务重新下载：清掉旧实例与持久化进度，从头开始。 */
-  retry(id: string): void {
-    const task = this.tasks.get(id)
-    if (task) {
-      // 唯一该放弃断点的路径：让引擎删掉 .part 与 sidecar，重新下是一份新文件。
-      this.shutdownTask(task, true)
-      this.tasks.delete(id)
-    }
+  /**
+   * 失败任务重试 / 已完成任务重新下载：清掉旧实例与持久化进度，从头开始。
+   *
+   * 必须等旧进程真的死了再 spawn 新的：两个引擎进程同时写一份 .part 会互相踩坏，
+   * 而 Windows 上旧进程还压着句柄时新进程连文件都打不开。删三文件也放在进程
+   * 确认退出之后，理由同上（句柄没放，rmSync 只会 EPERM）。
+   */
+  async retry(id: string): Promise<void> {
     const d = this.defs.get(id)
     if (!d) return
+    const task = this.tasks.get(id)
+    if (task) {
+      await task.discard()
+      // await 期间任务可能被移除了，只删自己那一份
+      if (this.tasks.get(id) === task) this.tasks.delete(id)
+      // 只清断点，不动 dest：成品要等新下载 rename 覆盖。先删了万一新下载失败，
+      // 用户手里那份好的也没了。
+      for (const p of [`${d.dest}.part`, `${d.dest}.part.meta`]) await removeFile(p)
+    }
     d.state = ''
     d.downloaded = 0
     d.error = ''
+    // 码和原文一起清：留着老码的话，新一轮还没出错界面就已经写着上一次的病因。
+    d.error_code = ''
+    d.error_params = null
     d.finished_at = 0
     this.startOne(d)
     this.maybeStart()
   }
 
   setThreads(id: string, n: number): void {
-    this.tasks.get(id)?.setThreads(n)
+    const clamped = Math.min(32, Math.max(1, Math.floor(Number.isFinite(n) ? n : 1)))
+    this.tasks.get(id)?.setThreads(clamped)
     const d = this.defs.get(id)
     if (!d) return
-    d.threads = Math.max(1, Math.floor(n))
+    d.threads = clamped
     // 没有活着的实例时，新线程数只存在于内存；不落盘的话重启就回到旧值。
     this.persist(this.listDefs())
   }
@@ -485,13 +504,12 @@ export class Manager {
   }
 
   /**
-   * 停掉引擎子进程。默认保留断点（kill）；只有 retry 传 discard=true
-   * 让引擎删掉 .part 从头再下。Rust 引擎是子进程，不关会泄漏进程和管道。
+   * 停掉引擎子进程，保留断点。Rust 引擎是子进程，不关会泄漏进程和管道。
+   * 放弃断点的路径（retry）不走这里——那条要等 ack 再 kill，见 retry()。
    */
-  private shutdownTask(task: EngineTask, discard = false): void {
+  private shutdownTask(task: EngineTask): void {
     try {
-      if (discard) task.discard()
-      else task.kill()
+      task.kill()
     } catch {
       // 忽略
     }
@@ -513,7 +531,7 @@ export class Manager {
         this.resume(id)
         break
       case 'retry':
-        this.retry(id)
+        void this.retry(id)
         break
       default:
         break
@@ -544,7 +562,9 @@ export class Manager {
 
   stopAll(): void {
     for (const [id, task] of this.tasks) {
-      if (task.state === 'downloading') this.pause(id)
+      // preparing 也要停：探测中的任务放任不管，它探完就自己下起来了，
+      // 「全部暂停」之后还有任务在跑，用户只会当成按钮坏了。
+      if (task.state === 'downloading' || task.state === 'preparing') this.pause(id)
     }
   }
 
@@ -570,8 +590,17 @@ export class Manager {
     else if (action === 'clear-finished') await this.clearFinished()
   }
 
+  /**
+   * 占着并发槽位的任务数。
+   *
+   * 必须把 preparing 算进去：probe 阶段引擎进程已经起来、连接已经建了，只数
+   * downloading 的话上限 2 会放出 4 个进程同时探测（探测本身就是一条 HTTP 请求）。
+   * verifying 也算——那是在读整份文件算哈希，磁盘和 CPU 都占着。
+   */
   running(): number {
-    return [...this.tasks.values()].filter((t) => t.state === 'downloading').length
+    return [...this.tasks.values()].filter(
+      (t) => t.state === 'preparing' || t.state === 'downloading' || t.snapshot().verifying,
+    ).length
   }
 
   /** 把排队中的任务填到并发上限。 */
@@ -668,6 +697,10 @@ function restoredSnapshot(d: TaskDef | null): TaskSnapshot | null {
     eta: 0,
     state: d.state,
     error: d.error,
+    // 老任务记录里没有这两个键（undefined）→ 归一成 '' / null，
+    // 界面据此退回原文匹配，不会因为读不到码就把失败显示成「下载中断」。
+    error_code: d.error_code ?? '',
+    error_params: d.error_params ?? null,
     threads: d.threads,
     segments: [],
     finished_at: d.finished_at,

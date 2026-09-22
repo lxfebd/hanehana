@@ -4,6 +4,7 @@ import type { Game, ScrapeResult } from '../shared/types'
 import type {
   ActionResult,
   AddResult,
+  HelloInfo,
   SaveSettingsResult,
   Settings,
   TaskProgressPush,
@@ -11,7 +12,8 @@ import type {
 } from '../shared/types'
 
 const bridge = {
-  hello: (): Promise<{ name: string; version: string }> => ipcRenderer.invoke(Ipc.Hello),
+  /** 应用信息 + 引擎自检结论（设置页据此说明下载为什么不可用）。 */
+  hello: (): Promise<HelloInfo> => ipcRenderer.invoke(Ipc.Hello),
 
   // 游戏库
   listGames: (): Promise<Game[]> => ipcRenderer.invoke(Ipc.GameList),

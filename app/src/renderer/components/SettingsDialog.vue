@@ -5,7 +5,7 @@
  * save() 必须逐个字段列出来（而不是 {...form}）：Settings 加了字段时这里
  * 漏一个，主进程会把它回落到默认值，用户会发现「勾了没保存」。
  */
-import { computed, reactive } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { FolderOpen } from 'lucide-vue-next'
 import { Button, Checkbox, Form, Input, InputNumber, Switch, TabPane, Tabs } from 'ant-design-vue'
 import type { Settings } from '../../shared/types'
@@ -15,6 +15,23 @@ const props = defineProps<{ settings: Settings }>()
 const emit = defineEmits<{ save: [s: Settings] }>()
 
 const form = reactive<Settings>({ ...props.settings })
+
+/**
+ * 引擎自检结果（主进程 hello 顺带回来）。
+ *
+ * 引擎缺失时应用其余部分完全正常，只有下载会失败，而失败原因藏在任务行里——
+ * 用户不会想到是引擎不在。所以设置页直接写明「不可用 + 怎么修」。
+ */
+const engine = ref<{ ok: boolean; path: string; hint: string } | null>(null)
+
+onMounted(async () => {
+  try {
+    const info = await window.hh.hello()
+    engine.value = { ok: info.engine_ok, path: info.engine_path, hint: info.engine_hint }
+  } catch {
+    engine.value = null
+  }
+})
 
 /** 代理形状的校验与主进程同源（shared/proxy），免得出现「界面放行、主进程拒绝」。 */
 const proxyError = computed(() => proxyFormatError(form.proxy))
@@ -61,6 +78,10 @@ function save(): void {
 
     <Tabs defaultActiveKey="download" tab-position="left">
       <TabPane key="download" tab="下载">
+        <div v-if="engine && !engine.ok" class="card card-warn">
+          <div class="lbl">下载引擎不可用</div>
+          <div class="hint">{{ engine.hint }}</div>
+        </div>
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label="默认分片数">
@@ -177,8 +198,16 @@ function save(): void {
           </div>
           <div class="about-row">
             <span class="about-key">引擎</span>
-            <span class="about-val">Rust 多线程下载引擎（FastDrop）</span>
+            <span class="about-val">
+              Rust 多线程下载引擎（FastDrop）·
+              {{ engine === null ? '检测中…' : engine.ok ? '已就位' : '不可用' }}
+            </span>
           </div>
+          <div v-if="engine" class="about-row">
+            <span class="about-key">引擎路径</span>
+            <span class="about-val mono" :title="engine.path">{{ engine.path }}</span>
+          </div>
+          <div v-if="engine && !engine.ok" class="hint hint-err about-warn">{{ engine.hint }}</div>
           <div class="about-hint">问题反馈与更新公告见项目仓库 README。</div>
         </div>
       </TabPane>
@@ -207,6 +236,12 @@ function save(): void {
   border-radius: 12px;
   padding: 16px;
 }
+.card-warn {
+  margin-bottom: 12px;
+  border-color: var(--hh-color-error);
+}
+.card-warn .lbl { color: var(--hh-color-error); }
+.about-warn { margin-top: 8px; }
 .row {
   display: flex;
   gap: 8px;

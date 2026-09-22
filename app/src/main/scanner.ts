@@ -9,8 +9,9 @@
  *   - 排除名字明显不是游戏的（unins000、汉化补丁、字体安装、读我文件等）
  *   - 每目录取「最像启动器的那个」：名字与文件夹名相似的 exe 优先
  */
-import { readdirSync, statSync } from 'node:fs'
-import { basename, join } from 'node:path'
+import { readdir, stat } from 'node:fs/promises'
+import { basename, join, sep } from 'node:path'
+import type { Dirent } from 'node:fs'
 
 export interface ScanHit {
   dir: string
@@ -44,41 +45,58 @@ function looksLikeTool(name: string): boolean {
 /**
  * 递归扫描 dir 下所有含可执行文件的目录。
  * maxDepth 防跑进深嵌套的工具链目录。
+ *
+ * 异步遍历（一批一批读，每批之间让出事件循环）：同步递归扫一个几千个文件夹的
+ * 游戏盘会把主进程钉死几秒到几十秒——那期间下载进度不推、界面不响应、托盘不刷新，
+ * 用户看到的是「软件卡死了」。
  */
-export function scanDir(root: string, maxDepth = 6): ScanHit[] {
+export async function scanDir(root: string, maxDepth = 6): Promise<ScanHit[]> {
   const hits: ScanHit[] = []
+  let level: string[] = [root]
 
-  function walk(dir: string, depth: number): void {
-    if (depth > maxDepth) return
-    let entries
-    try {
-      entries = readdirSync(dir, { withFileTypes: true })
-    } catch {
-      return // 无权限/已删除的目录直接跳过
-    }
-
-    const exes: string[] = []
-    const subdirs: string[] = []
-    for (const e of entries) {
-      if (e.isDirectory()) subdirs.push(join(dir, e.name))
-      else if (e.isFile() && /\.(exe|bat|lnk)$/i.test(e.name)) exes.push(join(dir, e.name))
-    }
-
-    // 本目录有 exe 就判定为游戏目录（exe 与目录名相似度优先）
-    if (exes.length > 0) {
-      const pick = pickLauncher(exes, dir)
-      if (pick) {
-        hits.push({ dir, exePath: pick, rawTitle: basename(dir) })
-        // 已命中就不同时扫子目录里的启动器（避免把汉化补丁目录又收一遍）
-        return
+  for (let depth = 0; depth <= maxDepth && level.length > 0; depth++) {
+    const next: string[] = []
+    for (let i = 0; i < level.length; i += BATCH) {
+      const batch = level.slice(i, i + BATCH)
+      const listed = await Promise.all(batch.map(listDir))
+      for (let k = 0; k < batch.length; k++) {
+        const dir = batch[k]
+        const entries = listed[k]
+        const exes: string[] = []
+        for (const e of entries) {
+          if (e.isDirectory()) next.push(join(dir, e.name))
+          else if (e.isFile() && /\.(exe|bat|lnk)$/i.test(e.name)) exes.push(join(dir, e.name))
+        }
+        // 本目录有 exe 就判定为游戏目录（exe 与目录名相似度优先）
+        if (exes.length > 0) {
+          const pick = pickLauncher(exes, dir)
+          if (pick) {
+            hits.push({ dir, exePath: pick, rawTitle: basename(dir) })
+            // 已命中就不同时扫子目录里的启动器（避免把汉化补丁目录又收一遍）。
+            // 前缀必须带分隔符：否则 `Gold` 会把兄弟目录 `Gold2` 的子树一起剪掉。
+            const prefix = dir.toLowerCase() + sep
+            for (let j = next.length - 1; j >= 0; j--) {
+              if (next[j].toLowerCase().startsWith(prefix)) next.splice(j, 1)
+            }
+          }
+        }
       }
     }
-
-    for (const s of subdirs) walk(s, depth + 1)
+    level = next
   }
-
-  walk(root, 0)
   return dedupe(hits)
+}
+
+/** 一次并发读多少个目录。太大等于又把事件循环占满，太小则扫得慢。 */
+const BATCH = 16
+
+/** 读一个目录；无权限/已删除/路径不是目录都返回空列表，不打断整次扫描。 */
+async function listDir(dir: string): Promise<Dirent[]> {
+  try {
+    return await readdir(dir, { withFileTypes: true })
+  } catch {
+    return []
+  }
 }
 
 /**
@@ -122,9 +140,9 @@ function dedupe(hits: ScanHit[]): ScanHit[] {
 }
 
 /** 校验一个目录确实存在且是目录。 */
-export function isValidDir(p: string): boolean {
+export async function isValidDir(p: string): Promise<boolean> {
   try {
-    return statSync(p).isDirectory()
+    return (await stat(p)).isDirectory()
   } catch {
     return false
   }

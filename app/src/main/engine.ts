@@ -16,10 +16,15 @@ import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
-import type { EngineCommand, EngineEvent, TaskSnapshot } from '../shared/types'
+import { app } from 'electron'
+import type { EngineCommand, EngineEvent, ErrorParams, TaskSnapshot } from '../shared/types'
 import { engineProxyFor } from './netConfig'
 
 const CHUNK = 64 * 1024
+
+/** 暂停/停止命令的确认等待上限。超时按「引擎没听见」处理，见 pause()/discard()。 */
+const PAUSE_ACK_MS = 1500
+const STOP_ACK_MS = 1000
 
 /** 定位 fastdrop-engine 可执行文件。 */
 export function enginePath(): string {
@@ -36,6 +41,28 @@ export function enginePath(): string {
   return join(root, 'engine-rs', 'target', 'release', exe)
 }
 
+export interface EngineStatus {
+  ok: boolean
+  path: string
+  hint: string
+}
+
+/**
+ * 引擎自检。
+ *
+ * 为什么启动就查：引擎缺失（打包漏了 extraResources、开发时忘了 cargo build）
+ * 的表现是「应用一切正常，一点下载就失败」，用户几乎不可能自己想到是引擎不在。
+ * 结论交给设置页展示，见 Ipc.Hello。
+ */
+export function engineStatus(): EngineStatus {
+  const path = enginePath()
+  if (existsSync(path)) return { ok: true, path, hint: '' }
+  const hint = app.isPackaged
+    ? '安装包里没带下载引擎（fastdrop-engine.exe），下载功能不可用。请重新安装，或把这个情况反馈给开发者。'
+    : `没找到下载引擎，下载功能不可用。在仓库根目录执行：cd engine-rs && cargo build --release（期望路径 ${path}）`
+  return { ok: false, path, hint }
+}
+
 function emptySnap(url: string, dest: string, state: string): TaskSnapshot {
   return {
     url,
@@ -48,6 +75,8 @@ function emptySnap(url: string, dest: string, state: string): TaskSnapshot {
     eta: 0,
     state: state as TaskSnapshot['state'],
     error: '',
+    error_code: '',
+    error_params: null,
     threads: 0,
     segments: [],
     finished_at: 0,
@@ -59,7 +88,25 @@ function emptySnap(url: string, dest: string, state: string): TaskSnapshot {
 export class EngineTask {
   state: TaskSnapshot['state'] = 'idle'
   error = ''
+  /**
+   * 与 `error` 配套的稳定错误码，'' = 没有错误或主进程自产的失败。
+   * 必须和 error 同时改：只改原文的话界面会拿上一条错误的码去查文案，
+   * 报出来的病因和原文对不上。一律走 setError()/clearError()。
+   */
+  errorCode = ''
+  errorParams: ErrorParams = null
   speed = 0
+
+  /** 记一次失败。主进程自己判定的失败没有码，传空串即可（界面退回原文匹配）。 */
+  private setError(msg: string, code = '', params: ErrorParams = null): void {
+    this.error = msg
+    this.errorCode = code
+    this.errorParams = params
+  }
+
+  private clearError(): void {
+    this.setError('')
+  }
 
   onState?: (task: EngineTask) => void
   onProgress?: (task: EngineTask) => void
@@ -130,12 +177,16 @@ export class EngineTask {
       this.alive = true
       return
     }
-    const exe = enginePath()
-    if (!existsSync(exe)) {
-      this.error = `Rust 引擎未找到: ${exe}`
+    const st = engineStatus()
+    if (!st.ok) {
+      // 这里给的是「怎么修」，不是「文件不在」：用户看到的是任务失败原因，
+      // 一句路径帮不上忙（见 engineStatus）。hint 走 params 而不是靠正则认原文：
+      // 开发态的 hint 是「去 cargo build」，安装态是「重装」，同一句固定 advice 盖不住。
+      this.setError(st.hint, 'engine_missing', { hint: st.hint })
       this.setState('error')
       return
     }
+    const exe = st.path
     const proc = spawn(exe, [], {
       stdio: ['pipe', 'pipe', 'pipe'],
       // 不让子进程持有终端句柄，避免打包后残留窗口
@@ -171,7 +222,7 @@ export class EngineTask {
 
     proc.on('error', (e) => {
       if (this.proc !== proc) return
-      this.error = `引擎启动失败: ${e.message}`
+      this.setError(`引擎启动失败: ${e.message}`, 'engine_spawn_failed')
       this.setState('error')
     })
     proc.on('close', () => {
@@ -190,7 +241,8 @@ export class EngineTask {
   /** 启动/恢复这一轮下载。真正发命令在 resolveThenSend() 里——代理要先按地址解析。 */
   run(): void {
     if (this.state === 'downloading' || this.state === 'done') return
-    this.error = ''
+    this.clearPauseWatchdog()
+    this.clearError()
     this.spawnProc()
     // 「引擎到底起没起来」只能看子进程，不能看状态。失败任务的状态本来就是 error，
     // 拿状态当闸门会让「继续下载」「全部开始」「重试全部失败」全部静默变成空操作，
@@ -199,8 +251,8 @@ export class EngineTask {
     this.setState('preparing')
     // 上一轮的失败原因不能留着：重下的一瞬间界面还写着「磁盘空间不足」，
     // 用户会以为点了没生效。状态已经是准备中了，理由就该清空，等新错误再说。
-    if (this.snap && this.snap.error) {
-      this.snap = { ...this.snap, error: '' }
+    if (this.snap && (this.snap.error || this.snap.error_code)) {
+      this.snap = { ...this.snap, error: '', error_code: '', error_params: null }
     }
     void this.resolveThenSend()
   }
@@ -218,7 +270,10 @@ export class EngineTask {
     try {
       this.effectiveProxy = await engineProxyFor(this.url, this.proxySetting)
     } catch (e) {
-      this.error = `代理配置没能生效：${e instanceof Error ? e.message : String(e)}`
+      this.setError(
+        `代理配置没能生效：${e instanceof Error ? e.message : String(e)}`,
+        'proxy_resolve_failed',
+      )
       this.setState('error')
       return
     }
@@ -259,9 +314,9 @@ export class EngineTask {
       }
       // run 也带上限速与校验和：同一个子进程可能被 resume/pause 反复拉起，
       // 期间用户在设置里改过限速，只靠 probe 那条就把新值漏掉了。
-      this.send({ cmd: 'run', rate_limit_kbps: this.rateLimitKbps, checksum: this.checksum })
+      this.sendRun()
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e)
+      this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
       this.setState('error')
     }
   }
@@ -280,10 +335,18 @@ export class EngineTask {
     // 回调里可能就 fail() 了（磁盘装不下）：那时进程已被终止、状态已是 error，
     // 再发 run 等于对着一具尸体下命令。
     if (!this.alive || this.state === 'error' || this.state === 'cancelled') return
+    // 探测期间用户点了暂停：不能把 run 发出去。发了就是「按了暂停它还在下」——
+    // probed 已经记下，resume 走 run() 时会直接发 run，不用重探。
+    if (this.state === 'paused') return
+    this.sendRun()
+  }
+
+  /** 发 run 命令（带上本轮的限速与校验和）。失败就地报成 error，不让它静默卡住。 */
+  private sendRun(): void {
     try {
       this.send({ cmd: 'run', rate_limit_kbps: this.rateLimitKbps, checksum: this.checksum })
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e)
+      this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
       this.setState('error')
     }
   }
@@ -294,12 +357,31 @@ export class EngineTask {
     try {
       this.send({ cmd: 'pause' })
     } catch (e) {
-      this.error = e instanceof Error ? e.message : String(e)
+      this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
       this.setState('error')
+      return
     }
+    // 兜底：分段正卡在 socket 读上时，引擎可能几秒都不回暂停确认，而界面已经
+    // 写着「已暂停」、速率却还在涨——用户看到的正是「暂停没用」。1.5s 没等到
+    // 确认就终止进程。不发 stop，所以 .part 与 sidecar 都留着，继续下载能接着下。
+    this.clearPauseWatchdog()
+    this.pauseWatchdog = setTimeout(() => {
+      this.pauseWatchdog = null
+      if (this.state === 'paused') this.terminate()
+    }, PAUSE_ACK_MS)
+  }
+
+  /** 暂停确认看门狗，见 pause()。任何离开 paused 的路径都必须清掉它。 */
+  private pauseWatchdog: ReturnType<typeof setTimeout> | null = null
+
+  private clearPauseWatchdog(): void {
+    if (!this.pauseWatchdog) return
+    clearTimeout(this.pauseWatchdog)
+    this.pauseWatchdog = null
   }
 
   resume(): void {
+    this.clearPauseWatchdog()
     this.run()
   }
 
@@ -342,12 +424,23 @@ export class EngineTask {
     this.setState('cancelled')
   }
 
-  /** 终止子进程但放弃已下进度：只有「重新下载」(retry) 该用。 */
-  discard(): void {
-    try {
-      this.send({ cmd: 'stop' })
-    } catch {
-      // 进程可能已经退出
+  /**
+   * 放弃已下进度并终止子进程：只有「重新下载」(retry) 该用。
+   *
+   * 必须等引擎对 `stop` 作出反应再 kill：引擎收到 stop 要收尾分段、删 .part 与
+   * sidecar，那是一串磁盘操作。以前这里发完命令立刻 proc.kill()，stop 有没有被
+   * 处理全看运气，剩下的半截文件就留在磁盘上（retry 的调用方随后补删，但那是
+   * 兜底，不是设计）。1s 没退出就强杀。
+   */
+  async discard(): Promise<void> {
+    const proc = this.proc
+    if (proc && proc.exitCode === null && proc.signalCode === null) {
+      try {
+        this.send({ cmd: 'stop' })
+      } catch {
+        // 进程可能已经退出
+      }
+      await waitExit(proc, STOP_ACK_MS)
     }
     this.terminate()
     this.setState('cancelled')
@@ -360,11 +453,16 @@ export class EngineTask {
    * 走 kill 而不是 discard。error 必须先进快照再改状态，理由同 handleEvent 的
    * error 分支：反过来的话失败原因落不进盘。
    */
-  fail(reason: string): void {
+  fail(reason: string, code = '', params: ErrorParams = null): void {
     if (this.state === 'done' || this.state === 'error') return
     this.terminate()
-    this.error = reason
-    this.snap = { ...(this.snap ?? emptySnap(this.url, this.dest, 'error')), error: reason }
+    this.setError(reason, code, params)
+    this.snap = {
+      ...(this.snap ?? emptySnap(this.url, this.dest, 'error')),
+      error: reason,
+      error_code: code,
+      error_params: params,
+    }
     this.forceState('error')
     this.emitProgress()
   }
@@ -372,6 +470,7 @@ export class EngineTask {
   private terminate(): void {
     this.alive = false
     this.writeBuf = []
+    this.clearPauseWatchdog()
     if (this.proc) {
       this.proc.kill()
       this.proc = null
@@ -460,6 +559,14 @@ export class EngineTask {
         cur.eta = Number(cur.eta) || 0
         cur.finished_at = Number(cur.finished_at) || 0
         cur.error = cur.error ?? ''
+        cur.error_code = cur.error_code ?? ''
+        cur.error_params = cur.error_params ?? null
+        // 码必须跟原文同生共死：原文空了码也得空。否则界面会拿上一条错误的码
+        // 去查文案，报出来的病因和任务当前的实际状态对不上。
+        if (!cur.error) {
+          cur.error_code = ''
+          cur.error_params = null
+        }
         cur.segments = cur.segments ?? []
         // 校验标志只认当前这一条应答，不继承上一条：preparing 的 ack 不带这个字段，
         // 用展开留下的旧值会让任务从上一轮就一直挂着「校验中」。
@@ -474,6 +581,8 @@ export class EngineTask {
             this.pendingRun && data.state === 'idle' ? 'preparing' : data.state
           cur.state = ns
           this.setState(ns)
+          // 引擎自己报「已暂停」= 它听见了 pause 命令，看门狗可以撤了
+          if (ns === 'paused') this.clearPauseWatchdog()
           if (this.state !== 'downloading') this.speed = 0
         } else {
           this.speed = Number(data.speed ?? 0) || 0
@@ -506,13 +615,19 @@ export class EngineTask {
         break
       }
       case 'error': {
-        this.error = String(msg.error ?? '未知错误')
+        // 码只认这条事件自己带的，不去继承上一条：任务重试成功后老码还留在快照里，
+        // 继承过来就是「新错误配旧病因」。
+        const code = typeof msg.code === 'string' ? msg.code : ''
+        const params = (msg.params ?? null) as ErrorParams
+        this.setError(String(msg.error ?? '未知错误'), code, params)
         // 错误文案也要先进快照，再通知状态——反过来的话 onState 读到的还是旧快照，
         // 失败原因就落不到盘上，重启后列表只剩一个「失败」而没有为什么。
         // 校验失败也走这条：文件留着，进度留着，只把「校验中」摘掉。
         this.snap = {
           ...(this.snap ?? emptySnap(this.url, this.dest, 'error')),
           error: this.error,
+          error_code: code,
+          error_params: params,
           verifying: false,
         }
         this.forceState('error')
@@ -569,6 +684,26 @@ export class EngineTask {
       // UI 回调不应影响下载本身
     }
   }
+}
+
+/**
+ * 等子进程退出，最多等 ms 毫秒。
+ *
+ * 用途是「发了收尾命令再给它一点时间做完」：直接 kill 会把它正在写的东西截断。
+ * 超时也算正常返回——调用方接着强杀，语义是「等过了，它没动静」。
+ */
+function waitExit(proc: ChildProcess, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      proc.off('exit', onExit)
+      resolve()
+    }, ms)
+    function onExit(): void {
+      clearTimeout(timer)
+      resolve()
+    }
+    proc.once('exit', onExit)
+  })
 }
 
 function logPath(): string {

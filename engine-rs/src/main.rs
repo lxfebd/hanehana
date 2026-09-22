@@ -10,10 +10,18 @@
 //!
 //!   stdout  {"event":"progress","data":{...snapshot...}}   (every 100 ms while downloading)
 //!           {"event":"done","total":N}
-//!           {"event":"error","error":"..."}
+//!           {"event":"error","error":"<raw text>","code":"<snake_case>","params":{...}}
 //!
 //! Snapshot keys: url, dest, filename, total, downloaded, progress, speed, eta, state,
-//! error, threads, segments, **verifying**, **rate_limit_kbps**.
+//! error, **error_code**, **error_params**, threads, segments, **verifying**,
+//! **rate_limit_kbps**.
+//!
+//! `error` stays the raw English text for logs; the UI keys its wording off `code`
+//! (`no_space`, `permission_denied`, `http_status` + `params.status`,
+//! `checksum_mismatch` + `{alg,expected,actual}`, `range_ignored`, `truncated`, …) and
+//! only falls back to pattern-matching `error` for messages the main process makes
+//! itself. `code` is `""` while the task has no error, `params` is `null` when the code
+//! carries none.
 //!
 //! `rate_limit_kbps` is KiB/s shared by every segment of the task (aria2's
 //! `--max-download-limit` semantics), 0 = unlimited. `checksum` is `"sha256:<hex>"` /
@@ -27,9 +35,12 @@
 //! During verification `verifying` is true while `state` stays "downloading"; the
 //! terminal snapshot is always emitted **before** `done`/`error`.
 //!
-//! Segment offsets and the `.part.meta` sidecar keep the same format across engine
-//! versions, so resume data written by an older version still works. Unknown-length
-//! downloads (no `Content-Length`, no `206`) never send `Range` and cannot be resumed.
+//! The `.part.meta` sidecar records the fsync-confirmed watermark per segment plus a
+//! `part_len` assertion; offsets written by an engine that predates those two fields are
+//! discarded on purpose — they may claim bytes that only ever reached the page cache,
+//! and resuming over such a hole silently produces a zero-filled file. Segment offsets
+//! themselves are otherwise format-stable. Unknown-length downloads (no
+//! `Content-Length`, no `206`) never send `Range` and cannot be resumed.
 
 use std::io::{SeekFrom, Write};
 use std::path::Path;
@@ -70,6 +81,11 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(40);
 const CHUNK_IDLE: Duration = Duration::from_secs(60);
 /// 指数退避封顶。重试次数不再封顶：下载任务应该无限重连，断多久都能续上。
 const RETRY_BACKOFF_CAP: u64 = 30;
+/// 攒够这么多新写入就 `sync_data` 一次，并把该段的「已落盘水位」推到这里。
+/// 边车只记已落盘的水位：不 fsync 的话，断电/强制结束进程后边车会说「这段下过了」，
+/// 而盘上其实还是 `set_len` 撑出来的空洞——续传跳过这段，成品就是一堆零字节。
+/// 64 MiB 是吞吐与「崩溃最多重下多少」的折中（1 GiB/s 下约 15 秒一次）。
+const FLUSH_BYTES: u64 = 64 * 1024 * 1024;
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                           (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 /// 引擎是长驻进程：每次 `probe` 建一个新任务并领一个递增代号。后台校验等异步结果
@@ -83,13 +99,16 @@ struct Segment {
     start: u64,
     end: u64,
     downloaded: u64,
+    /// 已经 `sync_data` 确认落盘的字节数（相对段首），恒 ≤ `downloaded`。
+    /// 写进边车的是它，不是 `downloaded`：崩溃后只有这部分是真的在盘上。
+    flushed: u64,
     status: String,
     speed: f64,
 }
 
 impl Segment {
     fn new(index: usize, start: u64, end: u64) -> Self {
-        Self { index, start, end, downloaded: 0, status: "waiting".into(), speed: 0.0 }
+        Self { index, start, end, downloaded: 0, flushed: 0, status: "waiting".into(), speed: 0.0 }
     }
     fn size(&self) -> u64 {
         self.end - self.start + 1
@@ -323,11 +342,13 @@ async fn hash_file<D: Digest + Send>(path: &str) -> Result<String, String> {
         .collect())
 }
 
-/// 后台校验的产物：`error` 为 None 表示通过，否则是给用户看的整句错误。
+/// 后台校验的产物：`error` 为 None 表示通过，否则是给用户看的整句错误 + 稳定码。
 struct VerifyResult {
     task_id: u64,
     gen: usize,
     error: Option<String>,
+    code: &'static str,
+    params: Value,
 }
 
 async fn digest_file(cs: &Checksum, path: &str) -> Result<String, String> {
@@ -340,22 +361,30 @@ async fn digest_file(cs: &Checksum, path: &str) -> Result<String, String> {
 
 /// 起一次校验。三种结果都要变成可读文案：通过 / 不一致（保留文件不删）/ 读盘失败。
 async fn run_verify(cs: Checksum, path: String, task_id: u64, gen: usize, tx: mpsc::UnboundedSender<VerifyResult>) {
-    let error = match digest_file(&cs, &path).await {
+    let (error, code, params) = match digest_file(&cs, &path).await {
         Ok(actual) => {
             if actual == cs.hex {
-                None
+                (None, "", Value::Null)
             } else {
-                Some(format!(
-                    "checksum mismatch: expected {}, got {}:{}",
-                    cs.display(),
-                    cs.alg.label(),
-                    actual
-                ))
+                (
+                    Some(format!(
+                        "checksum mismatch: expected {}, got {}:{}",
+                        cs.display(),
+                        cs.alg.label(),
+                        actual
+                    )),
+                    "checksum_mismatch",
+                    json!({"alg": cs.alg.label(), "expected": cs.hex, "actual": actual}),
+                )
             }
         }
-        Err(e) => Some(format!("checksum verify failed: {e}")),
+        Err(e) => (
+            Some(format!("checksum verify failed: {e}")),
+            "checksum_verify_failed",
+            Value::Null,
+        ),
     };
-    let _ = tx.send(VerifyResult { task_id, gen, error });
+    let _ = tx.send(VerifyResult { task_id, gen, error, code, params });
 }
 
 struct Task {
@@ -371,6 +400,10 @@ struct Task {
     /// 单独记这个是因为 `total == 0` 阶段段没有确定边界，不能靠 `Segment::done()` 判完成，
     /// 否则写进第一个字节就会「全段完成」→ 半截文件被 rename 成成品。
     stream_done: bool,
+    /// 边车是否可信：`build_segments` 读完边车后给的结论（url/total/threads/part_len
+    /// 全部对得上）。`ensure_part` 拿它和 `.part` 的真实长度一起判「能不能续传」，
+    /// 只看长度等于 total 是不够的——长度对得上但边车来自另一次布局的残留照样会错位。
+    resume_ok: bool,
     /// 完成后校验和（None = 不校验，完全不读盘）。
     checksum: Option<Checksum>,
     /// 正在做 rename 前的校验。快照里回传给 UI 显示「校验中」，`state` 仍是 downloading。
@@ -384,6 +417,9 @@ struct Task {
     id: u64,
     state: String,
     error: String,
+    /// 与 `error` 原文配套的稳定错误码 / 参数。界面按码查文案，原文只留作排查凭据。
+    error_code: String,
+    error_params: Value,
     speed: f64,
     segments: Vec<Segment>,
     client: reqwest::Client,
@@ -396,6 +432,12 @@ struct Task {
 
 struct FetchErr {
     msg: String,
+    /// 稳定错误码（snake_case），随 `error` 事件和快照一起上报。
+    /// 界面按码查文案，`msg` 只作为原文留档：以前界面靠正则去认英文原话，
+    /// 引擎改一个词用户就看到「下载中断」，两边谁也不敢动字符串。
+    code: &'static str,
+    /// 码的参数（状态码、字节数、期望/实际摘要…），没有就是 `Null`。
+    params: Value,
     fatal: bool,
     /// 服务器无视了 Range 请求（本次 from>0）。这类错误「原地重试」毫无意义——
     /// 每次都会拿到整份文件。worker 收到它要把该段 `done` 归零、重新 seek 到段首，
@@ -403,7 +445,94 @@ struct FetchErr {
     restart_from_zero: bool,
 }
 
+impl FetchErr {
+    fn new(code: &'static str, msg: impl Into<String>) -> Self {
+        Self { msg: msg.into(), code, params: Value::Null, fatal: false, restart_from_zero: false }
+    }
+    fn fatal(code: &'static str, msg: impl Into<String>) -> Self {
+        Self { fatal: true, ..Self::new(code, msg) }
+    }
+    fn with_params(mut self, params: Value) -> Self {
+        self.params = params;
+        self
+    }
+    fn restarting(mut self) -> Self {
+        self.restart_from_zero = true;
+        self
+    }
+}
+
+/// 把 reqwest 的错误链归到一个稳定码上。分类顺序即优先级，和界面文案表一致：
+/// 代理填错必须报「代理没生效」，不能被笼统的「连不上服务器」盖掉。
+fn req_code(e: &reqwest::Error) -> &'static str {
+    let s = req_err(e).to_lowercase();
+    if s.contains("proxy") {
+        "proxy_invalid"
+    } else if s.contains("dns") || s.contains("lookup") || s.contains("name resolution") || s.contains("name does not resolve") {
+        "dns"
+    } else if s.contains("certificate") || s.contains("tls") || s.contains("ssl") || s.contains("invalid peer") {
+        "tls"
+    } else if s.contains("refused") || s.contains("tcp connect error") || s.contains("connect") {
+        "connect_refused"
+    } else if s.contains("redirect") {
+        "redirect_loop"
+    } else {
+        "request_failed"
+    }
+}
+
+/// 把磁盘错误归到稳定码。Windows 的 `raw_os_error` 才是真凭据：
+/// 112 磁盘满、36 路径太长、123 文件名非法、5 无权限/被占用。
+fn io_code(e: &std::io::Error) -> &'static str {
+    if e.kind() == std::io::ErrorKind::PermissionDenied {
+        return "permission_denied";
+    }
+    match e.raw_os_error().unwrap_or(0) {
+        112 => "no_space",
+        36 => "name_too_long",
+        5 | 32 => "permission_denied",
+        123 | 124 => "invalid_filename",
+        _ => "part_io",
+    }
+}
+
+/// 统一的 `error` 事件形状。`error` 仍是原文（老主进程/日志都靠它），
+/// `code`/`params` 是新增字段：只加不改，旧读端照旧能跑。
+fn error_event(code: &str, msg: &str, params: &Value) -> Value {
+    json!({"event": "error", "error": msg, "code": code, "params": params})
+}
+
+/// 磁盘类错误一律 fatal：重试不会让磁盘腾出空间、也不会让只读目录变得可写。
+fn part_io_err(e: std::io::Error) -> FetchErr {
+    let code = io_code(&e);
+    let os = e.raw_os_error();
+    FetchErr::fatal(code, e.to_string()).with_params(json!({"os_error": os}))
+}
+
+/// 「服务器少发了字节」的错误。两条路径（干净 EOF / 流中途报错）共用同一形状，
+/// 免得同一个病因在界面上出现两种文案。
+fn truncated_err(written: u64, expect: u64) -> FetchErr {
+    FetchErr::new("truncated", format!("truncated: got {written} of {expect} bytes"))
+        .with_params(json!({"got": written, "expect": expect}))
+}
+
 impl Task {
+    /// 记一次失败。原文、码、参数必须同时更新：只改 `error` 的话界面会拿上一条
+    /// 错误的码去查文案，报出来的病因和原文对不上。
+    fn fail(&mut self, code: &str, msg: impl Into<String>, params: Value) {
+        self.error = msg.into();
+        self.error_code = code.to_string();
+        self.error_params = params;
+    }
+    fn fail_fetch(&mut self, e: &FetchErr) {
+        self.fail(e.code, e.msg.clone(), e.params.clone());
+    }
+    fn clear_error(&mut self) {
+        self.error = String::new();
+        self.error_code = String::new();
+        self.error_params = Value::Null;
+    }
+
     fn tmp_path(&self) -> String {
         format!("{}.part", self.dest)
     }
@@ -415,6 +544,7 @@ impl Task {
         let n = self.threads.max(1);
         let step = self.total / n as u64;
         self.segments.clear();
+        self.resume_ok = false;
         if self.unknown_len {
             // 长度未知：只有一条流，段的真边界要等 EOF 才知道（见 `worker_stream`）。
             // 这里放一个占位段，让快照的 threads 恒为 1，并且**不读边车**——
@@ -430,15 +560,21 @@ impl Task {
         }
         if let Some(saved) = self.load_sidecar() {
             // Resume offsets are only meaningful if the layout is identical.
+            // `part_len` 是「写边车那一刻 `.part` 已经被分配到多大」：只有它等于 total，
+            // 才说明这份偏移是在一个完整尺寸的 `.part` 上量出来的。
             let layout_ok = saved.get("url").and_then(|v| v.as_str()) == Some(self.url.as_str())
                 && saved.get("total").and_then(|v| v.as_u64()) == Some(self.total)
-                && saved.get("threads").and_then(|v| v.as_u64()) == Some(n as u64);
+                && saved.get("threads").and_then(|v| v.as_u64()) == Some(n as u64)
+                && saved.get("part_len").and_then(|v| v.as_u64()) == Some(self.total);
+            self.resume_ok = layout_ok;
             if layout_ok {
                 if let Some(segs) = saved.get("segments").and_then(|v| v.as_object()) {
                     for s in &mut self.segments {
                         let key = s.index.to_string();
-                        let got = segs.get(&key).and_then(|v| v.as_u64()).unwrap_or(0);
-                        s.downloaded = got.min(s.size());
+                        // 边车里记的就是已落盘水位，读回来两个值同源。
+                        let got = segs.get(&key).and_then(|v| v.as_u64()).unwrap_or(0).min(s.size());
+                        s.downloaded = got;
+                        s.flushed = got;
                     }
                 }
             }
@@ -448,11 +584,15 @@ impl Task {
     fn save_sidecar(&self) {
         let mut m = serde_json::Map::new();
         for s in &self.segments {
-            m.insert(s.index.to_string(), json!(s.downloaded));
+            // 只记已落盘的水位。记 `downloaded` 的话，进程被强杀/断电后续传会跳过
+            // 那些还躺在页缓存里的字节，成品出现零字节空洞——而这种损坏要到用户
+            // 解包时才暴露。
+            m.insert(s.index.to_string(), json!(s.flushed.min(s.downloaded)));
         }
         let obj = json!({
             "url": self.url, "total": self.total,
             "threads": self.segments.len(), "segments": m,
+            "part_len": self.total,
         });
         let tmp = format!("{}.tmp", self.sidecar_path());
         if let Ok(mut f) = std::fs::File::create(&tmp) {
@@ -474,18 +614,19 @@ impl Task {
     /// 续传前必须校验 `.part` 的真实状态，而不是盲信边车：文件若是新建的、或 `set_len`
     /// 之前长度不等于 `total`（老版本残留、磁盘截断、被外部删过/改过），边车记的偏移
     /// 就可能是「说下过了、文件里其实是空洞」。这两种情况都把本任务所有段的
-    /// `downloaded` 归零并重写边车，从头下。反过来，只有「文件已存在且长度正好等于
-    /// total」才认定边车可信、保留进度——真实续传（首跑就 set_len 到 total）永远满足，
+    /// `downloaded` 归零并重写边车，从头下。反过来，「文件已存在、长度正好等于 total、
+    /// 且边车自报的布局（url/total/threads/part_len）与本次一致」三条同时成立才保留进度
+    /// ——真实续传（首跑就 set_len 到 total、边车由同一布局写出）永远满足，
     /// 所以不会误清进度。
     ///
     /// 长度未知（`unknown_len`）时**绝不能 `set_len`**：此时 `total` 是 0（或上一轮读到
     /// 的旧长度），`set_len(0)` 会把手上正在写的文件直接截断。而且长度未知无法校验
     /// `.part` 里已有的前缀属于同一份内容（服务器换了文件、或上一轮只写了半截都看不出来），
     /// 所以这条路径不支持断点续传：偏移一律清零，从 0 重下。
-    async fn ensure_part(&mut self) -> Result<(), String> {
+    async fn ensure_part(&mut self) -> Result<(), FetchErr> {
         let p = self.tmp_path();
         if let Some(parent) = Path::new(&p).parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| e.to_string())?;
+            tokio::fs::create_dir_all(parent).await.map_err(part_io_err)?;
         }
         let meta_before = tokio::fs::metadata(&p).await.ok();
         let existed = meta_before.is_some();
@@ -496,17 +637,21 @@ impl Task {
             .create(true)
             .open(&p)
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(part_io_err)?;
         if !self.unknown_len && before != self.total {
-            f.set_len(self.total).await.map_err(|e| e.to_string())?;
+            f.set_len(self.total).await.map_err(part_io_err)?;
         }
         let after = f.metadata().await.map(|m| m.len()).unwrap_or(0);
         drop(f);
-        // 只有「本来就存在」且「改长度前已经是 total」才叫完好，可信任边车进度。
-        let intact = !self.unknown_len && existed && before == self.total && after == self.total;
+        // 「本来就存在」+「改长度前已经是 total」+「边车自己认这份布局」三条同时成立
+        // 才叫完好。少了第三条就会盲信长度：`.part` 长度对得上、边车却是别的
+        // url/线程数/未分配完整尺寸时留下的，偏移全是错的。
+        let intact =
+            !self.unknown_len && existed && before == self.total && after == self.total && self.resume_ok;
         if !intact {
             for s in &mut self.segments {
                 s.downloaded = 0;
+                s.flushed = 0;
                 s.speed = 0.0;
                 s.status = "waiting".into();
             }
@@ -577,6 +722,10 @@ impl Task {
             "eta": self.eta(),
             "state": self.state,
             "error": self.error,
+            // 结构化错误：界面按 code 查文案，error 原文只作排查留档。
+            // 两个字段都是新增的，老读端只看 error 也照常工作。
+            "error_code": self.error_code,
+            "error_params": self.error_params,
             "threads": self.segments.len(),
             // 校验中：state 仍是 downloading，主进程据此显示「校验中」。
             // 不校验/其他时候恒为 false。
@@ -655,12 +804,15 @@ async fn send_headers(
     deadline: Duration,
 ) -> Result<reqwest::Response, FetchErr> {
     match tokio::time::timeout(deadline, req.send()).await {
-        Ok(r) => r.map_err(|e| FetchErr { msg: req_err(&e), fatal: true, restart_from_zero: false }),
-        Err(_) => Err(FetchErr {
-            msg: format!("server did not reply within {}s", deadline.as_secs()),
-            fatal: false,
-            restart_from_zero: false,
+        Ok(r) => r.map_err(|e| {
+            let code = req_code(&e);
+            FetchErr::fatal(code, req_err(&e))
         }),
+        Err(_) => Err(FetchErr::new(
+            "no_reply",
+            format!("server did not reply within {}s", deadline.as_secs()),
+        )
+        .with_params(json!({"secs": deadline.as_secs()}))),
     }
 }
 
@@ -716,7 +868,7 @@ fn accepts_ranges_header(v: Option<&HeaderValue>) -> bool {
 /// HEAD 说得出话却没给长度时，只有它自己声称 `Accept-Ranges: bytes` 才值得再补一次
 /// 带区间的 GET（206 的 `Content-Range` 能报总长）；否则发 Range 只会白白拉回一整份
 /// 正文再丢掉——未知长度下载从探测阶段起就不该请求区间。
-async fn probe_total(client: &reqwest::Client, url: &str) -> Result<Option<u64>, String> {
+async fn probe_total(client: &reqwest::Client, url: &str) -> Result<Option<u64>, FetchErr> {
     fn total_from(resp: &reqwest::Response) -> Option<u64> {
         total_from_headers(
             resp.headers().get("Content-Range").and_then(|v| v.to_str().ok()).as_deref(),
@@ -734,18 +886,23 @@ async fn probe_total(client: &reqwest::Client, url: &str) -> Result<Option<u64>,
             None => {}
         },
         // HEAD timed out: the host isn't going to answer a ranged GET either.
-        Err(FetchErr { fatal: false, .. }) => return Err("server did not reply".to_string()),
+        Err(FetchErr { fatal: false, code, .. }) => {
+            return Err(FetchErr::new(code, "server did not reply"))
+        }
         // HEAD 被拒（403/405）或发送失败：给带区间的 GET 剩下的预算。
         _ => {}
     }
     let remaining = PROBE_TIMEOUT.saturating_sub(started.elapsed());
     if remaining.is_zero() {
-        return Err(format!("server did not reply within {}s", PROBE_TIMEOUT.as_secs()));
+        return Err(
+            FetchErr::new("no_reply", format!("server did not reply within {}s", PROBE_TIMEOUT.as_secs()))
+                .with_params(json!({"secs": PROBE_TIMEOUT.as_secs()})),
+        );
     }
     match send_headers(client.get(url).header("Range", "bytes=0-0"), remaining).await {
         // 兜底这一次也问不出长度 → 同样是「未知长度」，不是失败。
         Ok(r) => Ok(total_from(&r)),
-        Err(e) => Err(e.msg),
+        Err(e) => Err(e),
     }
 }
 
@@ -754,6 +911,11 @@ async fn probe_total(client: &reqwest::Client, url: &str) -> Result<Option<u64>,
 /// Reports the segment-relative offset as bytes arrive. The counter starts at
 /// `base` so the worker can read it directly instead of adding deltas.
 type OnProgress = Option<(Arc<AtomicU64>, u64)>;
+
+/// 已落盘水位的回报通道：每 `FLUSH_BYTES` 次 `sync_data` 成功后写一次，
+/// 值与 `OnProgress` 同口径（段内相对偏移）。worker 把它抄进 `Segment::flushed`，
+/// 边车只记这个值，于是「边车说下过了」永远等于「盘上真有这些字节」。
+type OnFlushed = Option<Arc<AtomicU64>>;
 
 /// 状态码里哪些重试也没意义。416 意味着请求的区间已经越界（客户端算错了偏移
 /// 或文件被改了），再重试只是把同一请求重放 N 次，必须停下来。
@@ -811,6 +973,7 @@ async fn fetch_and_write(
     size: u64,
     file: &mut tokio::fs::File,
     on_progress: OnProgress,
+    on_flushed: OnFlushed,
     rate: &Arc<Mutex<Bucket>>,
 ) -> Result<u64, FetchErr> {
     let resp = send_headers(
@@ -820,11 +983,8 @@ async fn fetch_and_write(
     .await?;
     let st = resp.status().as_u16();
     if !(resp.status().is_success() || st == 206) {
-        return Err(FetchErr {
-            msg: format!("http {st}"),
-            fatal: is_fatal_status(st),
-            restart_from_zero: false,
-        });
+        let e = FetchErr::new("http_status", format!("http {st}")).with_params(json!({"status": st}));
+        return Err(if is_fatal_status(st) { FetchErr { fatal: true, ..e } } else { e });
     }
     // 我们请求了 Range，服务器却没回 206 而是 200 —— 它无视了 Range，正文是整份文件。
     // 真正危险的判据不是 ranges_ok，而是本次请求的起始偏移 from 是否为 0：
@@ -832,11 +992,9 @@ async fn fetch_and_write(
     //   - from  > 0：把「从 0 开始」的正文写到 from 偏移会整体错位 → 数据损坏。
     // 后者必须失败，并让 worker 把该段 done 归零从段首重下（自愈），而不是原地空转。
     if st != 206 && from != 0 {
-        return Err(FetchErr {
-            msg: "server ignored Range request".into(),
-            fatal: false,
-            restart_from_zero: true,
-        });
+        return Err(FetchErr::new("range_ignored", "server ignored Range request")
+            .with_params(json!({"from": from}))
+            .restarting());
     }
     // 期望长度：优先 Content-Range（并校验区间起点），退回 Content-Length，再退回 size。
     let cr = resp.headers().get("Content-Range").and_then(|v| v.to_str().ok());
@@ -844,16 +1002,19 @@ async fn fetch_and_write(
         Ok(Some(n)) => n.min(end - from + 1),
         Ok(None) => size,
         Err(()) => {
-            return Err(FetchErr {
-                msg: format!("server returned a range not starting at {from}"),
-                fatal: true,
-                restart_from_zero: false,
-            });
+            return Err(FetchErr::fatal(
+                "range_mismatch",
+                format!("server returned a range not starting at {from}"),
+            )
+            .with_params(json!({"from": from})));
         }
     };
     let mut stream = resp.bytes_stream();
     let mut written = 0u64;
     let mut remaining = end - from + 1;
+    // 本次尝试开始前已完成的量（与进度计数器同口径），落盘水位要用它换算成段内偏移。
+    let base = on_progress.as_ref().map(|(_, b)| *b).unwrap_or(0);
+    let mut unsynced = 0u64;
     loop {
         if remaining == 0 {
             break;
@@ -877,12 +1038,25 @@ async fn fetch_and_write(
                     // 桶，所以是总速度受限，不是每段各限一份）。只写真正拿到配额的那几个
                     // 字节，剩下的下一轮再来。
                     let chunk = throttle(rate, want as u64).await.min(want as u64) as usize;
-                    file.write_all(&bytes[pos..pos + chunk]).await
-                        .map_err(|e| FetchErr { msg: e.to_string(), fatal: true, restart_from_zero: false })?;
+                    file.write_all(&bytes[pos..pos + chunk]).await.map_err(|e| {
+                        FetchErr::fatal(io_code(&e), e.to_string())
+                            .with_params(json!({"os_error": e.raw_os_error()}))
+                    })?;
                     written += chunk as u64;
                     remaining -= chunk as u64;
                     pos += chunk;
-                    if let Some((p, base)) = &on_progress {
+                    unsynced += chunk as u64;
+                    if unsynced >= FLUSH_BYTES {
+                        // fsync 失败就不推进水位，下载照常继续：数据还在页缓存里，
+                        // 下一次 sync 会一起带上，最坏情况只是崩溃后多重下一截。
+                        if file.sync_data().await.is_ok() {
+                            unsynced = 0;
+                            if let Some(f) = &on_flushed {
+                                f.store(base + written, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    if let Some((p, _)) = &on_progress {
                         // 段内累计偏移，worker 直接读。`base` 是本次尝试前
                         // 已完成的量，fetch 任务里不改 `done`，避免两处竞争。
                         p.store(base + written, Ordering::Relaxed);
@@ -893,11 +1067,7 @@ async fn fetch_and_write(
                 // 流正常结束。字节数对不上就是服务器提前断链，必须重试：
                 // 否则 worker 会以为这一段完了，把残缺的 `.part` rename 成成品。
                 if written < expect {
-                    return Err(FetchErr {
-                        msg: format!("truncated: got {written} of {expect} bytes"),
-                        fatal: false,
-                        restart_from_zero: false,
-                    });
+                    return Err(truncated_err(written, expect));
                 }
                 break;
             }
@@ -908,17 +1078,20 @@ async fn fetch_and_write(
                 // 少一个字节和整个 body 都没送来对重试策略没有区别：都是服务端
                 // 没兑现它自己声明的长度。真正连不上会走 `send_headers` 的分支。
                 if written < expect {
-                    return Err(FetchErr {
-                        msg: format!("truncated: got {written} of {expect} bytes"),
-                        fatal: false,
-                        restart_from_zero: false,
-                    });
+                    return Err(truncated_err(written, expect));
                 }
-                return Err(FetchErr { msg: req_err(&e), fatal: false, restart_from_zero: false });
+                return Err(FetchErr::new(req_code(&e), req_err(&e)));
             }
             Err(_) => {
-                return Err(FetchErr { msg: "read timeout".into(), fatal: false, restart_from_zero: false });
+                return Err(FetchErr::new("read_timeout", "read timeout"));
             }
+        }
+    }
+    // 段写完再落一次盘，把水位推到 written：否则最后这不足 FLUSH_BYTES 的一截
+    // 要等下一次 sync 才算数，崩溃后会白重下。
+    if file.sync_data().await.is_ok() {
+        if let Some(f) = &on_flushed {
+            f.store(base + written, Ordering::Relaxed);
         }
     }
     Ok(written)
@@ -943,18 +1116,11 @@ async fn fetch_unbounded(
     let resp = send_headers(client.get(url), HEADERS_TIMEOUT).await?;
     let st = resp.status().as_u16();
     if !resp.status().is_success() {
-        return Err(FetchErr {
-            msg: format!("http {st}"),
-            fatal: is_fatal_status(st),
-            restart_from_zero: false,
-        });
+        let e = FetchErr::new("http_status", format!("http {st}")).with_params(json!({"status": st}));
+        return Err(if is_fatal_status(st) { FetchErr { fatal: true, ..e } } else { e });
     }
     if st == 206 {
-        return Err(FetchErr {
-            msg: "server answered 206 to a request without Range".into(),
-            fatal: true,
-            restart_from_zero: false,
-        });
+        return Err(FetchErr::fatal("unexpected_206", "server answered 206 to a request without Range"));
     }
     let mut stream = resp.bytes_stream();
     let mut written = 0u64;
@@ -965,8 +1131,10 @@ async fn fetch_unbounded(
                 while pos < bytes.len() {
                     let want = (bytes.len() - pos).min(CHUNK as usize);
                     let chunk = throttle(rate, want as u64).await.min(want as u64) as usize;
-                    file.write_all(&bytes[pos..pos + chunk]).await
-                        .map_err(|e| FetchErr { msg: e.to_string(), fatal: true, restart_from_zero: false })?;
+                    file.write_all(&bytes[pos..pos + chunk]).await.map_err(|e| {
+                        FetchErr::fatal(io_code(&e), e.to_string())
+                            .with_params(json!({"os_error": e.raw_os_error()}))
+                    })?;
                     written += chunk as u64;
                     pos += chunk;
                     if let Some((p, base)) = &on_progress {
@@ -978,10 +1146,10 @@ async fn fetch_unbounded(
             Ok(Err(e)) => {
                 // 这里分不清「服务端提前断链」和「本来就只剩这点内容」，
                 // 只能按失败重下——重下的代价远比交付一个残缺文件小。
-                return Err(FetchErr { msg: req_err(&e), fatal: false, restart_from_zero: false });
+                return Err(FetchErr::new(req_code(&e), req_err(&e)));
             }
             Err(_) => {
-                return Err(FetchErr { msg: "read timeout".into(), fatal: false, restart_from_zero: false });
+                return Err(FetchErr::new("read_timeout", "read timeout"));
             }
         }
     }
@@ -1010,28 +1178,30 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                 if let Some(s) = g.segments.get_mut(index) {
                     s.status = "error".into();
                 }
-                g.error = format!("open part: {e}");
+                g.fail(io_code(&e), format!("open part: {e}"), json!({"os_error": e.raw_os_error()}));
             }
             return;
         }
     };
 
-    let (start, end, size, initial) = {
+    let (start, end, size, initial, initial_flushed) = {
         let g = task.lock().await;
         let Some(s) = g.segments.get(index) else { return };
-        (s.start, s.end, s.size(), s.downloaded)
+        (s.start, s.end, s.size(), s.downloaded, s.flushed)
     };
     let mut done = initial;
+    // 已确认落盘的段内偏移。边车记的是它，所以只能由 `sync_data` 成功后推进。
+    let mut flushed_wm = initial_flushed.min(initial);
 
     // 必须先 seek 到本段起点：`start` 对第一段之外的每段都是非零值，
     // 漏掉这一步会让所有段都写到偏移 0 互相覆盖。
-    if file.seek(SeekFrom::Start(start + initial)).await.is_err() {
+    if let Err(e) = file.seek(SeekFrom::Start(start + initial)).await {
         let mut g = task.lock().await;
         if g.gen == gen {
             if let Some(s) = g.segments.get_mut(index) {
                 s.status = "error".into();
             }
-            g.error = "seek failed".into();
+            g.fail(io_code(&e), "seek failed", json!({"os_error": e.raw_os_error()}));
         }
         return;
     }
@@ -1066,13 +1236,13 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
 
         let from = start + done;
         // 每次尝试前重新 seek：上一次尝试可能写了一部分就失败，文件位置已越过 `from`。
-        if file.seek(SeekFrom::Start(from)).await.is_err() {
+        if let Err(e) = file.seek(SeekFrom::Start(from)).await {
             let mut g = task.lock().await;
             if g.gen == gen {
                 if let Some(s) = g.segments.get_mut(index) {
                     s.status = "error".into();
                 }
-                g.error = "seek failed".into();
+                g.fail(io_code(&e), "seek failed", json!({"os_error": e.raw_os_error()}));
             }
             return;
         }
@@ -1080,17 +1250,18 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
         // 下载期间也要报进度：`fetch_and_write` 跑完整个段才返回，慢连接上一段
         // 可能要几分钟，只等它返回会让 UI 那段时间一直停在 0%，崩溃也会丢掉
         // 整整一段的工作。写盘结果通过原子计数器漏出来，这里每个 tick 折算。
-        let (progress_cb, counter) = {
+        let (progress_cb, counter, flushed_cb, flushed_mark) = {
             let g = task.lock().await;
             if g.gen != gen {
                 return;
             }
             let c = Arc::new(AtomicU64::new(0));
             c.store(done, Ordering::Relaxed);
-            (Some((c.clone(), done)), c)
+            let f = Arc::new(AtomicU64::new(flushed_wm));
+            (Some((c.clone(), done)), c, Some(f.clone()), f)
         };
         let fut = fetch_and_write(
-            &client, &url, from, end, size, &mut file, progress_cb, &rate,
+            &client, &url, from, end, size, &mut file, progress_cb, flushed_cb, &rate,
         );
         tokio::pin!(fut);
         let mut progress = tokio::time::interval(PROGRESS_INTERVAL);
@@ -1107,6 +1278,10 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                         interval_bytes += live - done;
                         done = live;
                     }
+                    let fl = flushed_mark.load(Ordering::Relaxed);
+                    if fl > flushed_wm {
+                        flushed_wm = fl;
+                    }
                     if interval_bytes > 0 {
                         let el = interval_start.elapsed().as_secs_f64().max(0.001);
                         let spd = interval_bytes as f64 / el;
@@ -1116,9 +1291,29 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                         if g.gen == gen {
                             if let Some(s) = g.segments.get_mut(index) {
                                 s.downloaded = done.min(size);
+                                s.flushed = flushed_wm.min(done).min(size);
                                 s.speed = spd;
                             }
                         }
+                    }
+                    // 暂停必须立刻停流量：`fetch_and_write` 自己不看 pause 标志，
+                    // 只有在这里 return 把它 drop 掉，连接才会真的断开。老实现只把
+                    // worker park 在循环顶部，于是一次「暂停」之后还会继续下完整整一段
+                    // （大文件上等于几十秒到几分钟的无效流量，UI 却显示已暂停）。
+                    // 已写盘的字节都记进段进度了，恢复时从水位接着下。
+                    if paused.load(Ordering::Relaxed) {
+                        let mut g = task.lock().await;
+                        if g.gen == gen {
+                            if let Some(s) = g.segments.get_mut(index) {
+                                s.downloaded = done.min(size);
+                                s.flushed = flushed_wm.min(done).min(size);
+                                s.speed = 0.0;
+                                if s.status == "running" {
+                                    s.status = "paused".into();
+                                }
+                            }
+                        }
+                        return;
                     }
                 }
             }
@@ -1131,6 +1326,10 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
             interval_bytes += final_live - done;
             done = final_live;
         }
+        let final_flushed = flushed_mark.load(Ordering::Relaxed);
+        if final_flushed > flushed_wm {
+            flushed_wm = final_flushed;
+        }
 
         match outcome {
             Ok(_) => {
@@ -1140,12 +1339,13 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                 if g.gen == gen {
                     if let Some(s) = g.segments.get_mut(index) {
                         s.downloaded = done.min(size);
+                        s.flushed = flushed_wm.min(done).min(size);
                         s.speed = 0.0;
                     }
                     // 重试成功后清掉刚才那条错误提示；但如果别的段还在报错就留着，
                     // 别把别人正在失败的信号一起抹掉。
                     if !g.any_error() {
-                        g.error = String::new();
+                        g.clear_error();
                     }
                 }
             }
@@ -1156,7 +1356,7 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                         if let Some(s) = g.segments.get_mut(index) {
                             s.status = "error".into();
                         }
-                        g.error = e.msg;
+                        g.fail_fetch(&e);
                     }
                     return;
                 }
@@ -1164,11 +1364,13 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                 // 段首、从段首再请求。对单段任务（start==0）这一试就成功，能自愈。
                 if e.restart_from_zero {
                     done = 0;
+                    flushed_wm = 0;
                     {
                         let mut g = task.lock().await;
                         if g.gen == gen {
                             if let Some(s) = g.segments.get_mut(index) {
                                 s.downloaded = 0;
+                                s.flushed = 0;
                             }
                         }
                     }
@@ -1182,7 +1384,11 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                             if let Some(s) = g.segments.get_mut(index) {
                                 s.status = "error".into();
                             }
-                            g.error = "server ignored Range request on every attempt".into();
+                            g.fail(
+                                "range_ignored_every_attempt",
+                                "server ignored Range request on every attempt",
+                                Value::Null,
+                            );
                         }
                         return;
                     }
@@ -1196,7 +1402,7 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                 // 了不会把任务翻成 error 态，进度照常推送。
                 let mut g = task.lock().await;
                 if g.gen == gen {
-                    g.error = e.msg.clone();
+                    g.fail_fetch(&e);
                 }
                 drop(g);
                 // 网络抖动会自愈，无限重试是对的。但截断是服务端「每次都少发」
@@ -1204,7 +1410,7 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                 // 连续出现就升级成 fatal，让状态落到 error 并停止空转。2 次足以
                 // 排除偶发断链：真正会截断的服务器对每次请求都给同样的残缺结果。
                 const MAX_TRUNCATION: u32 = 2;
-                let trunc_streak = if e.msg.starts_with("truncated") {
+                let trunc_streak = if e.code == "truncated" {
                     trunc_streak += 1;
                     trunc_streak
                 } else {
@@ -1217,7 +1423,11 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                         if let Some(s) = g.segments.get_mut(index) {
                             s.status = "error".into();
                         }
-                        g.error = format!("{}: server truncated every attempt", e.msg);
+                        g.fail(
+                            "truncated_every_attempt",
+                            format!("{}: server truncated every attempt", e.msg),
+                            e.params.clone(),
+                        );
                     }
                     return;
                 }
@@ -1232,6 +1442,10 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
     if g.gen == gen {
         if let Some(s) = g.segments.get_mut(index) {
             s.downloaded = s.size();
+            // 水位取「已确认落盘」和「段长」的较小值：正常情况下 fetch 收尾那次
+            // sync_data 已经把它推到段长，只有 fsync 一直失败时才会落后（那时宁可
+            // 让续传多重下一截，也不能声称盘上有其实没有的字节）。
+            s.flushed = flushed_wm.min(s.size());
             s.speed = 0.0;
             s.status = "done".into();
         }
@@ -1274,7 +1488,7 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
         )
     };
 
-    let mark_error = |task: &Arc<Mutex<Task>>, gen: usize, msg: String| {
+    let mark_error = |task: &Arc<Mutex<Task>>, gen: usize, code: &'static str, msg: String, params: Value| {
         let t = task.clone();
         async move {
             let mut g = t.lock().await;
@@ -1282,7 +1496,7 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
                 if let Some(s) = g.segments.get_mut(IDX) {
                     s.status = "error".into();
                 }
-                g.error = msg;
+                g.fail(code, msg, params);
             }
         }
     };
@@ -1290,7 +1504,9 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
     let mut file = match tokio::fs::OpenOptions::new().read(true).write(true).open(&part).await {
         Ok(f) => f,
         Err(e) => {
-            mark_error(&task, gen, format!("open part: {e}")).await;
+            let code = io_code(&e);
+            let os = e.raw_os_error();
+            mark_error(&task, gen, code, format!("open part: {e}"), json!({"os_error": os})).await;
             return;
         }
     };
@@ -1318,8 +1534,10 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
 
         // 每次尝试都从文件头覆盖重写：不给区间就没法要求服务端接着上次发。
         counter.store(0, Ordering::Relaxed);
-        if file.seek(SeekFrom::Start(0)).await.is_err() {
-            mark_error(&task, gen, "seek failed".into()).await;
+        if let Err(e) = file.seek(SeekFrom::Start(0)).await {
+            let code = io_code(&e);
+            let os = e.raw_os_error();
+            mark_error(&task, gen, code, "seek failed".into(), json!({"os_error": os})).await;
             return;
         }
         let outcome = {
@@ -1352,6 +1570,12 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
                                 interval_bytes = 0;
                             }
                         }
+                        drop(g);
+                        // 暂停要立刻断流：只有 return 把 `fetch_unbounded` drop 掉，
+                        // 连接才会真的关闭。未知长度本来就不支持续传，恢复时从 0 重下。
+                        if paused.load(Ordering::Relaxed) {
+                            return;
+                        }
                     }
                 }
             }
@@ -1371,7 +1595,9 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
                 written = 0;
                 interval_bytes = 0;
                 if e.fatal {
-                    mark_error(&task, gen, e.msg).await;
+                    let code = e.code;
+                    let params = e.params.clone();
+                    mark_error(&task, gen, code, e.msg, params).await;
                     return;
                 }
                 {
@@ -1379,7 +1605,7 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
                     if g.gen != gen {
                         return;
                     }
-                    g.error = e.msg.clone();
+                    g.fail_fetch(&e);
                     if let Some(s) = g.segments.get_mut(IDX) {
                         s.downloaded = 0;
                         s.speed = 0.0;
@@ -1395,9 +1621,14 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
     // `ensure_part` 里禁止的 `set_len` 不是一回事——这里 `total_bytes` 是已经确定的
     // 真实长度，截掉的都是重复/残留字节。
     let _ = file.flush().await;
-    if file.set_len(total_bytes).await.is_err() {
+    // 成品在 rename 之前必须真的落到盘上：只 flush 到页缓存的话，紧接着断电
+    // 会留下一个长度正确、内容全零的文件，而且没有任何机会重下。
+    let _ = file.sync_data().await;
+    if let Err(e) = file.set_len(total_bytes).await {
         drop(file);
-        mark_error(&task, gen, "truncate failed".into()).await;
+        let code = io_code(&e);
+        let os = e.raw_os_error();
+        mark_error(&task, gen, code, "truncate failed".into(), json!({"os_error": os})).await;
         return;
     }
     drop(file);
@@ -1409,7 +1640,7 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
     }
     g.total = total_bytes;
     g.stream_done = true;
-    g.error = String::new();
+    g.clear_error();
     if let Some(s) = g.segments.get_mut(IDX) {
         s.start = 0;
         s.end = total_bytes.saturating_sub(1);
@@ -1428,6 +1659,7 @@ async fn discard_progress(g: &mut Task) {
     g.stream_done = false;
     for s in &mut g.segments {
         s.downloaded = 0;
+        s.flushed = 0;
         s.speed = 0.0;
         s.status = "waiting".into();
     }
@@ -1461,15 +1693,28 @@ async fn spawn_workers(task: Arc<Mutex<Task>>, gen: usize) {
 }
 
 /// Move `.part` to the final name and drop the sidecar.
-async fn finalize(g: &Task) -> Option<Value> {
+///
+/// 收 `&mut Task`：rename 失败时终态是 **error** 而不是 done，必须在拍快照之前
+/// 就写回任务和错误码。以前这里只返回一条 error 事件，任务自己还停在 done——
+/// 主进程靠后到的 error 事件把状态掰回来，但引擎随后那条快照（以及 stats 的应答）
+/// 仍然说「已完成」，谁先落盘谁说了算，成品其实还在 `.part` 里。
+async fn finalize(g: &mut Task) -> Option<Value> {
     if let Some(parent) = Path::new(&g.dest).parent() {
         let _ = tokio::fs::create_dir_all(parent).await;
     }
-    if tokio::fs::rename(&g.tmp_path(), &g.dest).await.is_ok() {
-        let _ = tokio::fs::remove_file(&g.sidecar_path()).await;
-        Some(json!({"event":"done","total":g.total}))
-    } else {
-        Some(json!({"event":"error","error":"rename failed"}))
+    match tokio::fs::rename(&g.tmp_path(), &g.dest).await {
+        Ok(()) => {
+            let _ = tokio::fs::remove_file(&g.sidecar_path()).await;
+            Some(json!({"event":"done","total":g.total}))
+        }
+        // 单独一码而不是复用 io_code：`.part` 已经写满了，处置是「关掉占用它的程序
+        // 再重试」，和「换个目录重下」完全不是一回事（Windows 上九成是杀软在扫）。
+        Err(e) => {
+            let raw = e.raw_os_error();
+            g.state = "error".into();
+            g.fail("rename_failed", format!("rename failed: {e}"), json!({"os_error": raw}));
+            Some(error_event("rename_failed", &g.error, &g.error_params))
+        }
     }
 }
 
@@ -1494,21 +1739,24 @@ async fn handle(
             let checksum = match parse_checksum(&cmd.checksum) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = emit_line(out, json!({"event":"error","error":e})).await;
+                    let _ = emit_line(out, error_event("unsupported_checksum", &e, &Value::Null)).await;
                     return;
                 }
             };
             let client = match make_client(&cmd.proxy, &cmd.user_agent) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = emit_line(out, json!({"event":"error","error":e})).await;
+                    // 代理串解析不了和「客户端根本没建起来」是两种病：前者用户能自己改，
+                    // 后者是打包/环境问题。
+                    let code = if e.contains("proxy") { "proxy_invalid" } else { "client_build_failed" };
+                    let _ = emit_line(out, error_event(code, &e, &Value::Null)).await;
                     return;
                 }
             };
             let probed = match probe_total(&client, &cmd.url).await {
                 Ok(t) => t,
                 Err(e) => {
-                    let _ = emit_line(out, json!({"event":"error","error":e})).await;
+                    let _ = emit_line(out, error_event(e.code, &e.msg, &e.params)).await;
                     return;
                 }
             };
@@ -1533,6 +1781,7 @@ async fn handle(
                 ranges_ok,
                 unknown_len: probed.is_none(),
                 stream_done: false,
+                resume_ok: false,
                 checksum,
                 verifying: false,
                 rate_kbps,
@@ -1540,6 +1789,8 @@ async fn handle(
                 id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
                 state: "idle".into(),
                 error: String::new(),
+                error_code: String::new(),
+                error_params: Value::Null,
                 speed: 0.0,
                 segments: Vec::new(),
                 client,
@@ -1563,7 +1814,8 @@ async fn handle(
                     match parse_checksum(&cmd.checksum) {
                         Ok(cs) => t.lock().await.checksum = cs,
                         Err(e) => {
-                            let _ = emit_line(out, json!({"event":"error","error":e})).await;
+                            let _ = emit_line(out, error_event("unsupported_checksum", &e, &Value::Null))
+                                .await;
                             return;
                         }
                     }
@@ -1584,12 +1836,13 @@ async fn handle(
                             .unwrap_or(false);
                         if dest_ok {
                             g.state = "done".into();
-                            g.error = String::new();
+                            g.clear_error();
                             let _ = emit_line(out, json!({"event":"done","total":g.total})).await;
                             return;
                         }
                         for s in &mut g.segments {
                             s.downloaded = 0;
+                            s.flushed = 0;
                             s.speed = 0.0;
                             s.status = "waiting".into();
                         }
@@ -1600,7 +1853,7 @@ async fn handle(
                     // 自己把偏移清零，所以这里不必再担心边车与文件不一致。
                     // 长度未知的任务里它只负责建文件，且绝不 set_len。
                     if let Err(e) = g.ensure_part().await {
-                        let _ = emit_line(out, json!({"event":"error","error":e})).await;
+                        let _ = emit_line(out, error_event(e.code, &e.msg, &e.params)).await;
                         return;
                     }
                     // 必须先换代、再清 pause：反过来的话，还在 park 的旧 worker
@@ -1609,7 +1862,7 @@ async fn handle(
                     g.cancelled.store(false, Ordering::Relaxed);
                     g.paused.store(false, Ordering::Relaxed);
                     g.state = "downloading".into();
-                    g.error = String::new();
+                    g.clear_error();
                     gen = g.gen;
                 }
                 let snap = t.lock().await.snapshot();
@@ -1622,11 +1875,17 @@ async fn handle(
                 let mut g = t.lock().await;
                 g.paused.store(true, Ordering::Relaxed);
                 for s in &mut g.segments {
+                    // 速度归零：暂停后 on_tick 不再推进快照（state != downloading），
+                    // 不清掉的话 UI 会一直显示暂停前的速度，看起来像没停下来。
+                    s.speed = 0.0;
                     if s.status == "running" {
                         s.status = "paused".into();
                     }
                 }
+                g.speed = 0.0;
                 g.state = "paused".into();
+                // 这里写边车是安全的：save_sidecar 只记已 fsync 的水位，
+                // 而 worker 会在下一个 tick（≤100ms）内 drop 掉 in-flight 请求退出。
                 g.save_sidecar();
                 let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
             }
@@ -1640,7 +1899,7 @@ async fn handle(
                 g.cancelled.store(true, Ordering::Relaxed);
                 g.paused.store(true, Ordering::Relaxed);
                 g.state = "idle".into();
-                g.error = String::new();
+                g.clear_error();
                 g.speed = 0.0;
                 discard_progress(&mut g).await;
                 let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
@@ -1656,12 +1915,17 @@ async fn handle(
                         // 重新摊回进度，否则换线程数会把已下载的量算错（虚高或清零）。
                         let old_segs: Vec<(u64, u64, u64)> = g.segments
                             .iter().map(|x| (x.start, x.end, x.downloaded)).collect();
+                        // 落盘水位要用同一套交集算法重摊：它是 downloaded 的下界，
+                        // 直接抄 downloaded 会声称「没同步过的字节也在盘上」。
+                        let old_flushed: Vec<(u64, u64, u64)> = g.segments
+                            .iter().map(|x| (x.start, x.end, x.flushed)).collect();
                         g.threads = new_n;
                         g.build_segments();
                         if !old_segs.is_empty() {
                             for seg in &mut g.segments {
                                 let got = recompute_segment(seg.start, seg.end, &old_segs);
                                 seg.downloaded = got;
+                                seg.flushed = recompute_segment(seg.start, seg.end, &old_flushed).min(got);
                                 seg.status = if seg.done() { "done" } else { "waiting" }.into();
                             }
                         }
@@ -1690,7 +1954,11 @@ async fn handle(
             }
         }
         other => {
-            let _ = emit_line(out, json!({"event":"error","error":format!("unknown cmd: {other}")})).await;
+            let _ = emit_line(
+                out,
+                error_event("unknown_cmd", &format!("unknown cmd: {other}"), &json!({"cmd": other})),
+            )
+            .await;
         }
     }
 }
@@ -1728,15 +1996,15 @@ async fn on_tick(
             let msg = match vr.error {
                 None => {
                     g.state = "done".into();
-                    g.error = String::new();
-                    finalize(&g).await
+                    g.clear_error();
+                    finalize(&mut g).await
                 }
                 // 校验不过：**保留文件不删**（不 rename、也不清 .part），让用户自己决定
                 // 是重试还是删掉——直接删等于把几十 GB 的流量白烧了。
                 Some(e) => {
                     g.state = "error".into();
-                    g.error = e.clone();
-                    Some(json!({"event":"error","error":e}))
+                    g.fail(vr.code, e.clone(), vr.params.clone());
+                    Some(error_event(vr.code, &e, &vr.params))
                 }
             };
             let snap = g.snapshot();
@@ -1750,11 +2018,45 @@ async fn on_tick(
         return;
     }
 
-    // ---- 2) 常规推进 ----
+    // ---- 2) 暂停时正好下完的任务，照样要定稿 ----
     let st = {
         let g = t.lock().await;
         (g.state.clone(), g.downloaded())
     };
+    // 「最后一段写完」和「收到 pause」是并发的：worker 可能已经把 `.part` 写满、
+    // 只差 rename，而 state 已经翻成 paused。下面的常规推进分支只对 downloading 生效，
+    // 于是这个任务会永远卡在 paused —— `.part` 不 rename、边车不删，用户点「继续」
+    // 还会撞上 run() 里 all_done 却 dest 不存在的清零分支，把整份文件从头再下一遍。
+    {
+        let mut g = t.lock().await;
+        if g.state == "paused" {
+            if g.verifying || !g.all_done() {
+                return;
+            }
+            let msg = if let Some(cs) = g.checksum.clone() {
+                g.verifying = true;
+                let (tx, rx) = mpsc::unbounded_channel();
+                tokio::spawn(run_verify(cs, g.tmp_path(), g.id, g.gen, tx));
+                *verify_rx = Some(rx);
+                g.save_sidecar();
+                None
+            } else {
+                g.state = "done".into();
+                finalize(&mut g).await
+            };
+            let snap = g.snapshot();
+            drop(g);
+            *last_downloaded = st.1;
+            *last_speed_at = Instant::now();
+            emit_line(out, json!({"event":"progress","data":snap})).await;
+            if let Some(m) = msg {
+                emit_line(out, m).await;
+            }
+            return;
+        }
+    }
+
+    // ---- 3) 常规推进 ----
     if st.0 != "downloading" {
         return;
     }
@@ -1768,7 +2070,7 @@ async fn on_tick(
     let mut finish_msg = None;
     if g.any_error() {
         g.state = "error".into();
-        finish_msg = Some(json!({"event":"error","error":g.error.clone()}));
+        finish_msg = Some(error_event(&g.error_code, &g.error, &g.error_params));
     } else if g.all_done() {
         if g.verifying {
             // 校验还在后台跑：state 保持 downloading，快照里 verifying=true，
@@ -1784,7 +2086,7 @@ async fn on_tick(
             g.save_sidecar();
         } else {
             g.state = "done".into();
-            finish_msg = finalize(&g).await;
+            finish_msg = finalize(&mut g).await;
         }
     } else {
         g.save_sidecar();
@@ -1842,7 +2144,12 @@ async fn main() -> std::io::Result<()> {
                     Ok(None) => break,
                     // 真的读不出来（IO Err）：退出前先吐一条 error 事件，别静默消失。
                     Err(e) => {
-                        let msg = json!({"event":"error","error":format!("stdin read error: {e}")});
+                        let raw = e.raw_os_error();
+                        let msg = error_event(
+                            "stdin_read_error",
+                            &format!("stdin read error: {e}"),
+                            &json!({"os_error": raw}),
+                        );
                         let _ = out.write_all((msg.to_string() + "\n").as_bytes()).await;
                         let _ = out.flush().await;
                         break;
@@ -1854,7 +2161,9 @@ async fn main() -> std::io::Result<()> {
                 let cmd = match serde_json::from_str::<Cmd>(&line) {
                     Ok(c) => c,
                     Err(e) => {
-                        let msg = json!({"event":"error","error":format!("bad json: {e}")});
+                        // 参数里不带原始那一行：cmd 里的 url 可能带临时令牌，
+                        // 快照和界面都会拿到 params，别把它落到用户可见的地方。
+                        let msg = error_event("bad_json", &format!("bad json: {e}"), &Value::Null);
                         let _ = out.write_all((msg.to_string() + "\n").as_bytes()).await;
                         let _ = out.flush().await;
                         continue;
@@ -1880,9 +2189,9 @@ async fn main() -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{
-        accepts_ranges_header, bucket_capacity, expected_len, hash_file, parse_checksum,
-        parse_content_range, recompute_segment, refill_tokens, run_verify, throttle,
-        total_from_headers, Alg, Bucket, Checksum, CHUNK, HASH_BUF,
+        accepts_ranges_header, bucket_capacity, error_event, expected_len, hash_file, io_code,
+        parse_checksum, parse_content_range, recompute_segment, refill_tokens, run_verify, throttle,
+        total_from_headers, truncated_err, Alg, Bucket, Checksum, FetchErr, CHUNK, HASH_BUF,
     };
     use std::sync::Arc;
     use std::time::{Duration, Instant};
@@ -2150,22 +2459,84 @@ mod tests {
         let r = rx.recv().await.unwrap();
         assert_eq!((r.task_id, r.gen), (7, 1));
         assert_eq!(r.error, None, "正确的校验和不该报错");
+        assert_eq!(r.code, "", "通过时不该带错误码");
         // 故意写错：文案必须同时给出期望值和实际值，用户才有得判断。
         let bad = Checksum { alg: Alg::Md5, hex: "0".repeat(32) };
         let (tx, mut rx) = mpsc::unbounded_channel();
         run_verify(bad, p.to_str().unwrap().to_string(), 7, 1, tx).await;
-        let e = rx.recv().await.unwrap().error.unwrap();
+        let r = rx.recv().await.unwrap();
+        let e = r.error.unwrap();
         assert!(
             e == "checksum mismatch: expected md5:00000000000000000000000000000000, \
                 got md5:900150983cd24fb0d6963f7d28e17f72",
             "{e}"
         );
+        // 界面按码取文案，参数里得能拼出「期望 vs 实际」——只给码不给值等于没给。
+        assert_eq!(r.code, "checksum_mismatch");
+        assert_eq!(r.params["alg"], "md5");
+        assert_eq!(r.params["expected"], "0".repeat(32));
+        assert_eq!(r.params["actual"], "900150983cd24fb0d6963f7d28e17f72");
         // 文件读不到时是「verify failed」而不是「mismatch」——两者对用户的处置完全不同。
         let (tx, mut rx) = mpsc::unbounded_channel();
         run_verify(cs, dir.join("gone.bin").to_str().unwrap().to_string(), 7, 1, tx).await;
-        let e = rx.recv().await.unwrap().error.unwrap();
+        let r = rx.recv().await.unwrap();
+        let e = r.error.unwrap();
         assert!(e.starts_with("checksum verify failed:"), "{e}");
+        assert_eq!(r.code, "checksum_verify_failed");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ---- 结构化错误码（界面按码取文案，不再靠正则认英文原话）----
+    #[test]
+    fn io_code_maps_os_errors_to_stable_codes() {
+        use std::io::Error;
+        // 磁盘满必须是独立的一码：处置是「清空间」，和「换个目录」完全不同。
+        assert_eq!(io_code(&Error::from_raw_os_error(112)), "no_space");
+        assert_eq!(io_code(&Error::from_raw_os_error(36)), "name_too_long");
+        assert_eq!(io_code(&Error::from_raw_os_error(5)), "permission_denied");
+        assert_eq!(io_code(&Error::from_raw_os_error(32)), "permission_denied");
+        assert_eq!(io_code(&Error::from_raw_os_error(123)), "invalid_filename");
+        assert_eq!(io_code(&Error::from_raw_os_error(124)), "invalid_filename");
+        // 认不出来的落到通用码，绝不空着——空码会让界面退回「下载中断」这种废话。
+        assert_eq!(io_code(&Error::from_raw_os_error(1234)), "part_io");
+        // ErrorKind 优先于原始码：跨平台构造的权限错误没有 os error 也得认得出来。
+        assert_eq!(io_code(&Error::from(std::io::ErrorKind::PermissionDenied)), "permission_denied");
+        assert_eq!(io_code(&Error::from(std::io::ErrorKind::NotFound)), "part_io");
+    }
+
+    #[test]
+    fn error_event_is_additive_and_truncated_carries_both_numbers() {
+        use serde_json::{json, Value};
+        let ev = error_event("no_space", "disk full", &json!({"os_error": 112}));
+        // `error` 原文不能动：老读端和日志都只认它。
+        assert_eq!(ev["event"], "error");
+        assert_eq!(ev["error"], "disk full");
+        assert_eq!(ev["code"], "no_space");
+        assert_eq!(ev["params"]["os_error"], 112);
+        // 无参数时用 Null 占位，键必须在——界面按 params.xxx 取值，缺键和 null 都得走同一条路。
+        let ev = error_event("read_timeout", "read timeout", &Value::Null);
+        assert!(ev.get("params").is_some());
+        assert!(ev["params"].is_null());
+
+        let e = truncated_err(100, 4096);
+        assert_eq!(e.code, "truncated");
+        assert_eq!(e.params["got"], 100);
+        assert_eq!(e.params["expect"], 4096);
+        assert!(!e.fatal, "单次截断要重试，不是 fatal");
+        assert!(!e.restart_from_zero, "已经写进去的字节不该丢");
+    }
+
+    #[test]
+    fn fetch_err_builders_keep_fatal_and_restart_flags_independent() {
+        use serde_json::json;
+        let e = FetchErr::new("dns", "no such host");
+        assert!(!e.fatal && !e.restart_from_zero && e.params.is_null());
+        // fatal：重试没意义（HTTP 4xx、磁盘错误）。
+        assert!(FetchErr::fatal("http_status", "404").fatal);
+        // restarting：服务器无视 Range，原地重试永远拿到整份文件，只能从段首重来。
+        let e = FetchErr::new("range_ignored", "got 200").with_params(json!({"from": 1024u64})).restarting();
+        assert!(e.restart_from_zero && !e.fatal);
+        assert_eq!(e.params["from"], 1024);
     }
 
     // ---- set_threads 区间交集（对应缺陷 3：把重叠区当已下载区，虚高进度）----
