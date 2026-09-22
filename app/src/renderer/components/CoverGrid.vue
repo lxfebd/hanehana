@@ -11,6 +11,7 @@
  *   - 性能铁律不变：卡片内无 backdrop-filter。
  */
 import { computed } from 'vue'
+import { Activity, Flower2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { selectGame, state } from '../store'
 
@@ -54,7 +55,7 @@ function click(g: Game): void {
   <div class="cover-wall" :class="view">
     <!-- 空态 -->
     <div v-if="games.length === 0" class="empty glass">
-      <div class="empty-icon">🌸</div>
+      <Flower2 class="empty-icon" :size="40" :stroke-width="1.5" />
       <div class="empty-title">游戏库还是空的</div>
       <div class="empty-hint">点左侧「扫描导入」选择游戏目录，自动识别 exe 入库</div>
     </div>
@@ -72,8 +73,12 @@ function click(g: Game): void {
           <img v-if="coverSrc(g)" :src="coverSrc(g)" loading="lazy" :alt="g.title" />
           <span v-else class="cover-letter">{{ g.title.slice(0, 1) }}</span>
 
-          <div v-if="state.runningIds.has(g.id)" class="cover-running">▶ 运行中</div>
-          <div v-if="g.rating" class="cover-rating">★ {{ g.rating.toFixed(1) }}</div>
+          <div v-if="state.runningIds.has(g.id)" class="cover-running">
+            <Activity :size="10" :stroke-width="2.5" /> 运行中
+          </div>
+          <div v-if="g.rating" class="cover-rating">
+            <Star class="num" :size="10" :fill="'#ffd666'" :stroke-width="0" /> {{ g.rating.toFixed(1) }}
+          </div>
 
           <div class="cover-shade"></div>
           <div class="cover-bottom">
@@ -96,13 +101,15 @@ function click(g: Game): void {
         <div class="list-thumb" :style="{ background: placeholderBg(g) }">
           <img v-if="coverSrc(g)" :src="coverSrc(g)" loading="lazy" :alt="g.title" />
           <span v-else class="list-letter">{{ g.title.slice(0, 1) }}</span>
-          <div v-if="state.runningIds.has(g.id)" class="list-running">▶</div>
+          <div v-if="state.runningIds.has(g.id)" class="list-running">
+            <Activity :size="10" :stroke-width="2.5" />
+          </div>
         </div>
         <div class="list-body">
           <div class="list-title" :title="g.title">{{ g.title }}</div>
           <div class="list-meta">
             <span v-if="g.releaseDate">{{ g.releaseDate }}</span>
-            <span v-if="g.rating">★ {{ g.rating.toFixed(1) }}</span>
+            <span v-if="g.rating"><Star class="num" :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ g.rating.toFixed(1) }}</span>
             <span v-if="fmtPlay(g.playMs)">已玩 {{ fmtPlay(g.playMs) }}</span>
           </div>
         </div>
@@ -128,7 +135,10 @@ function click(g: Game): void {
   text-align: center;
   border-radius: 20px;
 }
-.empty-icon { font-size: 42px; margin-bottom: 12px; }
+.empty-icon {
+  color: rgba(255, 255, 255, 0.48);
+  margin-bottom: 12px;
+}
 .empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
 .empty-hint { font-size: 13px; color: rgba(255, 255, 255, 0.5); }
 
@@ -180,6 +190,7 @@ function click(g: Game): void {
   color: #fff; font-size: 11px; font-weight: 600;
   padding: 3px 9px; border-radius: 8px;
   z-index: 2;
+  display: flex; align-items: center; gap: 3px;
 }
 .cover-rating {
   position: absolute; top: 8px; right: 8px;
@@ -187,6 +198,7 @@ function click(g: Game): void {
   color: #ffd666; font-size: 11px; font-weight: 600;
   padding: 3px 8px; border-radius: 8px;
   z-index: 2;
+  display: flex; align-items: center; gap: 3px;
 }
 
 /* 底部渐晕 + 标题叠图 */

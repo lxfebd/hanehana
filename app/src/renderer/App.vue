@@ -2,6 +2,7 @@
 import { onMounted, ref, computed } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
+import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Settings, X } from 'lucide-vue-next'
 import { appTheme } from './theme'
 import {
   refreshGames,
@@ -89,15 +90,13 @@ onMounted(async () => {
           <!-- 左侧导航 -->
           <nav class="glass sidebar">
             <div class="nav-section">游戏库</div>
-            <div
-              class="nav-item"
-              :class="{ active: page === 'library' }"
-              @click="page = 'library'"
-            >
+            <div class="nav-item" :class="{ active: page === 'library' }" @click="page = 'library'">
+              <LibraryBig :size="16" class="nav-ic" />
               <span>全部游戏</span>
               <span class="count">{{ state.games.length }}</span>
             </div>
             <div class="nav-item" :class="{ active: page === 'downloads' }" @click="page = 'downloads'">
+              <Download :size="16" class="nav-ic" />
               <span>下载任务</span>
               <span class="count">{{ state.rows.filter((r) => r.snap?.state === 'downloading' || r.snap?.state === 'preparing' || (!r.snap && r.def.state === 'downloading')).length }}</span>
             </div>
@@ -117,9 +116,11 @@ onMounted(async () => {
 
             <div class="nav-spacer"></div>
             <div class="nav-item" @click="state.scanOpen = true">
-              <span>＋ 扫描导入</span>
+              <ScanSearch :size="16" class="nav-ic" />
+              <span>扫描导入</span>
             </div>
             <div class="nav-item" @click="openSettings()">
+              <Settings :size="16" class="nav-ic" />
               <span>设置</span>
             </div>
           </nav>
@@ -137,20 +138,22 @@ onMounted(async () => {
                 <button
                   class="glass-btn"
                   :class="{ active: state.view === 'grid' }"
+                  title="网格视图"
                   @click="state.view = 'grid'"
-                >▦</button>
+                ><LayoutGrid :size="16" /></button>
                 <button
                   class="glass-btn"
                   :class="{ active: state.view === 'list' }"
+                  title="列表视图"
                   @click="state.view = 'list'"
-                >☰</button>
+                ><List :size="16" /></button>
               </div>
 
               <CoverGrid :games="filteredGames" :view="state.view" @select="state.selectedId = $event" />
 
               <div v-if="state.error" class="error-banner glass">
                 {{ state.error }}
-                <button class="glass-btn" @click="state.error = ''">×</button>
+                <button class="glass-btn" title="清除错误" @click="state.error = ''"><X :size="14" /></button>
               </div>
             </template>
 
@@ -230,8 +233,9 @@ onMounted(async () => {
 }
 .nav-item {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-start;
   align-items: center;
+  gap: 8px;
   padding: 9px 12px;
   border-radius: 8px;
   margin-bottom: 2px;
@@ -240,9 +244,11 @@ onMounted(async () => {
   transition: background 0.15s ease, color 0.15s ease;
   font-size: 13px;
 }
+.nav-item .nav-ic { flex: none; opacity: 0.8; }
 .nav-item:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.88); }
 .nav-item.active { background: rgba(77, 163, 255, 0.18); color: #7ec3ff; }
 .nav-item .count {
+  margin-left: auto;
   font-size: 11px;
   background: rgba(255, 255, 255, 0.1);
   padding: 1px 7px;
