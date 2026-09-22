@@ -1,0 +1,144 @@
+/**
+ * 全局样式层（REDESIGN-SPEC §4.3/§4.4）。
+ *
+ * 只消费 design/tokens.ts 注入的 var(--hh-*)；不写颜色字面量。
+ * 玻璃矩阵：
+ *   - .glass       窗口级固定面板（主侧栏/详情面板外壳）：panelGlass + 16px blur
+ *   - .glass-float 浮层（antd 走自身 token，本类是手写浮层兜底）：float 实色
+ *   - .glass-card  卡片级（封面卡/任务行/工具条）：card 实半透明，无 blur（禁进滚动容器）
+ */
+:root {
+  color-scheme: dark;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--hh-font-family);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* 自定义标题栏拖拽区。按钮区必须 no-drag，否则点不动。 */
+.titlebar {
+  -webkit-app-region: drag;
+  height: var(--hh-layout-titlebarh);
+  display: flex;
+  align-items: center;
+  padding: 0 var(--hh-space-x3) 0 var(--hh-space-x4);
+  user-select: none;
+}
+.titlebar .no-drag,
+.titlebar button,
+.titlebar .ant-btn {
+  -webkit-app-region: no-drag;
+}
+
+/* ============ 面板级玻璃（固定面板，不进滚动容器） ============ */
+.glass {
+  background: var(--hh-color-panelglass);
+  backdrop-filter: blur(var(--hh-glass-blurpanel)) saturate(var(--hh-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--hh-glass-blurpanel)) saturate(var(--hh-glass-saturate));
+  border: 1px solid var(--hh-color-panelglassborder);
+  border-radius: var(--hh-radius-panel);
+  box-shadow:
+    var(--hh-shadow-card),
+    inset 0 1px 0 var(--hh-color-panelglasshighlight);
+}
+
+/* 浮层级：Modal/下拉/Popconfirm 的兜底材质（antd 自身已走 component tokens） */
+.glass-float {
+  background: var(--hh-color-float);
+  border: 1px solid var(--hh-color-floatborder);
+  border-radius: var(--hh-radius-modal);
+  box-shadow: var(--hh-shadow-float);
+}
+
+/* 卡片级：封面卡/任务行/工具条 —— 不自带 blur（防滚动容器性能灾难） */
+.glass-card {
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-cardborder);
+  border-radius: var(--hh-radius-lg);
+  transition:
+    transform var(--hh-motion-med) var(--hh-motion-easemove),
+    box-shadow var(--hh-motion-med) var(--hh-motion-easemove),
+    border-color var(--hh-motion-med) var(--hh-motion-easemove),
+    background var(--hh-motion-med) var(--hh-motion-easemove);
+}
+.glass-card:hover {
+  transform: translateY(-4px);
+  background: var(--hh-color-cardhover);
+  border-color: var(--hh-color-panelglassborder);
+  box-shadow: var(--hh-shadow-cardhover);
+}
+
+/* ============ 数字列统一 tabular-nums（铁律 §0-8） ============ */
+.num {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ 全局滚动条（Win11 圆角细条：12px 命中区 / 4px 静息滑块） ============ */
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  border: 4px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  border-width: 2.5px;
+  background: rgba(255, 255, 255, 0.28);
+  background-clip: padding-box;
+}
+
+/* ============ 焦点（WCAG 2.4.11：仅键盘显示） ============ */
+:focus {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--hh-color-accent);
+  outline-offset: 2px;
+  border-radius: var(--hh-radius-xs);
+}
+.glass :focus-visible {
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.4),
+    0 0 0 3px var(--hh-color-accent);
+  outline: none;
+}
+
+/* antd Message 浮层兜底（§4.1） */
+.ant-message-notice-content {
+  background: var(--hh-color-float);
+  box-shadow: var(--hh-shadow-float);
+  color: var(--hh-color-text);
+}
+
+/* ============ 动效降级（§0-6） ============ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+  .glass,
+  .glass-float {
+    backdrop-filter: none !important;
+    background: var(--hh-color-float) !important;
+  }
+}

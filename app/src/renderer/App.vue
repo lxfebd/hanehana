@@ -1,13 +1,62 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
-import { App as AntApp, ConfigProvider } from 'ant-design-vue'
+import { onMounted, ref, computed } from 'vue'
+import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { appTheme } from './theme'
+import {
+  refreshGames,
+  state,
+  filteredGames,
+  initTasks,
+  addTask,
+  openSettings,
+  report,
+  reportRejection,
+} from './store'
+import type { Game } from '../shared/types'
+import CoverGrid from './components/CoverGrid.vue'
+import DetailPanel from './components/DetailPanel.vue'
+import ScanDialog from './components/ScanDialog.vue'
+import ScrapeDialog from './components/ScrapeDialog.vue'
+import DownloadView from './components/DownloadView.vue'
+import NewDownloadDialog from './components/NewDownloadDialog.vue'
+import SettingsDialog from './components/SettingsDialog.vue'
 
 const dark = ref(true)
-const bootInfo = ref('连接主进程…')
-// 本地绑定版本号：直接在模板写 __APP_VERSION__ 会被编译成 _ctx.__APP_VERSION__，拿不到值。
-const version = __APP_VERSION__
+const bootInfo = ref('')
+const filteredCount = computed(() => filteredGames.value.length)
+/** 当前页：library | downloads */
+const page = ref<'library' | 'downloads'>('library')
+const addSubmitKey = ref(0)
+
+const allCategories = computed(() => {
+  const set = new Set<string>()
+  for (const g of state.games) for (const c of g.categories) set.add(c)
+  return [...set]
+})
+
+function catCount(c: string): number {
+  return state.games.filter((g: Game) => g.categories.includes(c)).length
+}
+
+async function submitAddTask(input: { url: string; dest: string; threads: number; note: string; checksum: string }): Promise<void> {
+  const ok = await addTask(input)
+  if (ok) state.addDialogOpen = false
+}
+
+async function saveSettings(s: unknown): Promise<void> {
+  try {
+    const r = await window.hh.saveSettings(s as never)
+    if (!r.ok) {
+      report(r as never)
+      return
+    }
+    state.settings = r.settings
+    state.settingsOpen = false
+  } catch (e) {
+    reportRejection(e)
+  }
+}
 
 onMounted(async () => {
   try {
@@ -16,7 +65,10 @@ onMounted(async () => {
       return
     }
     const info = await window.hh.hello()
-    bootInfo.value = `已连接 · ${info.name} v${info.version}`
+    bootInfo.value = `${info.name} v${info.version}`
+    await refreshGames()
+    await initTasks()
+    state.error = ''
   } catch (e) {
     bootInfo.value = `连接主进程失败：${e instanceof Error ? e.message : String(e)}`
   }
@@ -27,40 +79,115 @@ onMounted(async () => {
   <ConfigProvider :locale="zhCN" :theme="appTheme(dark)">
     <AntApp>
       <div class="app-shell">
-        <!-- 自定义标题栏：整条可拖拽，按钮/图标区 no-drag -->
         <header class="titlebar">
           <span class="logo">羽花 HaneHana</span>
-          <span class="no-drag tag">v{{ version }}</span>
+          <span class="no-drag tag">{{ bootInfo }}</span>
+          <div class="titlebar-right no-drag"></div>
         </header>
 
-        <!-- 三栏布局：左侧导航 + 中栏索引 + 右侧内容区（业界最佳实践骨架） -->
         <div class="layout">
+          <!-- 左侧导航 -->
           <nav class="glass sidebar">
-            <div class="nav-item active">游戏库</div>
-            <div class="nav-item">下载</div>
-            <div class="nav-item">统计</div>
-            <div class="nav-item">设置</div>
+            <div class="nav-section">游戏库</div>
+            <div
+              class="nav-item"
+              :class="{ active: page === 'library' }"
+              @click="page = 'library'"
+            >
+              <span>全部游戏</span>
+              <span class="count">{{ state.games.length }}</span>
+            </div>
+            <div class="nav-item" :class="{ active: page === 'downloads' }" @click="page = 'downloads'">
+              <span>下载任务</span>
+              <span class="count">{{ state.rows.filter((r) => r.snap?.state === 'downloading' || r.snap?.state === 'preparing' || (!r.snap && r.def.state === 'downloading')).length }}</span>
+            </div>
+
+            <div v-if="page === 'library'" class="nav-section">分类</div>
+            <div
+              v-for="c in allCategories"
+              v-show="page === 'library'"
+              :key="c"
+              class="nav-item"
+              :class="{ active: state.categoryFilter === c }"
+              @click="state.categoryFilter = state.categoryFilter === c ? '' : c"
+            >
+              <span>{{ c }}</span>
+              <span class="count">{{ catCount(c) }}</span>
+            </div>
+
+            <div class="nav-spacer"></div>
+            <div class="nav-item" @click="state.scanOpen = true">
+              <span>＋ 扫描导入</span>
+            </div>
+            <div class="nav-item" @click="openSettings()">
+              <span>设置</span>
+            </div>
           </nav>
 
+          <!-- 中栏 -->
           <main class="content">
-            <section class="glass hero">
-              <h1>欢迎来到羽花</h1>
-              <p>galgame 管理器 · 封面墙 / 元数据刮削 / 下载 — 骨架已就绪</p>
-              <p class="status">{{ bootInfo }}</p>
-            </section>
+            <template v-if="page === 'library'">
+              <div class="toolbar">
+                <input
+                  v-model="state.keyword"
+                  class="search-input glass"
+                  placeholder="搜索游戏 / 标签 / 原文名…"
+                />
+                <div class="toolbar-count">{{ filteredCount }} 款</div>
+                <button
+                  class="glass-btn"
+                  :class="{ active: state.view === 'grid' }"
+                  @click="state.view = 'grid'"
+                >▦</button>
+                <button
+                  class="glass-btn"
+                  :class="{ active: state.view === 'list' }"
+                  @click="state.view = 'list'"
+                >☰</button>
+              </div>
 
-            <section class="glass panel">
-              <h2>项目里程碑</h2>
-              <ul>
-                <li>✅ Mica 毛玻璃窗口 + 自定义标题栏（Win11 22H2+）</li>
-                <li>⏳ 封面墙游戏库 + 元数据刮削（VNDB / Bangumi）</li>
-                <li>⏳ 扫描导入 / 分类 / 搜索</li>
-                <li>⏳ Rust 下载引擎整合（复用 FastDrop）</li>
-                <li>⏳ LE 转区 / Magpie 缩放 / 游玩时长统计</li>
-              </ul>
-            </section>
+              <CoverGrid :games="filteredGames" :view="state.view" @select="state.selectedId = $event" />
+
+              <div v-if="state.error" class="error-banner glass">
+                {{ state.error }}
+                <button class="glass-btn" @click="state.error = ''">×</button>
+              </div>
+            </template>
+
+            <DownloadView v-else />
           </main>
+
+          <!-- 右侧详情面板：只在游戏库页显示 -->
+          <DetailPanel v-if="page === 'library'" class="detail" />
         </div>
+
+        <ScanDialog v-model:open="state.scanOpen" />
+        <ScrapeDialog v-model:open="state.scrapeOpen" />
+
+        <Modal
+          v-model:open="state.addDialogOpen"
+          :footer="null"
+          :width="540"
+          :destroy-on-close="true"
+          title="新建下载"
+        >
+          <NewDownloadDialog
+            v-if="state.settings"
+            :key="addSubmitKey"
+            :settings="state.settings"
+            @submit="submitAddTask"
+          />
+        </Modal>
+
+        <Modal
+          v-model:open="state.settingsOpen"
+          :footer="null"
+          :width="600"
+          :destroy-on-close="true"
+          title="偏好设置"
+        >
+          <SettingsDialog v-if="state.settings" :settings="state.settings" @save="saveSettings" />
+        </Modal>
       </div>
     </AntApp>
   </ConfigProvider>
@@ -74,16 +201,9 @@ onMounted(async () => {
   color: rgba(255, 255, 255, 0.88);
 }
 
-.logo {
-  font-weight: 600;
-  font-size: 14px;
-  letter-spacing: 0.5px;
-}
-.tag {
-  margin-left: 8px;
-  font-size: 12px;
-  opacity: 0.55;
-}
+.logo { font-weight: 600; font-size: 14px; letter-spacing: 0.5px; }
+.tag { margin-left: 12px; font-size: 12px; opacity: 0.55; }
+.titlebar-right { flex: 1; }
 
 .layout {
   flex: 1;
@@ -97,61 +217,95 @@ onMounted(async () => {
   width: 200px;
   padding: 12px;
   position: relative;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.nav-section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: rgba(255, 255, 255, 0.4);
+  padding: 10px 12px 4px;
 }
 .nav-item {
-  padding: 10px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 9px 12px;
   border-radius: 8px;
-  margin-bottom: 4px;
+  margin-bottom: 2px;
   cursor: pointer;
   color: rgba(255, 255, 255, 0.65);
   transition: background 0.15s ease, color 0.15s ease;
+  font-size: 13px;
 }
-.nav-item:hover {
-  background: rgba(255, 255, 255, 0.08);
-  color: rgba(255, 255, 255, 0.88);
+.nav-item:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.88); }
+.nav-item.active { background: rgba(77, 163, 255, 0.18); color: #7ec3ff; }
+.nav-item .count {
+  font-size: 11px;
+  background: rgba(255, 255, 255, 0.1);
+  padding: 1px 7px;
+  border-radius: 10px;
 }
-.nav-item.active {
-  background: rgba(64, 150, 255, 0.18);
-  color: #69b1ff;
-}
+.nav-spacer { flex: 1; }
 
 .content {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  overflow-y: auto;
+  gap: 10px;
   min-width: 0;
+  overflow: hidden;
 }
 
-.hero {
-  position: relative;
-  padding: 28px 24px;
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 0;
 }
-.hero h1 {
-  margin: 0 0 8px;
-  font-size: 24px;
+.search-input {
+  flex: 1;
+  height: 36px;
+  border-radius: 12px;
+  padding: 0 16px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.2s, box-shadow 0.2s;
 }
-.hero p {
-  margin: 0 0 4px;
-  color: rgba(255, 255, 255, 0.6);
+.search-input:focus {
+  border-color: rgba(77, 163, 255, 0.6);
+  box-shadow: 0 0 0 3px rgba(77, 163, 255, 0.15);
 }
-.hero .status {
-  margin-top: 12px;
-  font-size: 12px;
-  color: #69b1ff;
+.toolbar-count { font-size: 12px; color: rgba(255, 255, 255, 0.5); white-space: nowrap; }
+.glass-btn {
+  width: 36px; height: 36px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.07);
+  color: rgba(255, 255, 255, 0.65);
+  cursor: pointer;
+  font-size: 15px;
+  transition: all 0.15s;
 }
+.glass-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.glass-btn.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
 
-.panel {
-  position: relative;
-  padding: 20px 24px;
-}
-.panel h2 {
-  margin: 0 0 12px;
-  font-size: 16px;
-}
-.panel li {
-  margin-bottom: 6px;
-  color: rgba(255, 255, 255, 0.72);
+.detail { width: 320px; position: relative; }
+
+.error-banner {
+  position: absolute;
+  bottom: 16px; left: 50%;
+  transform: translateX(-50%);
+  padding: 10px 16px;
+  border-radius: 12px;
+  font-size: 13px;
+  color: #ff8f8f;
+  display: flex; gap: 10px; align-items: center;
+  z-index: 20;
 }
 </style>
