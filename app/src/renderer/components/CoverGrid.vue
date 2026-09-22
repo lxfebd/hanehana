@@ -23,7 +23,7 @@ import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Flower2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
-import { library, selectGame } from '../stores/library'
+import { library, selectGame, thumbUrl } from '../stores/library'
 
 const props = defineProps<{
   games: Game[]
@@ -36,6 +36,7 @@ const selected = computed(() => library.selectedId)
 
 const containerRef = ref<HTMLElement | null>(null)
 const cols = ref(1)
+const focusIdx = ref(0)
 let ro: ResizeObserver | null = null
 
 /** 网格列数：容器宽 + 16（补回最右间距）÷ 200 卡槽 */
@@ -61,11 +62,6 @@ onBeforeUnmount(() => {
 /** 网格 wrapper 宽度 = cols*200 - 16，居中留白 */
 const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
 
-function coverSrc(g: Game): string {
-  if (g.coverPath) return `file://${g.coverPath.replace(/\\/g, '/')}`
-  return ''
-}
-
 /** 占位底色：优先封面主色，退回哈希调色板 */
 function placeholderBg(g: Game): string {
   if (g.color) return g.color
@@ -75,6 +71,12 @@ function placeholderBg(g: Game): string {
   return palette[h % palette.length]
 }
 
+/** 副行：发行年 or 时长（tabular-nums） */
+function fmtSub(g: Game): string {
+  if (g.releaseDate) return g.releaseDate
+  return fmtPlay(g.playMs)
+}
+
 function fmtPlay(ms: number): string {
   if (ms <= 0) return ''
   const h = Math.floor(ms / 3600000)
@@ -82,19 +84,36 @@ function fmtPlay(ms: number): string {
   return h > 0 ? `${h}h${m}m` : `${m}m`
 }
 
-function click(g: Game): void {
+function click(g: Game, idx: number): void {
+  focusIdx.value = idx
   selectGame(g.id)
   emit('select', g.id)
+}
+
+/** roving tabindex：方向键移动（grid 按列、list 按行），Enter 选中 */
+function onKeydown(e: KeyboardEvent, idx: number): void {
+  const n = games.value.length
+  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+    e.preventDefault()
+    focusIdx.value = Math.min(n - 1, idx + 1)
+  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    e.preventDefault()
+    focusIdx.value = Math.max(0, idx - 1)
+  } else if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault()
+    click(games.value[idx], idx)
+  }
 }
 </script>
 
 <template>
   <div ref="containerRef" class="cover-wall" :class="view">
-    <!-- 空态 -->
+    <!-- 空态：单 CTA -->
     <div v-if="games.length === 0" class="empty glass">
       <Flower2 class="empty-icon" :size="40" :stroke-width="1.5" />
       <div class="empty-title">游戏库还是空的</div>
-      <div class="empty-hint">点左侧「扫描导入」选择游戏目录，自动识别 exe 入库</div>
+      <div class="empty-hint">点「扫描导入」选择游戏目录，自动识别 exe 入库</div>
+      <button class="empty-cta" @click="library.scanOpen = true">扫描导入</button>
     </div>
 
     <!-- 网格视图：窗口化 + 居中留白 -->
@@ -111,24 +130,29 @@ function click(g: Game): void {
       item-class="grid-item-view"
       list-class="grid-layer"
     >
-      <template #default="{ item }">
-        <div class="cover-card" :class="{ selected: selected === item.id }" @click="click(item)">
+      <template #default="{ item, index }">
+        <div
+          class="cover-card"
+          :class="{ selected: selected === item.id }"
+          role="gridcell"
+          :tabindex="focusIdx === index ? 0 : -1"
+          @click="click(item, index)"
+          @keydown="onKeydown($event, index)"
+        >
           <div class="cover-thumb" :style="{ background: placeholderBg(item) }">
-            <img v-if="coverSrc(item)" :src="coverSrc(item)" loading="lazy" :alt="item.title" />
-            <span v-else class="cover-letter">{{ item.title.slice(0, 1) }}</span>
+            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" />
+            <span v-else class="cover-letter">{{ item.title.slice(0, 2) }}</span>
 
             <div v-if="library.runningIds.has(item.id)" class="cover-running">
               <Activity :size="10" :stroke-width="2.5" /> 运行中
             </div>
-            <div v-if="item.rating" class="cover-rating">
-              <Star class="num" :size="10" :fill="'#ffd666'" :stroke-width="0" /> {{ item.rating.toFixed(1) }}
-            </div>
 
             <div class="cover-shade"></div>
-            <div class="cover-bottom">
-              <div class="cover-title" :title="item.title">{{ item.title }}</div>
-              <div class="cover-sub" v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</div>
-            </div>
+          </div>
+          <!-- 标题区 32px：标题 + 发行年/时长副行 -->
+          <div class="cover-titlezone">
+            <div class="cover-title" :title="item.title">{{ item.title }}</div>
+            <div class="cover-sub" v-if="fmtSub(item)">{{ fmtSub(item) }}</div>
           </div>
         </div>
       </template>
@@ -145,10 +169,17 @@ function click(g: Game): void {
       :buffer="400"
       item-class="list-item-view"
     >
-      <template #default="{ item }">
-        <div class="list-row" :class="{ selected: selected === item.id }" @click="click(item)">
+      <template #default="{ item, index }">
+        <div
+          class="list-row"
+          :class="{ selected: selected === item.id }"
+          role="row"
+          :tabindex="focusIdx === index ? 0 : -1"
+          @click="click(item, index)"
+          @keydown="onKeydown($event, index)"
+        >
           <div class="list-thumb" :style="{ background: placeholderBg(item) }">
-            <img v-if="coverSrc(item)" :src="coverSrc(item)" loading="lazy" :alt="item.title" />
+            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" />
             <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
             <div v-if="library.runningIds.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
@@ -157,10 +188,17 @@ function click(g: Game): void {
           <div class="list-body">
             <div class="list-title" :title="item.title">{{ item.title }}</div>
             <div class="list-meta">
-              <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
-              <span v-if="item.rating"><Star class="num" :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span>
-              <span v-if="fmtPlay(item.playMs)">已玩 {{ fmtPlay(item.playMs) }}</span>
+              <span v-if="item.releaseDate || fmtPlay(item.playMs)">{{ fmtSub(item) }}</span>
             </div>
+          </div>
+          <!-- 右侧三列 caption tabular-nums：发行 / 评分 / 时长 -->
+          <div class="list-cols">
+            <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
+            <span v-else></span>
+            <span v-if="item.rating"><Star class="num" :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span>
+            <span v-else></span>
+            <span v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</span>
+            <span v-else></span>
           </div>
         </div>
       </template>
@@ -181,6 +219,36 @@ function click(g: Game): void {
   height: 100%;
 }
 
+/* 空态：单 CTA */
+.empty {
+  position: relative;
+  margin: 60px auto;
+  max-width: 380px;
+  padding: 40px 30px;
+  text-align: center;
+  border-radius: 20px;
+}
+.empty-icon {
+  color: rgba(255, 255, 255, 0.48);
+  margin-bottom: 12px;
+}
+.empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
+.empty-hint { font-size: 13px; color: rgba(255, 255, 255, 0.5); margin-bottom: 0; }
+.empty-cta {
+  margin-top: 18px;
+  height: 34px;
+  padding: 0 22px;
+  border-radius: 10px;
+  border: none;
+  background: var(--hh-color-accent);
+  color: #fff;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease;
+}
+.empty-cta:hover { background: var(--hh-color-accent-hover); }
+
 /* ============ 网格 ============ */
 /* item-view 是绝对定位（transform），网格行内每项水平偏移由 ESM 计算。
    居中：把「定位坐标系」（item-wrapper）收窄到实际内容宽再 margin auto。 */
@@ -196,13 +264,13 @@ function click(g: Game): void {
   border-radius: 12px;
   padding: 4px;
   transition: transform 0.18s ease;
+  outline: none;
 }
 .cover-card:hover { transform: translateY(-4px); }
 .cover-card.selected .cover-thumb {
   box-shadow:
     0 0 0 2px #4da3ff,
-    0 0 24px rgba(77, 163, 255, 0.35),
-    0 8px 24px rgba(0, 0, 0, 0.4);
+    0 8px 24px rgba(77, 163, 255, 0.25);
 }
 
 .cover-thumb {
@@ -223,10 +291,10 @@ function click(g: Game): void {
 .cover-letter {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 40px; font-weight: 700; color: rgba(255, 255, 255, 0.45);
+  font-size: 24px; font-weight: 600; color: rgba(255, 255, 255, 0.55);
 }
 
-/* 运行中 / 评分徽章 */
+/* 运行中徽章（评分不上卡） */
 .cover-running {
   position: absolute; top: 8px; left: 8px;
   background: rgba(94, 194, 105, 0.9);
@@ -235,55 +303,50 @@ function click(g: Game): void {
   z-index: 2;
   display: flex; align-items: center; gap: 3px;
 }
-.cover-rating {
-  position: absolute; top: 8px; right: 8px;
-  background: rgba(0, 0, 0, 0.55);
-  color: #ffd666; font-size: 11px; font-weight: 600;
-  padding: 3px 8px; border-radius: 8px;
-  z-index: 2;
-  display: flex; align-items: center; gap: 3px;
-}
 
-/* 底部渐晕 + 标题叠图 */
+/* 封面底部轻渐晕（标题在封面下，只做视觉过渡） */
 .cover-shade {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 45%;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.78), transparent);
+  position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.5), transparent);
   z-index: 1;
 }
-.cover-bottom {
-  position: absolute; left: 0; right: 0; bottom: 0;
-  padding: 8px 12px 10px;
-  z-index: 2;
+
+/* 标题区 32px：封面下方，非叠图 */
+.cover-titlezone {
+  padding: 4px 2px 0;
+  height: 32px;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 .cover-title {
-  font-size: 12.5px; font-weight: 600;
-  color: rgba(255, 255, 255, 0.96);
+  font-size: 13px; line-height: 18px; font-weight: 600;
+  color: rgba(255, 255, 255, 0.9);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
 }
 .cover-sub {
-  font-size: 11px;
-  color: rgba(255, 255, 255, 0.65);
-  margin-top: 2px;
-  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.6);
+  font-size: 12px; line-height: 16px;
+  color: rgba(255, 255, 255, 0.48);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 
 /* ============ 列表 ============ */
 .list-row {
   display: flex; align-items: center; gap: 14px;
-  height: 68px;
+  height: 72px;
   padding: 0 10px;
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s ease;
   margin: 2px 0;
   box-sizing: border-box;
+  outline: none;
 }
 .list-row:hover { background: rgba(255, 255, 255, 0.06); }
 .list-row.selected { background: rgba(77, 163, 255, 0.14); }
 .list-thumb {
-  width: 48px; height: 64px;
-  border-radius: 8px; overflow: hidden; flex-shrink: 0;
+  width: 44px; height: 66px;
+  border-radius: 6px; overflow: hidden; flex-shrink: 0;
   position: relative;
   box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
 }
@@ -307,8 +370,16 @@ function click(g: Game): void {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .list-meta {
-  display: flex; gap: 12px;
   font-size: 12px; color: rgba(255, 255, 255, 0.45);
   margin-top: 3px;
+  font-variant-numeric: tabular-nums;
 }
+/* 右侧三列 caption tabular-nums：发行 / 评分 / 时长 */
+.list-cols {
+  display: flex; align-items: center; gap: 16px;
+  font-size: 12px; color: rgba(255, 255, 255, 0.48);
+  font-variant-numeric: tabular-nums;
+  flex-shrink: 0;
+}
+.list-cols .num { vertical-align: -1px; }
 </style>
