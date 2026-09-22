@@ -128,6 +128,34 @@ body,
   color: var(--hh-color-text);
 }
 
+/* ============ antd 组件 token 定点兜底（§7 风险回退，最后手段） ============
+   antdv v4 端口对 Modal/Select/Button 的部分 component token 静默忽略
+   （ComponentToken 声明面为空），这里按组件名逐个补，值全部来自 tokens。 */
+.ant-modal-content,
+.ant-modal-header {
+  background: var(--hh-color-float) !important;
+}
+.ant-modal-header {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+.ant-input,
+.ant-input-number,
+.ant-input-number-input,
+.ant-select-selector {
+  background: var(--hh-color-input) !important;
+}
+.ant-btn-primary {
+  box-shadow: 0 4px 14px rgba(77, 163, 255, 0.3);
+}
+.ant-select-dropdown,
+.ant-popover-inner,
+.ant-popconfirm-inner {
+  background: var(--hh-color-float) !important;
+}
+.ant-popover-inner {
+  box-shadow: var(--hh-shadow-float);
+}
+
 /* ============ 动效降级（§0-6） ============ */
 @media (prefers-reduced-motion: reduce) {
   *,

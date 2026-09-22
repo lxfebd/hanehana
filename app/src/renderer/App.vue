@@ -3,7 +3,7 @@ import { onMounted, ref, computed } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Settings, X } from 'lucide-vue-next'
-import { appTheme } from './theme'
+import { antdTheme } from './design/antdTheme'
 import {
   refreshGames,
   state,
@@ -23,8 +23,8 @@ import DownloadView from './components/DownloadView.vue'
 import NewDownloadDialog from './components/NewDownloadDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 
-const dark = ref(true)
 const bootInfo = ref('')
+
 const filteredCount = computed(() => filteredGames.value.length)
 /** 当前页：library | downloads */
 const page = ref<'library' | 'downloads'>('library')
@@ -77,7 +77,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <ConfigProvider :locale="zhCN" :theme="appTheme(dark)">
+  <ConfigProvider :locale="zhCN" :theme="antdTheme">
     <AntApp>
       <div class="app-shell">
         <header class="titlebar">
