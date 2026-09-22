@@ -34,9 +34,13 @@ export const Ipc = {
   ActionAll: 'hanehana:action:all',
   SettingsGet: 'hanehana:settings:get',
   SettingsSave: 'hanehana:settings:save',
+  // 自动更新
+  UpdateCheck: 'hanehana:update:check',
+  UpdateInstall: 'hanehana:update:install',
   // 主进程 → 渲染进程（推送）
   TaskProgress: 'hanehana:push:task-progress',
   TaskFocus: 'hanehana:push:task-focus',
+  UpdateStatus: 'hanehana:push:update-status',
 } as const
 
 export type IpcChannel = (typeof Ipc)[keyof typeof Ipc]

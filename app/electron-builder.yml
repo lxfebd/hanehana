@@ -24,6 +24,7 @@ extraResources:
     to: fastdrop-engine.exe
 
 win:
+  icon: build/icon.ico
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}
   target:
     - nsis

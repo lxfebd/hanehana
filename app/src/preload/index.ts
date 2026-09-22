@@ -9,6 +9,7 @@ import type {
   Settings,
   TaskProgressPush,
   TaskRow,
+  UpdateStatus,
 } from '../shared/types'
 
 const bridge = {
@@ -47,6 +48,14 @@ const bridge = {
     ipcRenderer.invoke(Ipc.ActionAll, action),
   getSettings: (): Promise<Settings> => ipcRenderer.invoke(Ipc.SettingsGet),
   saveSettings: (s: Settings): Promise<SaveSettingsResult> => ipcRenderer.invoke(Ipc.SettingsSave, s),
+  // 自动更新
+  checkUpdate: (): Promise<ActionResult> => ipcRenderer.invoke(Ipc.UpdateCheck),
+  installUpdate: (): Promise<ActionResult> => ipcRenderer.invoke(Ipc.UpdateInstall),
+  onUpdateStatus: (cb: (s: UpdateStatus) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, s: UpdateStatus): void => cb(s)
+    ipcRenderer.on(Ipc.UpdateStatus, listener)
+    return () => ipcRenderer.removeListener(Ipc.UpdateStatus, listener)
+  },
   onTaskProgress: (cb: (p: TaskProgressPush) => void): (() => void) => {
     const listener = (_e: Electron.IpcRendererEvent, p: TaskProgressPush): void => cb(p)
     ipcRenderer.on(Ipc.TaskProgress, listener)

@@ -8,8 +8,9 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { FolderOpen } from 'lucide-vue-next'
 import { Button, Checkbox, Form, Input, InputNumber, Switch, TabPane, Tabs } from 'ant-design-vue'
-import type { Settings } from '../../shared/types'
+import type { Settings, UpdateStatus } from '../../shared/types'
 import { proxyFormatError } from '../../shared/proxy'
+import { fmtSpeed } from '../../shared/format'
 
 const props = defineProps<{ settings: Settings }>()
 const emit = defineEmits<{ save: [s: Settings] }>()
@@ -41,6 +42,46 @@ const dataDirText = computed(() => form.download_dir || '（未设置）')
 
 /** 构建期注入的版本号（app/package.json） */
 const appVersion: string = __APP_VERSION__
+
+/** 自动更新状态（主进程推送）。dev 模式主进程直接推 idle，无需区分。 */
+const updater = ref<UpdateStatus>({ phase: 'idle' })
+const updaterBusy = ref(false)
+
+onMounted(async () => {
+  try {
+    const info = await window.hh.hello()
+    engine.value = { ok: info.engine_ok, path: info.engine_path, hint: info.engine_hint }
+  } catch {
+    engine.value = null
+  }
+  window.hh.onUpdateStatus((s) => {
+    updater.value = s
+    updaterBusy.value = s.phase === 'checking' || s.phase === 'downloading'
+  })
+})
+
+async function checkUpdateClick(): Promise<void> {
+  if (updaterBusy.value) return
+  updater.value = { phase: 'checking' }
+  updaterBusy.value = true
+  const r = await window.hh.checkUpdate()
+  // 主进程的推送会接管后续状态；invoke 返回不代表已结束
+  if (!r?.ok) {
+    updater.value = { phase: 'idle', error: r?.error ?? '检查失败' }
+    updaterBusy.value = false
+  }
+}
+
+function installUpdateClick(): void {
+  void window.hh.installUpdate()
+}
+
+/** 下载进度百分比文案（progress 是 0..1）。 */
+const updaterPct = computed(() =>
+  updater.value.phase === 'downloading' && typeof updater.value.progress === 'number'
+    ? Math.round(updater.value.progress * 100)
+    : 0,
+)
 
 async function browseDir(): Promise<void> {
   const p = await window.hh.pickDir()
@@ -209,6 +250,33 @@ function save(): void {
           </div>
           <div v-if="engine && !engine.ok" class="hint hint-err about-warn">{{ engine.hint }}</div>
           <div class="about-hint">问题反馈与更新公告见项目仓库 README。</div>
+          <div class="about-row updater">
+            <span class="about-key">自动更新</span>
+            <span class="about-val updater-val">
+              <template v-if="updater.phase === 'checking'">检查中…</template>
+              <template v-else-if="updater.phase === 'available'">
+                发现新版本 {{ updater.version }}，正在下载…
+              </template>
+              <template v-else-if="updater.phase === 'downloading'">
+                下载更新 {{ updaterPct }}%
+                <span v-if="updater.total">{{ fmtSpeed(updater.transferred || 0) }}/{{ fmtSpeed(updater.total) }}</span>
+              </template>
+              <template v-else-if="updater.phase === 'downloaded'">
+                新版本 {{ updater.version }} 已就绪
+              </template>
+              <template v-else-if="updater.phase === 'installing'">正在安装…</template>
+              <template v-else-if="updater.error">{{ updater.error }}</template>
+              <template v-else>未检查</template>
+            </span>
+          </div>
+          <div class="updater-actions">
+            <Button v-if="updater.phase === 'downloaded'" type="primary" size="small" @click="installUpdateClick">
+              立即重启安装
+            </Button>
+            <Button v-else size="small" :loading="updaterBusy" @click="checkUpdateClick">
+              {{ updater.phase === 'idle' && !updater.error ? '检查更新' : '重新检查' }}
+            </Button>
+          </div>
         </div>
       </TabPane>
     </Tabs>
@@ -288,6 +356,14 @@ function save(): void {
 .about-hint {
   font-size: 12px;
   color: rgba(255, 255, 255, 0.4);
+  margin-top: 10px;
+}
+.updater-val {
+  color: var(--hh-color-accent);
+}
+.updater-actions {
+  display: flex;
+  justify-content: flex-end;
   margin-top: 10px;
 }
 .dlg-foot {

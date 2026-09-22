@@ -16,6 +16,8 @@
     "build": "electron-vite build",
     "dist": "electron-vite build && electron-builder --publish never",
     "dist:dir": "electron-vite build && electron-builder --dir",
+    "smoke": "node scripts/smoke_packaged.mjs",
+    "icon": "node scripts/gen_icon.mjs",
     "typecheck": "vue-tsc --noEmit -p tsconfig.app.json && vue-tsc --noEmit -p tsconfig.node.json"
   },
   "devDependencies": {

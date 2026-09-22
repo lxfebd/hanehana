@@ -1,0 +1,55 @@
+# 发版：打 tag 即触发。
+# 只在 workflow 内用 --publish always（本地 dist 脚本保持 --publish never，见 package.json）：
+# electron-builder 会把 nsis 安装包 + latest.yml + blockmap 一起推 GitHub Release，
+# 应用内 autoUpdater 靠 latest.yml 发现新版本。
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci
+
+      - name: typecheck
+        working-directory: app
+        run: npm run typecheck
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: build
+        working-directory: app
+        run: npm run build
+
+      - name: cargo build release (引擎产物)
+        working-directory: engine-rs
+        run: cargo build --release --locked
+
+      - name: dist (publish 到 GitHub Release)
+        working-directory: app
+        run: npx electron-vite build && npx electron-builder --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: dist:dir smoke（解包产物可启动 + hello 通）
+        working-directory: app
+        run: npx electron-builder --dir && node scripts/smoke_packaged.mjs
+        env:
+          PYTHONIOENCODING: utf-8

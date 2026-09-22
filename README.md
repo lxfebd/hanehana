@@ -27,10 +27,10 @@
 - 玻璃卡片设计系统：token 单源（design/tokens.ts）+ antd 主题映射
 - 深色为唯一主题
 - 托盘常驻、系统通知
+- 应用内自动更新（electron-updater：检查 → 静默下载 → 重启安装）
 
 **路线图中（尚未实现，勿当作现有能力）**
 
-- 应用内自动更新（electron-updater 已列依赖，实现见路线图）
 - 浏览器扩展投递下载链接（native messaging 通道）
 - 内嵌游戏站浏览器 + 搜索聚合
 - 统计汇总（日/周/月）与海报导出
@@ -55,6 +55,24 @@ cd app && npm run typecheck   # 类型检查，零错误
 cd app && npm run build       # 构建产物
 ```
 
+## 打包与发版
+
+```bash
+cd app && npm run icon        # 生成 build/icon.ico（程序化绘制，零依赖）
+cd app && npm run dist:dir    # 解包产物（release/win-unpacked），smoke 验证用
+cd app && npm run smoke       # 解包产物验收：进程可启动 + hh.hello 通 + 引擎存在
+cd app && npm run dist        # NSIS 安装包（--publish never，仅本地产物）
+```
+
+发版流程已自动化：推送 `v*` tag 触发 GitHub Actions（`.github/workflows/release.yml`），
+在 runner 上构建并发布 NSIS 安装包 + latest.yml 到 GitHub Release，应用内自动更新
+（「设置 → 关于 → 检查更新」）靠 latest.yml 发现新版本，静默下载后点「重启安装」完成升级。
+
+> **未签名安装放行**：目前安装包未做代码签名（无证书）。Windows SmartScreen 会提示
+> 「Windows 已保护你的电脑」，点「更多信息 → 仍要运行」即可放行；安装器本身
+> 由 GitHub Actions 从本仓库源码构建，latest.yml 与安装包的哈希一致（GitHub Release
+> 资产页可核对）。正式签名（EV 证书）在路线图中。
+
 ## 架构
 
 三层外壳 + 独立引擎（已实现）。渲染进程和主进程之间只走 IPC（contextBridge，沙箱开启）；主进程和下载引擎之间走 stdio 行级 JSON——两条边界都不共享内存，引擎崩溃只影响单个任务。
@@ -72,7 +90,7 @@ renderer (Vue3 + antd + token CSS) ──IPC──▶ main (Electron) ──stdi
 - [x] 启动集成：一键启动 + 时长统计（LE / Magpie 开关已存，外部集成待做）
 - [x] 下载整合：Rust 引擎 + 任务列表 + 校验和
 - [x] 设置 + 托盘 + 通知
-- [ ] 应用内自动更新（electron-updater）
+- [x] 应用内自动更新（electron-updater + tag 触发 Release）
 - [ ] 浏览器扩展投递链接（native messaging）
 - [ ] 内嵌游戏站浏览器 + 搜索聚合
 - [ ] 统计汇总与海报导出

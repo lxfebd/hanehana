@@ -32,6 +32,7 @@ import { normalizeSettings, Store, dataDir } from './store'
 import { applyChromiumProxy } from './netConfig'
 import { proxyFormatError } from '../shared/proxy'
 import { TRAY_ICON_DATA_URL } from './trayIcon'
+import { checkUpdate, initAutoUpdater, installUpdate, setUpdatePush, updateEnabled } from './updater'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const preloadPath = join(here, '../preload/index.cjs')
@@ -45,6 +46,13 @@ registerThumbProtocol()
 // 打包产物一律不开——CDP 端口等于把渲染进程的控制权开放给本机任意进程。
 if (process.env.HANEHANA_DEBUG_PORT && !app.isPackaged) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env.HANEHANA_DEBUG_PORT)
+}
+
+// 打包产物的 smoke 探活专用逃生门：仅当显式设置 HANEHANA_SMOKE_PORT 才开 CDP，
+// 只服务 dist:dir 验收（scripts/smoke_packaged.mjs），与 HANEHANA_DEBUG_PORT
+// 分开命名避免误用——日常启动不带这个变量，安全面与 D14 保持一致。
+if (process.env.HANEHANA_SMOKE_PORT && app.isPackaged) {
+  app.commandLine.appendSwitch('remote-debugging-port', process.env.HANEHANA_SMOKE_PORT)
 }
 
 // 单实例锁：避免双开导致数据互踩（两份内存任务表全量覆盖写 tasks.json）。
@@ -480,6 +488,22 @@ function wireIpc(): void {
     syncKeepAwake()
     return { ok: true as const, settings: saved }
   })
+
+  // 自动更新：检查与安装都由用户界面发起（“关于”页按钮），不在后台擅自下载。
+  // 状态推送经 setUpdatePush 接好，窗口不在时也能收到。
+  ipcMain.handle(Ipc.UpdateCheck, async () => {
+    const st = updateEnabled()
+    if (!st) return { ok: false as const, error: '自动更新仅打包版可用（开发模式无发布源）' }
+    void checkUpdate()
+    return { ok: true as const }
+  })
+
+  ipcMain.handle(Ipc.UpdateInstall, () => {
+    const st = updateEnabled()
+    if (!st) return { ok: false as const, error: '自动更新仅打包版可用（开发模式无发布源）' }
+    if (!installUpdate()) return { ok: false as const, error: '没有已下载的更新可安装' }
+    return { ok: true as const }
+  })
 }
 
 // ---------------------------------------------------------------- 生命周期
@@ -528,6 +552,15 @@ if (gotSingleInstanceLock) {
     wireIpc()
     createWindow()
     createTray()
+    // 自动更新：状态推送进渲染层（“关于”页渲染更新提示）。
+    setUpdatePush((s) => win?.webContents.send(Ipc.UpdateStatus, s))
+    initAutoUpdater()
+    // 按设置决定是否在启动后静默检查。auto_update_check 默认开：
+    // 没有这一行，用户永远不知道新版已经发布——发版日志写在 GitHub Release 里，
+    // 界面里不主动提就没人看得到。
+    if (initialSettings.auto_update_check) {
+      setTimeout(() => void checkUpdate(), 4000)
+    }
     // 上次崩溃/强杀留下的未完成任务：重启后自动续传，不用用户手动点开始。
     manager.startQueued()
 
