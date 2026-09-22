@@ -1,8 +1,10 @@
 <script setup lang="ts">
 /**
- * 下载页：左侧状态过滤 + 工具栏（新建/全动）+ 任务列表。
- *
- * 布局与游戏库页共用玻璃风格：侧栏负责状态桶，主区是任务行列表。
+ * 下载页（REDESIGN-SPEC §5.5）。
+ *   - 删除 .dl-side 第二侧栏；顶部两行工具栏：
+ *     行1：segmented 状态过滤（带 count）+ 搜索框 + 排序 Select
+ *     行2 右对齐：总速度 + 图标按钮组（Plus primary / 全动 / 清空）
+ *   - 任务行 Motrix 化（见 TaskRow.vue）：高 64、底部绝对进度条、自绘状态 chip
  */
 import { computed } from 'vue'
 import { message, Modal, Popconfirm, Select } from 'ant-design-vue'
@@ -11,6 +13,7 @@ import {
   PlayCircle,
   Plus,
   RotateCw,
+  Search,
   Trash2,
 } from 'lucide-vue-next'
 import type { TaskRow } from '../../shared/types'
@@ -49,7 +52,6 @@ const FILTERS: { key: string; label: string }[] = [
 
 async function onAction(r: TaskRow, action: string): Promise<void> {
   if (action === 'open') {
-    // 打开任务所在文件夹：dest 是完整文件路径，取父目录交给系统资源管理器。
     try {
       const why = await window.hh.openDir(dirOf(r.def.dest))
       if (why) message.error(`打不开该文件夹：${why}`)
@@ -89,58 +91,66 @@ function onAll(action: string): void {
     reportRejection(e)
   }
 }
-
-// 选中行跟随最新快照：推送把 snap 换新时列表行自动反映，无需额外代码。
 </script>
 
 <template>
   <div class="dl-layout">
-    <aside class="dl-side">
-      <div class="dl-side-title">下载任务</div>
-      <div
-        v-for="f in FILTERS"
-        :key="f.key"
-        class="dl-filter"
-        :class="{ active: downloads.taskFilter === f.key }"
-        @click="downloads.taskFilter = f.key"
-      >
-        <span>{{ f.label }}</span>
-        <span class="cnt">{{ counts[f.key as keyof typeof counts] }}</span>
-      </div>
-      <div class="dl-spacer"></div>
-      <div class="dl-total" v-if="downloads.totalSpeed > 0">{{ fmtSpeed(downloads.totalSpeed) }}</div>
-    </aside>
-
     <main class="dl-main">
-      <div class="dl-toolbar">
-        <input
-          v-model="downloads.taskQuery"
-          class="search-input"
-          placeholder="搜索文件名 / 链接…"
-        />
+      <!-- 行1：segmented 过滤 + 搜索 + 排序 -->
+      <div class="dl-toolbar row1">
+        <div class="seg-filter">
+          <button
+            v-for="f in FILTERS"
+            :key="f.key"
+            class="seg-chip"
+            :class="{ active: downloads.taskFilter === f.key }"
+            @click="downloads.taskFilter = f.key"
+          >
+            {{ f.label }}<span class="cnt">{{ counts[f.key as keyof typeof counts] }}</span>
+          </button>
+        </div>
+
+        <div class="search-box">
+          <Search :size="14" class="search-ic" />
+          <input
+            v-model="downloads.taskQuery"
+            class="search-input"
+            placeholder="搜索文件名 / 链接…"
+          />
+        </div>
+
         <Select
           v-model:value="downloads.taskSort"
           :options="SORT_OPTIONS"
           size="small"
-          style="width: 130px"
+          style="width: 120px"
         />
-        <button class="glass-btn" title="新建下载" @click="downloads.addDialogOpen = true">
-          <Plus :size="16" />
-        </button>
-        <button class="glass-btn" title="全部开始" @click="onAll('start')">
-          <PlayCircle :size="16" />
-        </button>
-        <button class="glass-btn" title="全部暂停" @click="onAll('pause')">
-          <PauseCircle :size="16" />
-        </button>
-        <button class="glass-btn" title="重试全部失败" @click="onAll('retry-failed')">
-          <RotateCw :size="16" />
-        </button>
-        <Popconfirm title="清空所有已完成任务？" ok-text="清空" cancel-text="取消" @confirm="onAll('clear-finished')">
-          <button class="glass-btn" title="清空已完成">
-            <Trash2 :size="16" />
+      </div>
+
+      <!-- 行2 右对齐：总速度 + 图标按钮组 -->
+      <div class="dl-toolbar row2">
+        <span v-if="downloads.totalSpeed > 0" class="total-speed">
+          {{ fmtSpeed(downloads.totalSpeed) }}
+        </span>
+        <div class="dl-btns">
+          <button class="dl-btn primary" title="新建下载" @click="downloads.addDialogOpen = true">
+            <Plus :size="16" />
           </button>
-        </Popconfirm>
+          <button class="dl-btn" title="全部开始" @click="onAll('start')">
+            <PlayCircle :size="16" />
+          </button>
+          <button class="dl-btn" title="全部暂停" @click="onAll('pause')">
+            <PauseCircle :size="16" />
+          </button>
+          <button class="dl-btn" title="重试全部失败" @click="onAll('retry-failed')">
+            <RotateCw :size="16" />
+          </button>
+          <Popconfirm title="清空所有已完成任务？" ok-text="清空" cancel-text="取消" @confirm="onAll('clear-finished')">
+            <button class="dl-btn" title="清空已完成">
+              <Trash2 :size="16" />
+            </button>
+          </Popconfirm>
+        </div>
       </div>
 
       <div class="dl-list">
@@ -154,7 +164,12 @@ function onAll(action: string): void {
           @action="onAction(r, $event)"
         />
         <div v-if="visibleRows.length === 0" class="dl-empty">
-          {{ downloads.rows.length === 0 ? '还没有下载任务。点右上角「＋」新建，或从游戏站捕获直链。' : '没有符合条件的任务。' }}
+          <div class="dl-empty-title">
+            {{ downloads.rows.length === 0 ? '还没有下载任务' : '没有符合条件的任务' }}
+          </div>
+          <div v-if="downloads.rows.length === 0" class="dl-empty-hint">
+            点右上角「＋」新建，或从游戏站捕获直链
+          </div>
         </div>
       </div>
     </main>
@@ -163,61 +178,10 @@ function onAll(action: string): void {
 
 <style scoped>
 .dl-layout {
-  display: flex;
-  gap: 12px;
   flex: 1;
   min-height: 0;
-}
-
-.dl-side {
-  width: 168px;
   display: flex;
   flex-direction: column;
-  padding: 12px;
-  overflow-y: auto;
-  position: relative;
-  background: rgba(255, 255, 255, 0.055);
-  backdrop-filter: blur(16px) saturate(1.5);
-  -webkit-backdrop-filter: blur(16px) saturate(1.5);
-  border: 1px solid rgba(255, 255, 255, 0.11);
-  border-radius: 16px;
-  box-shadow:
-    0 8px 32px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.16);
-}
-.dl-side-title {
-  font-size: 13px;
-  font-weight: 600;
-  padding: 4px 10px 10px;
-  color: rgba(255, 255, 255, 0.88);
-}
-.dl-filter {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 10px;
-  border-radius: 8px;
-  margin-bottom: 2px;
-  cursor: pointer;
-  color: rgba(255, 255, 255, 0.65);
-  font-size: 13px;
-  transition: background 0.15s, color 0.15s;
-}
-.dl-filter:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.88); }
-.dl-filter.active { background: rgba(77, 163, 255, 0.18); color: #7ec3ff; }
-.dl-filter .cnt {
-  font-size: 11px;
-  background: rgba(255, 255, 255, 0.1);
-  padding: 1px 7px;
-  border-radius: 10px;
-}
-.dl-spacer { flex: 1; }
-.dl-total {
-  font-size: 12px;
-  color: #7ec3ff;
-  text-align: center;
-  padding: 8px 0;
-  font-family: ui-monospace, Consolas, monospace;
 }
 
 .dl-main {
@@ -227,19 +191,66 @@ function onAll(action: string): void {
   gap: 10px;
   min-width: 0;
 }
-.dl-toolbar {
+
+/* ============ 行1：segmented 过滤 + 搜索 + 排序 ============ */
+.dl-toolbar.row1 {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 12px;
   padding: 4px 0;
 }
-.search-input {
+.seg-filter {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  flex-shrink: 0;
+}
+.seg-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.55);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.seg-chip:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.9); }
+.seg-chip.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
+.seg-chip .cnt {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+
+.search-box {
+  position: relative;
+  display: flex;
+  align-items: center;
   flex: 1;
+  min-width: 160px;
+  max-width: 340px;
+}
+.search-ic {
+  position: absolute;
+  left: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  pointer-events: none;
+}
+.search-input {
+  width: 100%;
   height: 32px;
   border-radius: 10px;
-  padding: 0 14px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.07);
+  padding: 0 12px 0 34px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: rgba(255, 255, 255, 0.04);
   color: rgba(255, 255, 255, 0.88);
   font-size: 13px;
   outline: none;
@@ -249,20 +260,46 @@ function onAll(action: string): void {
   border-color: rgba(77, 163, 255, 0.6);
   box-shadow: 0 0 0 3px rgba(77, 163, 255, 0.15);
 }
-.glass-btn {
-  width: 32px;
-  height: 32px;
+
+/* ============ 行2 右对齐 ============ */
+.dl-toolbar.row2 {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding: 4px 0;
+}
+.total-speed {
+  font-size: 12px;
+  color: #7ec3ff;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+}
+.dl-btns {
+  display: flex;
+  gap: 6px;
+}
+.dl-btn {
+  width: 32px; height: 32px;
   border-radius: 9px;
   border: 1px solid rgba(255, 255, 255, 0.14);
   background: rgba(255, 255, 255, 0.07);
   color: rgba(255, 255, 255, 0.65);
   cursor: pointer;
   font-size: 14px;
+  display: flex; align-items: center; justify-content: center;
   transition: all 0.15s;
 }
-.glass-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
-.glass-btn.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
+.dl-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.dl-btn.primary {
+  border: none;
+  background: var(--hh-color-accent);
+  color: #fff;
+  box-shadow: 0 4px 14px rgba(77, 163, 255, 0.3);
+}
+.dl-btn.primary:hover { background: var(--hh-color-accent-hover); color: #fff; }
 
+/* ============ 列表 ============ */
 .dl-list {
   flex: 1;
   overflow-y: auto;
@@ -270,8 +307,9 @@ function onAll(action: string): void {
 }
 .dl-empty {
   text-align: center;
-  padding: 80px 20px;
+  padding: 60px 20px;
   color: rgba(255, 255, 255, 0.35);
-  font-size: 13px;
 }
+.dl-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
+.dl-empty-hint { font-size: 13px; color: rgba(255, 255, 255, 0.4); }
 </style>

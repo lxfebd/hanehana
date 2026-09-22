@@ -1,10 +1,12 @@
 <script setup lang="ts">
 /**
- * 单行下载任务（卡片化重构版）：
- *   - 状态色点（左缘）+ 图标双指示
- *   - 细腻渐变进度条，下载中带流动高光
- *   - hover 浮现操作按钮（默认弱化，不抢视线）
- *   - 大小/速度收进副标题一行，窄窗口不挤爆按钮
+ * 任务行（REDESIGN-SPEC §5.5 Motrix 化）：
+ *   - 高 64，card 材质，margin-bottom 8，radius 12
+ *   - 左：状态色点 4px 竖条 + 状态图标 16
+ *   - 中：name 13 单行 + sub caption mono（速度·剩余·区间 / 错误行 / 完成信息）
+ *   - 右：pct 13 mono + 自绘状态 chip（dot+label，替 antd Tag）
+ *   - 进度条 absolute 行底 3px，下载中带流光（1.2s linear infinite）
+ *   - hover 右上浮现 3 图标按钮（暂停或继续 / 文件夹 / 删除）167ms fade
  */
 import { computed, type Component } from 'vue'
 import {
@@ -25,7 +27,6 @@ import type { TaskDef, TaskSnapshot, TaskState } from '../../shared/types'
 import { dirName, fileName, fmtEta, fmtRange, fmtSize, fmtSpeed, fmtTime } from '../../shared/format'
 import { errorLine } from '../../shared/errors'
 import { percentText, progressRatio, statusBadge, totalBytes } from '../status'
-import StatusTag from './StatusTag.vue'
 
 const props = defineProps<{
   def: TaskDef
@@ -91,9 +92,7 @@ const sub = computed(() => {
 
 const canStart = computed(() => ['queued', 'paused', 'error', 'idle', 'cancelled'].includes(state.value))
 const canPause = computed(() => state.value === 'downloading' || state.value === 'preparing')
-/** 打开所在文件夹任何时候都该能用：半截的 .part 也要能找到、能删。 */
 const canOpen = computed(() => true)
-/** 已完成 → 重新下载；失败/取消 → 继续（断点续传），两件事的按钮语义必须分开。 */
 const needsRetry = computed(() => state.value === 'done')
 const primaryAction = computed(() => (needsRetry.value ? 'retry' : 'start'))
 const primaryTitle = computed(() => {
@@ -114,6 +113,17 @@ const dotColor = computed(() => {
     default: return '#6a6f7d'
   }
 })
+
+/** 自绘状态 chip 颜色（dot+label） */
+const chipTone = computed(() => {
+  switch (badge.value.tone) {
+    case 'success': return { dot: '#5ec269', text: '#8ad17e' }
+    case 'error': return { dot: '#e05555', text: '#ff9a9a' }
+    case 'warning': return { dot: '#e8b450', text: '#e8b450' }
+    case 'blue': return { dot: '#4da3ff', text: '#7ec3ff' }
+    default: return { dot: '#8a8f9d', text: 'rgba(255,255,255,0.6)' }
+  }
+})
 </script>
 
 <template>
@@ -129,22 +139,25 @@ const dotColor = computed(() => {
       <div class="sub">{{ sub }}</div>
     </div>
 
-    <div class="cell-prog">
-      <div class="bar">
-        <div v-if="indeterminate" class="bar-fill indet" />
-        <div
-          v-else
-          class="bar-fill"
-          :class="{ full: pct >= 100 && !verifying, moving: state === 'downloading' }"
-          :style="{ width: pct + '%' }"
-        />
-      </div>
-      <span class="pct">{{ pctText }}</span>
-    </div>
+    <span class="pct">{{ pctText }}</span>
 
     <span class="cell-tag">
-      <StatusTag :badge="badge" />
+      <span class="st-chip">
+        <span class="st-dot" :style="{ background: chipTone.dot }"></span>
+        <span class="st-label" :style="{ color: chipTone.text }">{{ badge.label }}</span>
+      </span>
     </span>
+
+    <!-- 进度条：行底绝对定位 3px -->
+    <div class="prog">
+      <div v-if="indeterminate" class="bar-fill indet" />
+      <div
+        v-else
+        class="bar-fill"
+        :class="{ full: pct >= 100 && !verifying, moving: state === 'downloading' }"
+        :style="{ width: pct + '%' }"
+      />
+    </div>
 
     <span class="cell-actions">
       <button
@@ -177,14 +190,16 @@ const dotColor = computed(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  min-height: 56px;
-  padding: 9px 12px;
+  height: 64px;
+  padding: 0 16px 0 12px;
   border-radius: 12px;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   background: rgba(255, 255, 255, 0.04);
   border: 1px solid rgba(255, 255, 255, 0.08);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 .task-row:hover {
   background: rgba(255, 255, 255, 0.07);
@@ -196,20 +211,19 @@ const dotColor = computed(() => {
   border-color: rgba(77, 163, 255, 0.38);
 }
 
-/* 状态色点：左缘，选中/下载时发光 */
+/* 状态色点：左缘 4px 竖条 */
 .dot {
   flex: none;
-  width: 5px;
+  width: 4px;
   align-self: stretch;
-  border-radius: 3px;
+  border-radius: 2px;
   opacity: 0.85;
-  box-shadow: 0 0 8px currentColor;
 }
 .task-row.downloading .dot {
   animation: dot-pulse 1.6s ease-in-out infinite;
 }
 @keyframes dot-pulse {
-  0%, 100% { opacity: 0.5; }
+  0%, 100% { opacity: 0.45; }
   50% { opacity: 1; }
 }
 
@@ -218,7 +232,6 @@ const dotColor = computed(() => {
   width: 26px;
   text-align: center;
   color: rgba(255, 255, 255, 0.4);
-  font-size: 16px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -256,27 +269,53 @@ const dotColor = computed(() => {
   overflow: hidden;
   text-overflow: ellipsis;
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
 }
 
-.cell-prog {
+.pct {
   flex: none;
-  width: 190px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  min-width: 44px;
+  text-align: right;
+  font-size: 13px;
+  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: rgba(255, 255, 255, 0.65);
 }
-.bar {
-  flex: 1;
-  min-width: 0;
-  height: 6px;
-  border-radius: 3px;
-  background: rgba(255, 255, 255, 0.1);
+
+/* 自绘状态 chip */
+.cell-tag { flex: none; }
+.st-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  white-space: nowrap;
+}
+.st-dot {
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  flex: none;
+}
+.st-label {
+  font-size: 11px;
+  line-height: 1;
+}
+
+/* 进度条：absolute 行底 */
+.prog {
+  position: absolute;
+  left: 12px; right: 12px; bottom: 0;
+  height: 3px;
+  border-radius: 2px;
   overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
 }
 .bar-fill {
-  position: relative;
-  height: 100%;
-  border-radius: 3px;
+  position: absolute;
+  top: 0; left: 0; bottom: 0;
   background: linear-gradient(90deg, #2f6fed, #4da3ff);
   transition: width 0.15s linear;
   overflow: hidden;
@@ -284,9 +323,9 @@ const dotColor = computed(() => {
 .bar-fill.moving::after {
   content: '';
   position: absolute; inset: 0;
-  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.35) 50%, transparent 70%);
+  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.4) 50%, transparent 70%);
   transform: translateX(-100%);
-  animation: bar-shine 1.2s ease-in-out infinite;
+  animation: bar-shine 1.2s linear infinite;
 }
 @keyframes bar-shine {
   to { transform: translateX(100%); }
@@ -300,32 +339,17 @@ const dotColor = computed(() => {
 }
 @keyframes indet-slide {
   from { transform: translateX(-20%); }
-  to { transform: translateX(285%); }
-}
-.pct {
-  flex: none;
-  width: 44px;
-  text-align: right;
-  font-size: 12px;
-  font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
-  color: rgba(255, 255, 255, 0.65);
+  to { transform: translateX(310%); }
 }
 
-.cell-tag {
-  flex: none;
-  width: 84px;
-  display: flex;
-  justify-content: center;
-}
-
-/* hover 浮现操作按钮：默认弱化不抢视线 */
+/* hover 右上浮现操作按钮 */
 .cell-actions {
   flex: none;
   display: flex;
   justify-content: flex-end;
   gap: 2px;
-  opacity: 0.35;
-  transition: opacity 0.18s ease;
+  opacity: 0;
+  transition: opacity 0.167s ease;
 }
 .task-row:hover .cell-actions,
 .task-row.selected .cell-actions {
