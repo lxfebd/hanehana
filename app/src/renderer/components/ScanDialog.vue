@@ -33,7 +33,7 @@ async function pickDir(): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="640" :centered="true" title="扫描导入游戏">
+  <Modal v-model:open="open" :footer="null" width="480" :centered="true" title="扫描导入游戏">
     <div class="scan-body">
       <div class="row">
         <input v-model="dir" class="path-input" placeholder="游戏目录，如 D:\Games" @keyup.enter="runScan" />

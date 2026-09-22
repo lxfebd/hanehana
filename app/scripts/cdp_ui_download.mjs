@@ -77,7 +77,7 @@ await wait(600)
 const settingsTitle = await evalJs(`document.querySelector('.ant-modal-title')?.textContent ?? ''`)
 check('设置弹窗打开', String(settingsTitle).includes('偏好设置'), String(settingsTitle))
 const tabs = await evalJs(`[...document.querySelectorAll('.ant-tabs-tab')].map(e => e.textContent.trim()).join('|')`)
-check('设置页签齐全', typeof tabs === 'string' && ['下载', '通知', '网络', '外观'].every((t) => tabs.includes(t)), String(tabs))
+check('设置页签齐全（含「关于」）', typeof tabs === 'string' && ['下载', '通知', '网络', '外观', '关于'].every((t) => tabs.includes(t)), String(tabs))
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)
 ws.close()

@@ -19,6 +19,12 @@ const form = reactive<Settings>({ ...props.settings })
 /** 代理形状的校验与主进程同源（shared/proxy），免得出现「界面放行、主进程拒绝」。 */
 const proxyError = computed(() => proxyFormatError(form.proxy))
 
+/** 关于页展示：默认保存目录（与数据目录同源可读） */
+const dataDirText = computed(() => form.download_dir || '（未设置）')
+
+/** 构建期注入的版本号（app/package.json） */
+const appVersion: string = __APP_VERSION__
+
 async function browseDir(): Promise<void> {
   const p = await window.hh.pickDir()
   if (p) form.download_dir = p
@@ -53,7 +59,7 @@ function save(): void {
       <span class="dlg-title">偏好设置</span>
     </div>
 
-    <Tabs defaultActiveKey="download">
+    <Tabs defaultActiveKey="download" tab-position="left">
       <TabPane key="download" tab="下载">
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
@@ -151,9 +157,29 @@ function save(): void {
       <TabPane key="ui" tab="外观">
         <div class="card">
           <div class="row-between">
-            <span class="lbl">深色模式</span>
-            <Switch v-model:checked="form.dark" />
+            <div>
+              <div class="lbl">深色模式</div>
+              <div class="hint">深色是本应用的唯一主题（桌面 galgame 管理器惯例），此开关仅作展示。</div>
+            </div>
+            <Switch v-model:checked="form.dark" disabled />
           </div>
+        </div>
+      </TabPane>
+      <TabPane key="about" tab="关于">
+        <div class="card">
+          <div class="about-row">
+            <span class="about-key">版本</span>
+            <span class="about-val">{{ appVersion }}</span>
+          </div>
+          <div class="about-row">
+            <span class="about-key">数据目录</span>
+            <span class="about-val mono">{{ dataDirText }}</span>
+          </div>
+          <div class="about-row">
+            <span class="about-key">引擎</span>
+            <span class="about-val">Rust 多线程下载引擎（FastDrop）</span>
+          </div>
+          <div class="about-hint">问题反馈与更新公告见项目仓库 README。</div>
         </div>
       </TabPane>
     </Tabs>
@@ -206,6 +232,28 @@ function save(): void {
 }
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+/* 关于页 */
+.about-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 6px 0;
+  font-size: 13px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+.about-key { color: rgba(255, 255, 255, 0.48); flex-shrink: 0; }
+.about-val {
+  color: rgba(255, 255, 255, 0.85);
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.about-hint {
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.4);
+  margin-top: 10px;
 }
 .dlg-foot {
   display: flex;

@@ -193,7 +193,7 @@ onUnmounted(() => {
         <Modal
           v-model:open="ui.settingsOpen"
           :footer="null"
-          :width="600"
+          :width="680"
           :destroy-on-close="true"
           title="偏好设置"
         >
