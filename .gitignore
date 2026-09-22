@@ -17,5 +17,8 @@ engine-rs/target/
 .DS_Store
 Thumbs.db
 
-# local data
-~/.hanehana/
+# 验收/测试产生的本地数据与截图（真实数据目录在用户主目录，不在工作树）
+# 注意：app/build/ 不忽略——安装包图标 icon.ico 要入库
+app/.e2e-data/
+app/.*-data/
+app/.shots/

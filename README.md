@@ -8,40 +8,44 @@
 
 ## 特性
 
-**游戏库**
+**游戏库**（已实现）
 
-- 文件夹扫描导入（exe / bat / lnk），封面墙大图网格展示（竖版封面书架）
-- 多源元数据刮削：VNDB + Bangumi 双源，图片 CDN 缓存
-- 分类 / 标签 / 收藏夹 / 搜索（模糊 + 拼音）
-- 一键启动游戏，后续接入 Locale Emulator（转区）与 Magpie（缩放）
+- 文件夹扫描导入（exe / bat / lnk），封面墙大图网格展示（竖版封面书架，虚拟化渲染）
+- 多源元数据刮削：VNDB + Bangumi 双源，封面/缩略图本地缓存（hh:// 协议）
+- 分类 / 标签 / 搜索 / 网格与列表双视图
+- 一键启动游戏；LE 转区 / Magpie 缩放为每游戏开关（外部工具集成在路线图）
+- 游玩时长与上次游玩记录（进程监控自动计时）
 
-**游玩统计**（规划）
+**下载**（已实现，复用 FastDrop 引擎）
 
-- 进程监控自动计时、每日/周/月/年汇总
-- 统计卡片海报导出
-
-**下载**（规划，复用 FastDrop）
-
-- Rust 多线程分段下载引擎：Range 分段并发、暂停/续传、断点续传、限速、哈希校验
-- 内嵌游戏站浏览器 + 搜索聚合，真实直链进入下载队列
-- 可选浏览器扩展（Edge / Chrome）投递下载链接
+- Rust 多线程分段下载引擎：Range 分段并发、暂停/续传、限速、MD5/SHA-1/SHA-256 校验
+- 任务列表：状态过滤、排序、批量操作、总速度汇总
 
 **界面与体验**
 
 - Windows 11 Mica 毛玻璃窗口（22H2+，低版本自动降级）+ 自定义标题栏
-- 玻璃卡片设计系统：blur + 内边框高光 + 顶部渐变高光 + 阴影栈
-- 深 / 浅两套主题，深色优先
-- 托盘常驻、系统通知、应用内自动更新（electron-updater）
+- 玻璃卡片设计系统：token 单源（design/tokens.ts）+ antd 主题映射
+- 深色为唯一主题
+- 托盘常驻、系统通知
+
+**路线图中（尚未实现，勿当作现有能力）**
+
+- 应用内自动更新（electron-updater 已列依赖，实现见路线图）
+- 浏览器扩展投递下载链接（native messaging 通道）
+- 内嵌游戏站浏览器 + 搜索聚合
+- 统计汇总（日/周/月）与海报导出
+- LE / Magpie 外部工具自动集成
 
 ## 快速开始
 
 ```bash
+cd engine-rs && cargo build --release   # Rust 引擎（打包必需）
 cd app && npm install
 cd app && npm run dev      # 开发模式
 cd app && npm run dist     # 打包安装包
 ```
 
-前置依赖：**Node.js 20+ 与 npm**。Electron 由 npm 依赖安装。
+前置依赖：**Node.js 20+ 与 npm**、**Rust stable（rustup）**。Electron 由 npm 依赖安装。
 
 开发验证：`npm run dev` 启动后，设置 `HANEHANA_DEBUG_PORT=9222` 再启动即可用
 `node scripts/cdp_verify.mjs` 从 CDP 检查真实窗口的 DOM、preload 桥与 IPC 链路。
@@ -53,19 +57,25 @@ cd app && npm run build       # 构建产物
 
 ## 架构
 
-三层外壳 + 独立引擎（规划中）。渲染进程和主进程之间只走 IPC；主进程和下载引擎之间走 stdio——两条边界都不共享内存。
+三层外壳 + 独立引擎（已实现）。渲染进程和主进程之间只走 IPC（contextBridge，沙箱开启）；主进程和下载引擎之间走 stdio 行级 JSON——两条边界都不共享内存，引擎崩溃只影响单个任务。
 
 ```
-renderer (Vue3 + antd + 玻璃 CSS) ──IPC──▶ main (Electron) ──stdio──▶ engine-rs (Rust 下载引擎)
+renderer (Vue3 + antd + token CSS) ──IPC──▶ main (Electron) ──stdio──▶ engine-rs (Rust 下载引擎，每任务一进程)
 ```
+
+数据目录：`~/.hanehana`（games.json / tasks.json / settings.json / covers / thumbs），可用 `HANEHANA_DATA_DIR` 覆盖。
 
 ## 路线图
 
 - [x] 骨架：Mica 毛玻璃窗口 + 自定义标题栏 + 三栏布局 + IPC 链路
-- [ ] 游戏库：扫描导入 + 封面墙 + VNDB/Bangumi 刮削
-- [ ] 启动集成：一键启动 + LE / Magpie
-- [ ] 下载整合：FastDrop 引擎 + 游戏站捕获
-- [ ] 游玩统计 + 设置 + 自动更新
+- [x] 游戏库：扫描导入 + 封面墙 + VNDB/Bangumi 刮削
+- [x] 启动集成：一键启动 + 时长统计（LE / Magpie 开关已存，外部集成待做）
+- [x] 下载整合：Rust 引擎 + 任务列表 + 校验和
+- [x] 设置 + 托盘 + 通知
+- [ ] 应用内自动更新（electron-updater）
+- [ ] 浏览器扩展投递链接（native messaging）
+- [ ] 内嵌游戏站浏览器 + 搜索聚合
+- [ ] 统计汇总与海报导出
 
 ## 许可
 

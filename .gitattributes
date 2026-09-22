@@ -1,0 +1,10 @@
+# 行尾统一：文本一律 LF 入库，签出按平台；二进制显式标记避免 diff 噪音
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.ico binary
+*.exe binary
+*.bin binary
+*.lock text eol=lf

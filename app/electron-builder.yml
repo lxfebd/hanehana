@@ -1,6 +1,6 @@
 # electron-builder 配置。
 # 关键点：extraResources 放 Rust 引擎（独立子进程，进 asar 就 spawn 不了）。
-# 下载引擎复用 FastDrop 的方案，后续把 engine-rs 接进来后在此注册产物。
+# 漏配这一项，打包后的应用启动正常、一点下载才报「Rust 引擎未找到」。
 
 appId: com.hanehana.app
 productName: HaneHana
@@ -16,6 +16,12 @@ files:
   - out/**/*
   - package.json
   - '!node_modules/**/*'
+
+extraResources:
+  # 引擎必须在 asar 外：主进程 spawn 的是真实文件路径。
+  # 缺这个 exe 时打包产物启动正常、点下载才报错，故 CI 有解包 smoke 守门。
+  - from: ../engine-rs/target/release/fastdrop-engine.exe
+    to: fastdrop-engine.exe
 
 win:
   artifactName: ${productName}-${version}-${os}-${arch}.${ext}
