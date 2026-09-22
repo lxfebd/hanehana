@@ -384,7 +384,7 @@ onUnmounted(() => {
 .glass-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
 .glass-btn.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
 
-.detail { width: 320px; position: relative; }
+.detail { width: 360px; position: relative; }
 
 .error-banner {
   position: absolute;
