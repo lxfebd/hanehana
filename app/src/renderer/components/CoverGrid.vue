@@ -95,6 +95,12 @@ function click(g: Game, idx: number): void {
   emit('select', g.id)
 }
 
+/** 缩略图加载失败：隐藏破图，露出底下的占位字母/占位色 */
+function imgErr(e: Event): void {
+  const img = e.target as HTMLImageElement
+  img.style.display = 'none'
+}
+
 /** roving tabindex：方向键移动（grid 按列、list 按行），Enter 选中。
  *  移动后必须真的把焦点交到新卡片：只改 tabindex 不 focus，键盘用户停在原地，
  *  下一次按键仍然作用在旧卡片上，roving 就死了。 */
@@ -172,7 +178,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           @keydown="onKeydown($event, index)"
         >
           <div class="cover-thumb" :style="{ background: placeholderBg(item) }">
-            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" />
+            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
             <span v-else class="cover-letter">{{ item.title.slice(0, 2) }}</span>
 
             <div v-if="library.runningIds.has(item.id)" class="cover-running">
@@ -211,7 +217,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           @keydown="onKeydown($event, index)"
         >
           <div class="list-thumb" :style="{ background: placeholderBg(item) }">
-            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" />
+            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
             <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
             <div v-if="library.runningIds.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
@@ -268,22 +274,22 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 @keyframes ic-spin {
   to { transform: rotate(360deg); }
 }
-.empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-.empty-hint { font-size: 13px; color: var(--hh-color-text-soft); margin-bottom: 0; }
+.empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--hh-color-text-glow); }
+.empty-hint { font-size: 13px; color: var(--hh-color-text-mid); margin-bottom: 0; }
 .empty-cta {
   margin-top: 18px;
   height: 34px;
   padding: 0 22px;
   border-radius: 10px;
   border: none;
-  background: var(--hh-color-accent);
+  background-image: var(--hh-color-accent-grad);
   color: var(--hh-color-on-accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: filter 0.15s ease;
 }
-.empty-cta:hover { background: var(--hh-color-accent-hover); }
+.empty-cta:hover { filter: brightness(1.08); }
 .empty-cta.ghost {
   background: transparent;
   border: 1px solid var(--hh-color-border-ghost);
@@ -375,7 +381,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 
 /* ============ 列表 ============ */
 .list-row {
-  display: flex; align-items: center; gap: 14px;
+  display: flex; align-items: center; gap: 10px;
   height: 72px;
   padding: 0 10px;
   border-radius: 12px;
@@ -404,7 +410,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   width: 18px; height: 18px;
   border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; color: var(--hh-color-on-accent);
+  font-size: 11px; color: var(--hh-color-on-accent);
 }
 .list-body { flex: 1; min-width: 0; }
 .list-title {
@@ -415,13 +421,30 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   font-size: 12px; color: var(--hh-color-text-muted);
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-/* 右侧三列 caption tabular-nums：发行 / 评分 / 时长 */
+/* 右侧三列 caption tabular-nums：发行 / 评分 / 时长。
+   窄视口下永不挤压标题区：左、中两列可整体收缩换行，右列为空时让位。 */
 .list-cols {
-  display: flex; align-items: center; gap: 16px;
+  display: flex; align-items: center; gap: 12px;
   font-size: 12px; color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
+  min-width: 0;
   flex-shrink: 0;
 }
+.list-cols span {
+  flex-shrink: 1;
+  flex-basis: auto;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
 .list-cols .num { vertical-align: -1px; }
+
+/* 窄视口让位：次要列逐级退场，标题区永远保有足够宽度。
+   时长列先退，评分列再退，最低只留发行年。 */
+@media (max-width: 1100px) {
+  .list-cols span:nth-child(3) { display: none; }
+}
+@media (max-width: 960px) {
+  .list-cols span:nth-child(2) { display: none; }
+}
 </style>

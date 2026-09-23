@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X } from 'lucide-vue-next'
+import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, filteredGames, library, refreshGames } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -179,8 +179,17 @@ onUnmounted(() => {
             <DownloadView v-else />
           </main>
 
-          <!-- 右侧详情面板：只在游戏库页显示 -->
-          <DetailPanel v-if="page === 'library'" class="detail" />
+          <!-- 右侧详情面板：只在游戏库页显示。收起时留竖条，点击展开 -->
+          <DetailPanel v-if="page === 'library' && !ui.detailCollapsed" class="detail" @collapse="ui.detailCollapsed = true" />
+          <button
+            v-if="page === 'library' && ui.detailCollapsed"
+            class="detail-collapsed"
+            title="展开详情"
+            :aria-label="'展开详情'"
+            @click="ui.detailCollapsed = false"
+          >
+            <ChevronLeft :size="14" />
+          </button>
         </div>
 
         <ScanDialog v-model:open="library.scanOpen" />
@@ -342,13 +351,16 @@ onUnmounted(() => {
   gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
-  flex: 1;
   min-width: 0;
+  /* 容器充足时让猫 chips 吃掉剩余宽度；容器紧张时退回内容宽，
+     把位置让给计数与视图切换，避免被 flex:1 压成一缕 28px。 */
+  flex: 0 1 auto;
+  max-width: 420px;
 }
 .cat-chips::-webkit-scrollbar { display: none; }
 .cat-chip {
   flex-shrink: 0;
-  height: 26px;
+  height: 32px;
   padding: 0 12px;
   border-radius: 999px;
   border: 1px solid var(--hh-color-card-border);
@@ -376,7 +388,7 @@ onUnmounted(() => {
   border: 1px solid var(--hh-color-card-border);
 }
 .seg-btn {
-  width: 28px; height: 28px;
+  width: 32px; height: 32px;
   border: none;
   border-radius: 999px;
   background: transparent;
@@ -402,6 +414,26 @@ onUnmounted(() => {
 .glass-btn.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
 
 .detail { width: 360px; position: relative; }
+
+.detail-collapsed {
+  width: 28px;
+  align-self: stretch;
+  flex: none;
+  border: 1px solid var(--hh-color-panel-glass-border);
+  border-radius: 10px;
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-mid);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s, color 0.15s;
+  margin: 8px;
+}
+.detail-collapsed:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-glow);
+}
 
 .error-banner {
   position: absolute;

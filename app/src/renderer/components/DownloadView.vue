@@ -207,6 +207,7 @@ function onAll(action: string): void {
   align-items: center;
   gap: 12px;
   padding: 4px 0;
+  flex-wrap: wrap;
 }
 .seg-filter {
   display: flex;
@@ -217,11 +218,13 @@ function onAll(action: string): void {
   border: 1px solid var(--hh-color-card-border);
   flex-shrink: 0;
 }
+/* 窄视口兜底：按钮组与排序可换行，永不横向溢出窗口 */
+.dl-toolbar > * { flex-shrink: 1; }
 .seg-chip {
   display: flex;
   align-items: center;
   gap: 5px;
-  height: 28px;
+  height: 32px;
   padding: 0 12px;
   border: none;
   border-radius: 999px;
@@ -296,11 +299,11 @@ function onAll(action: string): void {
 .dl-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
 .dl-btn.primary {
   border: none;
-  background: var(--hh-color-accent);
+  background-image: var(--hh-color-accent-grad);
   color: var(--hh-color-on-accent);
   box-shadow: 0 4px 14px var(--hh-color-accent-btn-shadow);
 }
-.dl-btn.primary:hover { background: var(--hh-color-accent-hover); color: var(--hh-color-on-accent); }
+.dl-btn.primary:hover { filter: brightness(1.08); color: var(--hh-color-on-accent); }
 
 /* ============ 列表 ============ */
 .dl-list {
@@ -315,8 +318,8 @@ function onAll(action: string): void {
 .dl-empty {
   text-align: center;
   padding: 60px 20px;
-  color: var(--hh-color-text-soft-dim);
+  color: var(--hh-color-text-soft);
 }
-.dl-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
-.dl-empty-hint { font-size: 13px; color: var(--hh-color-text-dim); }
+.dl-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--hh-color-text-mid); }
+.dl-empty-hint { font-size: 13px; color: var(--hh-color-text-mid); }
 </style>
