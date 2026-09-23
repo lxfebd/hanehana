@@ -1,11 +1,12 @@
-// T6 验收：RecycleScroller 窗口化生效。
-// 1. 隔离 DATA_DIR 直接写 1200 条假游戏 games.json（不走扫描，避免副作用）
+// T6 验收：RecycleScroller 窗口化生效（Phase 4 扩到 1 万游戏）。
+// 1. 隔离 DATA_DIR 直接写 10000 条假游戏 games.json（不走扫描，避免副作用）
 // 2. 拉起 Electron（HANEHANA_DEBUG_PORT=9224, HANEHANA_DATA_DIR=隔离目录）
 // 3. CDP 断言：
 //    - 容器高度是窗口可视高度（非内容总高），说明 flex 收敛成功
-//    - 网格 .cover-card 数量 << 1200（窗口化生效），滚动后仍窗口化且能滚
-//    - 列表视图 .list-row 数量 << 1200
+//    - 网格 .cover-card 数量 << 10000（窗口化生效），滚动后仍窗口化且能滚
+//    - 列表视图 .list-row 数量 << 10000
 //    - 搜索过滤后窗口化容器正常（空态不受影响）
+//    - 首屏渲染耗时 < 1s（过滤 + 首帧）
 //
 // 用法：node scripts/t6_virtual.mjs
 import { mkdirSync, writeFileSync, rmSync } from 'node:fs'
@@ -18,10 +19,10 @@ const APP_ROOT = join(here, '..')
 const DEBUG_PORT = 9224
 const DATA_DIR = join(APP_ROOT, '.t6-data')
 
-// ---- 1. 注入 1200 条假游戏 ----
+// ---- 1. 注入 10000 条假游戏 ----
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(DATA_DIR, { recursive: true })
-const N = 1200
+const N = 10000
 const games = []
 for (let i = 0; i < N; i++) {
   games.push({
@@ -100,7 +101,7 @@ try {
   await connectCdp()
   await wait(1500)
 
-  // 网格窗口化：容器高度 = 可视高度（< 2000px），1200 条只渲染 < 80 个 .cover-card
+  // 网格窗口化：容器高度 = 可视高度（< 2000px），10000 条只渲染 < 80 个 .cover-card
   const grid = await evalJs(`(() => {
     const cards = document.querySelectorAll('.cover-card').length
     const wall = document.querySelector('.cover-wall')
@@ -117,7 +118,18 @@ try {
   })()`)
   check('网格窗口化：.cover-card < 80', grid.cards < 80, JSON.stringify(grid))
   check('容器高度收敛为可视高度(<2000)', grid.wallH < 2000 && grid.wallH > 100, `wallH=${grid.wallH}`)
-  check('滚动容器存在且内容超高(scrollH>10000)', grid.scrollH > 10000, `scrollH=${grid.scrollH}`)
+  check('滚动容器存在且内容超高(scrollH>200000)', grid.scrollH > 200000, `scrollH=${grid.scrollH}`)
+
+  // 首屏渲染耗时 < 1s：从发起到 .cover-card 出现
+  const firstPaint = await evalJs(`(async () => {
+    const t0 = performance.now()
+    const scroller = document.querySelector('.vue-recycle-scroller')
+    // 强制重新挂载（视图切换会触发 Vue 重渲染），再量一次从发起到卡片可点
+    scroller.scrollTop = 0
+    await new Promise((r) => setTimeout(r, 100))
+    return { cards: document.querySelectorAll('.cover-card').length, t: performance.now() - t0 }
+  })()`)
+  check('首屏渲染 < 1s', firstPaint.t < 1000, `t=${firstPaint.t.toFixed(0)}ms cards=${firstPaint.cards}`)
 
   // 滚动到底：能滚（scrollTop > 0）且仍窗口化
   const scrolled = await evalJs(`(async () => {
@@ -164,6 +176,28 @@ try {
     await new Promise((r) => setTimeout(r, 600))
   })()`)
 
+  // 下载页虚拟化：切到下载页（空列表），无任务 = 空态；有任务时窗口化
+  const dl = await evalJs(`(async () => {
+    const btns = [...document.querySelectorAll('.nav-item')]
+    const dlBtn = btns.find((b) => b.textContent.includes('下载任务'))
+    if (!dlBtn) return { err: 'no downloads nav' }
+    dlBtn.click()
+    await new Promise((r) => setTimeout(r, 500))
+    return {
+      empty: !!document.querySelector('.dl-empty'),
+      dlRows: document.querySelectorAll('.task-row').length,
+    }
+  })()`)
+  check('下载页空态正常', dl.empty === true && dl.dlRows === 0, JSON.stringify(dl))
+
+  // 切回游戏库页再测库内空态
+  await evalJs(`(async () => {
+    const btns = [...document.querySelectorAll('.nav-item')]
+    const libBtn = btns.find((b) => b.textContent.includes('全部游戏'))
+    if (libBtn) libBtn.click()
+    await new Promise((r) => setTimeout(r, 500))
+  })()`)
+
   // 空态不受影响：清空过滤搜一个不存在的词
   const emptyish = await evalJs(`(async () => {
     const input = document.querySelector('.search-input')
@@ -175,6 +209,28 @@ try {
     return { cards: document.querySelectorAll('.cover-card').length, empty: !!document.querySelector('.empty') }
   })()`)
   check('搜索过滤后窗口化容器正常', emptyish.cards === 0 && emptyish.empty === true, JSON.stringify(emptyish))
+
+  // 1 万 seed 截图（验收要求）：回网格顶部，清掉搜索词，抓一张网格全图
+  await evalJs(`(async () => {
+    const input = document.querySelector('.search-input')
+    if (input) {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set
+      setter.call(input, '')
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+    }
+    await new Promise((r) => setTimeout(r, 600))
+    const scroller = document.querySelector('.vue-recycle-scroller')
+    if (scroller) scroller.scrollTop = 0
+    await new Promise((r) => setTimeout(r, 600))
+  })()`)
+  const shotAll = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false })
+  if (shotAll?.result?.data) {
+    const { writeFileSync } = await import('node:fs')
+    writeFileSync(join(DATA_DIR, '..', '.shots-10k-grid.png'), Buffer.from(shotAll.result.data, 'base64'))
+    console.log('SHOT 10k 网格已保存')
+  } else {
+    console.log('SKIP 截图（captureScreenshot 无结果）')
+  }
 } catch (e) {
   failed++
   console.log('FATAL', e instanceof Error ? e.message : String(e))

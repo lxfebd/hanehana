@@ -24,14 +24,15 @@ export const downloads = reactive({
 /** 兜底轮询周期：引擎每 100ms 主动推一次，这个只是防推送链路断掉的保险。 */
 const REFRESH_MS = 5000
 
-async function refreshTasks(): Promise<void> {
+export async function refreshTasks(): Promise<void> {
   if (!window.hh?.listTasks) return
   try {
-    downloads.rows = await window.hh.listTasks()
-    downloads.totalSpeed = downloads.rows.reduce(
-      (sum, r) => sum + (r.snap?.state === 'downloading' ? r.snap.speed : 0),
-      0,
-    )
+    const rows = await window.hh.listTasks()
+    downloads.totalSpeed = 0
+    for (const r of rows) {
+      downloads.totalSpeed += r.snap?.state === 'downloading' ? r.snap.speed : 0
+    }
+    downloads.rows = rows
   } catch {
     // 主进程未就绪时忽略，下次轮询重试
   }
@@ -101,13 +102,11 @@ export function wireTaskPushes(): Array<() => void> {
     window.hh.onTaskProgress((p) => {
       const row = downloads.rows.find((r) => r.id === p.taskId)
       if (row) {
+        const prev = row.snap?.state === 'downloading' ? row.snap.speed : 0
         row.snap = p.snapshot
-        if (p.snapshot.state === 'downloading') {
-          downloads.totalSpeed = downloads.rows.reduce(
-            (sum, r) => sum + (r.snap?.state === 'downloading' ? r.snap.speed : 0),
-            0,
-          )
-        }
+        // 进出 downloading 都要校正：只加不减会让暂停/完成的任务把速度留在合计里
+        const next = p.snapshot.state === 'downloading' ? p.snapshot.speed : 0
+        if (prev !== next) downloads.totalSpeed += next - prev
         return
       }
       if (refetching || Date.now() - lastRefetch < 1000) return

@@ -20,7 +20,7 @@ import { release as osRelease } from 'node:os'
 import { Ipc } from '../shared/ipc'
 import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
-import type { TaskRow } from '../shared/types'
+import type { TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
 import { handleScan, handleRemove, handleUpdate, handleOpenDir, handleLaunch, handleRunning, detachAllRunning } from './games'
@@ -533,9 +533,25 @@ if (gotSingleInstanceLock) {
     if (!engine.ok) console.error('[engine] 下载引擎不可用：', engine.hint)
     const initialSettings = store.loadSettings()
     const initialDefs = store.loadTasks()
+    // 推送帧合并：同时活动的最多也就并发上限个任务，但每个 100ms 都 send 一条
+    // 会把渲染进程 IPC 塞满。50ms 窗口累积 + 按任务覆盖（只发最新快照），
+    // 渲染侧看到的还是 20fps 的连续进度，IPC 条数从「任务数 × 10/s」降到 ≤20/s。
+    const PUSH_WINDOW_MS = 50
+    let pushTimer: ReturnType<typeof setTimeout> | null = null
+    let pushQueue = new Map<string, TaskProgressPush>()
+    const flushPush = (): void => {
+      pushTimer = null
+      if (!win || win.isDestroyed()) return
+      for (const item of pushQueue.values()) win.webContents.send(Ipc.TaskProgress, item)
+      pushQueue = new Map()
+    }
+    const onPushCoalesced = (p: TaskProgressPush): void => {
+      pushQueue.set(p.taskId, { ...p, snapshot: p.snapshot })
+      if (!pushTimer) pushTimer = setTimeout(flushPush, PUSH_WINDOW_MS)
+    }
     manager = new Manager(
       initialSettings,
-      (push) => win?.webContents.send(Ipc.TaskProgress, push),
+      onPushCoalesced,
       (tasks) => store.saveTasks(tasks),
       initialDefs,
     )

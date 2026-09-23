@@ -7,6 +7,8 @@
  */
 import { computed } from 'vue'
 import { message, Modal, Popconfirm, Select } from 'ant-design-vue'
+import { RecycleScroller } from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import {
   PauseCircle,
   PlayCircle,
@@ -150,15 +152,26 @@ function onAll(action: string): void {
       </div>
 
       <div class="dl-list">
-        <TaskRowView
-          v-for="r in visibleRows"
-          :key="r.id"
-          :def="r.def"
-          :snap="r.snap"
-          :selected="library.selectedId === r.id"
-          @select="library.selectedId = r.id"
-          @action="onAction(r, $event)"
-        />
+        <RecycleScroller
+          v-if="visibleRows.length > 0"
+          class="dl-scroller"
+          :items="visibleRows"
+          :item-size="72"
+          key-field="id"
+          :page-mode="false"
+          :buffer="200"
+        >
+          <template #default="{ item: r }">
+            <TaskRowView
+              :key="r.id"
+              :def="r.def"
+              :snap="r.snap"
+              :selected="library.selectedId === r.id"
+              @select="library.selectedId = r.id"
+              @action="onAction(r, $event)"
+            />
+          </template>
+        </RecycleScroller>
         <div v-if="visibleRows.length === 0" class="dl-empty">
           <div class="dl-empty-title">
             {{ downloads.rows.length === 0 ? '还没有下载任务' : '没有符合条件的任务' }}
@@ -292,8 +305,12 @@ function onAll(action: string): void {
 /* ============ 列表 ============ */
 .dl-list {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 2px;
+}
+.dl-scroller {
+  height: 100%;
 }
 .dl-empty {
   text-align: center;

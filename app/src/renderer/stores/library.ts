@@ -4,7 +4,7 @@
  * 持有游戏列表 + 当前选中 + 搜索/分类/视图 + 刮削/扫描对话框状态 + 运行中集合。
  * 所有对主进程的游戏库调用都经过这里，组件不直接碰 window.hh。
  */
-import { reactive, computed } from 'vue'
+import { reactive, computed, ref, shallowRef, watch } from 'vue'
 import type { Game, ScrapeCandidate } from '../../shared/types'
 
 export const library = reactive({
@@ -26,17 +26,48 @@ export const library = reactive({
   runningIds: new Set<string>(),
 })
 
+// ---------------------------------------------------------------- 搜索防抖 + 索引
+// 10k 游戏规模下每键入一次就全量 filter 会掉帧；索引在 refreshGames 时一次性
+// 构建（title/rawTitle/titleNative/tags 全小写），过滤只跑一次 includes 判断。
+// 输入侧再加 120ms 防抖：手感几乎无感，能把 300ms 内的连击合成一次过滤。
+
+/** 搜索输入生效值（防抖后的）；组件绑 keyword，这里读 debouncedKeyword。 */
+export const debouncedKeyword = ref('')
+
+let debounceTimer: ReturnType<typeof setTimeout> | null = null
+watch(
+  () => library.keyword,
+  (kw) => {
+    if (debounceTimer) clearTimeout(debounceTimer)
+    debounceTimer = setTimeout(() => {
+      debounceTimer = null
+      debouncedKeyword.value = kw
+    }, 120)
+  },
+)
+
+/** 索引随 games 数组更新；只在 refreshGames/applyScrapeResult 之后重算一次。 */
+const searchIndex = shallowRef<{ title: string; raw: string; native: string; tags: string }[]>([])
+
+function rebuildIndex(): void {
+  searchIndex.value = library.games.map((g) => ({
+    title: g.title.toLowerCase(),
+    raw: g.rawTitle.toLowerCase(),
+    native: (g.titleNative ?? '').toLowerCase(),
+    tags: g.tags.join(' ').toLowerCase(),
+  }))
+}
+
 export const filteredGames = computed(() => {
-  const kw = library.keyword.trim().toLowerCase()
-  return library.games.filter((g) => {
-    if (library.categoryFilter && !g.categories.includes(library.categoryFilter)) return false
+  const idx = searchIndex.value
+  const kw = debouncedKeyword.value.trim().toLowerCase()
+  const cat = library.categoryFilter
+  return library.games.filter((g, i) => {
+    if (cat && !g.categories.includes(cat)) return false
     if (!kw) return true
-    return (
-      g.title.toLowerCase().includes(kw) ||
-      g.rawTitle.toLowerCase().includes(kw) ||
-      g.titleNative?.toLowerCase().includes(kw) ||
-      g.tags.some((t) => t.toLowerCase().includes(kw))
-    )
+    const s = idx[i]
+    if (!s) return false
+    return s.title.includes(kw) || s.raw.includes(kw) || s.native.includes(kw) || s.tags.includes(kw)
   })
 })
 
@@ -52,6 +83,7 @@ export async function refreshGames(): Promise<void> {
   library.loading = true
   try {
     library.games = await window.hh.listGames()
+    rebuildIndex()
   } finally {
     library.loading = false
   }

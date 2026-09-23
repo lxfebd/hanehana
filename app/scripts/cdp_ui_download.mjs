@@ -37,6 +37,13 @@ const check = (name, cond, detail = '') => {
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
+
+// 后台窗口（脚本自己起的 Electron 常拿不到前台）会冻结 CSS 动画与 rAF，
+// antd 弹窗的开关动画停在中点，destroy-on-close 的 afterClose 永不触发，
+// querySelector('.ant-modal-title') 就永远取到残留弹窗。强制聚焦解冻。
+await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+await send('Page.bringToFront').catch(() => {})
+await wait(600)
 await wait(2000)
 
 // 1. 侧栏有「下载任务」入口
