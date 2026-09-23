@@ -66,7 +66,8 @@ onMounted(async () => {
     unsubPushes = await initTasks()
     library.error = ''
   } catch (e) {
-    bootInfo.value = `连接主进程失败：${e instanceof Error ? e.message : String(e)}`
+    const msg = e instanceof Error ? e.message : String(e ?? '')
+    bootInfo.value = `连接主进程失败：${msg.trim() || '主进程未响应'}`
   }
 })
 
@@ -87,27 +88,37 @@ onUnmounted(() => {
 
         <div class="layout">
           <!-- 左侧导航 -->
-          <nav class="glass sidebar">
-            <div class="nav-item" :class="{ active: page === 'library' }" @click="page = 'library'">
+          <nav class="glass sidebar" aria-label="主导航">
+            <button
+              class="nav-item"
+              :class="{ active: page === 'library' }"
+              :aria-current="page === 'library' ? 'page' : undefined"
+              @click="page = 'library'"
+            >
               <LibraryBig :size="16" class="nav-ic" />
               <span>全部游戏</span>
               <span class="count">{{ library.games.length }}</span>
-            </div>
-            <div class="nav-item" :class="{ active: page === 'downloads' }" @click="page = 'downloads'">
+            </button>
+            <button
+              class="nav-item"
+              :class="{ active: page === 'downloads' }"
+              :aria-current="page === 'downloads' ? 'page' : undefined"
+              @click="page = 'downloads'"
+            >
               <Download :size="16" class="nav-ic" />
               <span>下载任务</span>
               <span class="count">{{ runningCount }}</span>
-            </div>
+            </button>
 
             <div class="nav-spacer"></div>
-            <div class="nav-item" @click="library.scanOpen = true">
+            <button class="nav-item" @click="library.scanOpen = true">
               <ScanSearch :size="16" class="nav-ic" />
               <span>扫描导入</span>
-            </div>
-            <div class="nav-item" @click="openSettings()">
+            </button>
+            <button class="nav-item" @click="openSettings()">
               <Settings :size="16" class="nav-ic" />
               <span>设置</span>
-            </div>
+            </button>
           </nav>
 
           <!-- 中栏 -->
@@ -209,7 +220,7 @@ onUnmounted(() => {
   height: 100%;
   display: flex;
   flex-direction: column;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--hh-color-text-glow);
 }
 
 .logo { font-weight: 600; font-size: 14px; letter-spacing: 0.5px; }
@@ -242,31 +253,37 @@ onUnmounted(() => {
   border-radius: 8px;
   margin-bottom: 2px;
   cursor: pointer;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--hh-color-text-bright);
   transition: background 0.15s ease, color 0.15s ease;
   font-size: 13px;
   position: relative;
+  /* button 重置：不加 border/背景，保持原玻璃观感 */
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  font-family: inherit;
 }
 .nav-item .nav-ic { flex: none; opacity: 0.8; }
-.nav-item:hover { background: rgba(255, 255, 255, 0.06); color: rgba(255, 255, 255, 0.88); }
-.nav-item.active { background: rgba(77, 163, 255, 0.16); color: #7ec3ff; }
+.nav-item:hover { background: var(--hh-color-surface-soft); color: var(--hh-color-text-glow); }
+.nav-item.active { background: var(--hh-color-accent-bg); color: var(--hh-color-accent-text); }
 .nav-item.active::before {
   content: '';
   position: absolute;
   left: 0; top: 6px; bottom: 6px;
   width: 2px;
   border-radius: 2px;
-  background: #4da3ff;
+  background: var(--hh-color-accent);
 }
 .nav-item .count {
   margin-left: auto;
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hh-color-surface-mid);
   padding: 1px 7px;
   border-radius: 10px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--hh-color-text-mid-high);
 }
-.nav-item.active .count { color: #7ec3ff; }
+.nav-item.active .count { color: var(--hh-color-accent-text); }
 .nav-spacer { flex: 1; }
 
 .content {
@@ -298,7 +315,7 @@ onUnmounted(() => {
 .search-ic {
   position: absolute;
   left: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hh-color-text-dim);
   pointer-events: none;
 }
 .search-input {
@@ -306,16 +323,16 @@ onUnmounted(() => {
   height: 32px;
   border-radius: 10px;
   padding: 0 12px 0 34px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  color: var(--hh-color-text-glow);
   font-size: 13px;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .search-input:focus {
-  border-color: rgba(77, 163, 255, 0.6);
-  box-shadow: 0 0 0 3px rgba(77, 163, 255, 0.15);
+  border-color: var(--hh-color-accent-focus-border);
+  box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
 }
 
 /* 分类 chip 行：横向滚动无滚动条 */
@@ -334,20 +351,20 @@ onUnmounted(() => {
   height: 26px;
   padding: 0 12px;
   border-radius: 999px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.6);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  color: var(--hh-color-text-mid-high);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.cat-chip:hover { background: rgba(255, 255, 255, 0.09); color: rgba(255, 255, 255, 0.9); }
+.cat-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .cat-chip.active {
-  background: rgba(77, 163, 255, 0.16);
-  border-color: rgba(77, 163, 255, 0.35);
-  color: #7ec3ff;
+  background: var(--hh-color-accent-bg);
+  border-color: var(--hh-color-accent-ring);
+  color: var(--hh-color-accent-text);
 }
-.toolbar-count { font-size: 12px; color: rgba(255, 255, 255, 0.48); white-space: nowrap; }
+.toolbar-count { font-size: 12px; color: var(--hh-color-text-tertiary); white-space: nowrap; }
 
 /* 视图 segmented：pill 容器 card 底 */
 .segmented {
@@ -355,34 +372,34 @@ onUnmounted(() => {
   gap: 2px;
   padding: 2px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--hh-color-surface-bright);
+  border: 1px solid var(--hh-color-card-border);
 }
 .seg-btn {
   width: 28px; height: 28px;
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--hh-color-text-mid);
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.seg-btn:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.9); }
-.seg-btn.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
+.seg-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
+.seg-btn.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
 
 .glass-btn {
   width: 36px; height: 36px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--hh-color-float-border);
+  background: var(--hh-color-panel-glass);
+  color: var(--hh-color-text-bright);
   cursor: pointer;
   font-size: 15px;
   transition: all 0.15s;
 }
-.glass-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
-.glass-btn.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
+.glass-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
+.glass-btn.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
 
 .detail { width: 360px; position: relative; }
 
@@ -393,7 +410,7 @@ onUnmounted(() => {
   padding: 10px 16px;
   border-radius: 12px;
   font-size: 13px;
-  color: #ff8f8f;
+  color: var(--hh-color-error-soft-text);
   display: flex; gap: 10px; align-items: center;
   z-index: 20;
 }

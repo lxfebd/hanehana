@@ -113,10 +113,6 @@ function save(): void {
 
 <template>
   <div class="dlg">
-    <div class="dlg-head">
-      <span class="dlg-title">偏好设置</span>
-    </div>
-
     <Tabs defaultActiveKey="download" tab-position="left">
       <TabPane key="download" tab="下载">
         <div v-if="engine && !engine.ok" class="card card-warn">
@@ -293,14 +289,9 @@ function save(): void {
   flex-direction: column;
   gap: 16px;
 }
-.dlg-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
-}
 .card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--hh-color-surface-soft);
+  border: 1px solid var(--hh-color-panel-glass-border);
   border-radius: 12px;
   padding: 16px;
 }
@@ -322,16 +313,16 @@ function save(): void {
 }
 .lbl {
   font-size: 14px;
-  color: rgba(255, 255, 255, 0.88);
+  color: var(--hh-color-text-glow);
 }
 .hint {
   font-size: 12px;
   line-height: 1.7;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--hh-color-text-muted);
 }
 .hint-err {
   display: block;
-  color: #e05252;
+  color: var(--hh-color-error-danger);
 }
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
@@ -343,11 +334,11 @@ function save(): void {
   gap: 10px;
   padding: 6px 0;
   font-size: 13px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--hh-color-border-faint);
 }
-.about-key { color: rgba(255, 255, 255, 0.48); flex-shrink: 0; }
+.about-key { color: var(--hh-color-text-tertiary); flex-shrink: 0; }
 .about-val {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--hh-color-text-stronger);
   text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -355,7 +346,7 @@ function save(): void {
 }
 .about-hint {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hh-color-text-dim);
   margin-top: 10px;
 }
 .updater-val {

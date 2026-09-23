@@ -1,9 +1,8 @@
 <script setup lang="ts">
 /**
  * 下载页（REDESIGN-SPEC §5.5）。
- *   - 删除 .dl-side 第二侧栏；顶部两行工具栏：
- *     行1：segmented 状态过滤（带 count）+ 搜索框 + 排序 Select
- *     行2 右对齐：总速度 + 图标按钮组（Plus primary / 全动 / 清空）
+ *   - 删除 .dl-side 第二侧栏；单行工具栏：
+ *     segmented 状态过滤（带 count）+ 搜索框 + 排序 Select + 总速度 + 按钮组
  *   - 任务行 Motrix 化（见 TaskRow.vue）：高 64、底部绝对进度条、自绘状态 chip
  */
 import { computed } from 'vue'
@@ -96,8 +95,8 @@ function onAll(action: string): void {
 <template>
   <div class="dl-layout">
     <main class="dl-main">
-      <!-- 行1：segmented 过滤 + 搜索 + 排序 -->
-      <div class="dl-toolbar row1">
+      <!-- 单行工具栏：segmented 过滤 + 搜索 + 排序 + 总速度 + 按钮组 -->
+      <div class="dl-toolbar">
         <div class="seg-filter">
           <button
             v-for="f in FILTERS"
@@ -125,10 +124,7 @@ function onAll(action: string): void {
           size="small"
           style="width: 120px"
         />
-      </div>
 
-      <!-- 行2 右对齐：总速度 + 图标按钮组 -->
-      <div class="dl-toolbar row2">
         <span v-if="downloads.totalSpeed > 0" class="total-speed">
           {{ fmtSpeed(downloads.totalSpeed) }}
         </span>
@@ -192,8 +188,8 @@ function onAll(action: string): void {
   min-width: 0;
 }
 
-/* ============ 行1：segmented 过滤 + 搜索 + 排序 ============ */
-.dl-toolbar.row1 {
+/* ============ 单行工具栏 ============ */
+.dl-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
@@ -204,8 +200,8 @@ function onAll(action: string): void {
   gap: 2px;
   padding: 2px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--hh-color-surface-bright);
+  border: 1px solid var(--hh-color-card-border);
   flex-shrink: 0;
 }
 .seg-chip {
@@ -217,13 +213,13 @@ function onAll(action: string): void {
   border: none;
   border-radius: 999px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--hh-color-text-mid);
   font-size: 12px;
   cursor: pointer;
   transition: background 0.15s ease, color 0.15s ease;
 }
-.seg-chip:hover { background: rgba(255, 255, 255, 0.08); color: rgba(255, 255, 255, 0.9); }
-.seg-chip.active { background: rgba(77, 163, 255, 0.2); color: #7ec3ff; }
+.seg-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
+.seg-chip.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
 .seg-chip .cnt {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -241,7 +237,7 @@ function onAll(action: string): void {
 .search-ic {
   position: absolute;
   left: 12px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hh-color-text-dim);
   pointer-events: none;
 }
 .search-input {
@@ -249,29 +245,23 @@ function onAll(action: string): void {
   height: 32px;
   border-radius: 10px;
   padding: 0 12px 0 34px;
-  border: 1px solid rgba(255, 255, 255, 0.08);
-  background: rgba(255, 255, 255, 0.04);
-  color: rgba(255, 255, 255, 0.88);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  color: var(--hh-color-text-glow);
   font-size: 13px;
   outline: none;
   transition: border-color 0.2s, box-shadow 0.2s;
 }
 .search-input:focus {
-  border-color: rgba(77, 163, 255, 0.6);
-  box-shadow: 0 0 0 3px rgba(77, 163, 255, 0.15);
+  border-color: var(--hh-color-accent-focus-border);
+  box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
 }
 
-/* ============ 行2 右对齐 ============ */
-.dl-toolbar.row2 {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 12px;
-  padding: 4px 0;
-}
+/* ============ 单行工具栏：右端按钮组 ============ */
 .total-speed {
+  margin-left: auto;
   font-size: 12px;
-  color: #7ec3ff;
+  color: var(--hh-color-accent-text);
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   font-variant-numeric: tabular-nums;
 }
@@ -282,22 +272,22 @@ function onAll(action: string): void {
 .dl-btn {
   width: 32px; height: 32px;
   border-radius: 9px;
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.07);
-  color: rgba(255, 255, 255, 0.65);
+  border: 1px solid var(--hh-color-float-border);
+  background: var(--hh-color-panel-glass);
+  color: var(--hh-color-text-bright);
   cursor: pointer;
   font-size: 14px;
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s;
 }
-.dl-btn:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+.dl-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
 .dl-btn.primary {
   border: none;
   background: var(--hh-color-accent);
-  color: #fff;
-  box-shadow: 0 4px 14px rgba(77, 163, 255, 0.3);
+  color: var(--hh-color-on-accent);
+  box-shadow: 0 4px 14px var(--hh-color-accent-btn-shadow);
 }
-.dl-btn.primary:hover { background: var(--hh-color-accent-hover); color: #fff; }
+.dl-btn.primary:hover { background: var(--hh-color-accent-hover); color: var(--hh-color-on-accent); }
 
 /* ============ 列表 ============ */
 .dl-list {
@@ -308,8 +298,8 @@ function onAll(action: string): void {
 .dl-empty {
   text-align: center;
   padding: 60px 20px;
-  color: rgba(255, 255, 255, 0.35);
+  color: var(--hh-color-text-soft-dim);
 }
 .dl-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; }
-.dl-empty-hint { font-size: 13px; color: rgba(255, 255, 255, 0.4); }
+.dl-empty-hint { font-size: 13px; color: var(--hh-color-text-dim); }
 </style>

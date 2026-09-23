@@ -11,7 +11,7 @@
  *   - 性能铁律：卡片内无 backdrop-filter；DOM 窗口化靠 RecycleScroller。
  *
  * 虚拟化度量（§3.5 固定）：
- *   - 网格：itemSize 324 = 封面 276 + 上间距 8 + 标题区 32 + 行距 8；
+ *   - 网格：itemSize 332 = 封面 276 + 上间距 8 + 标题区 40 + 行距 8；
  *     itemSecondarySize 200 = 卡槽 184 + 间距 16；cols = floor((w+16)/200)。
  *   - 列表：itemSize 72 单列。
  *   - 居中留白：layer wrapper 宽度 = cols*200 - 16，margin auto 居中。
@@ -21,9 +21,10 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { Activity, Flower2, Star } from 'lucide-vue-next'
+import { Activity, Flower2, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { library, selectGame, thumbUrl } from '../stores/library'
+import { tokens } from '../design/tokens'
 
 const props = defineProps<{
   games: Game[]
@@ -33,6 +34,10 @@ const props = defineProps<{
 const emit = defineEmits<{ select: [id: string] }>()
 const games = computed(() => props.games)
 const selected = computed(() => library.selectedId)
+/** 库里根本没有游戏（而非被筛选过滤光）——两种空态文案不同 */
+const filteredEmpty = computed(() => library.games.length === 0)
+/** 评分星星色（真值 tokens） */
+const starColor = tokens.color.star
 
 const containerRef = ref<HTMLElement | null>(null)
 const cols = ref(1)
@@ -65,7 +70,7 @@ const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
 /** 占位底色：优先封面主色，退回哈希调色板 */
 function placeholderBg(g: Game): string {
   if (g.color) return g.color
-  const palette = ['#3b4a6b', '#4a3b6b', '#3b6b5a', '#6b5a3b', '#6b3b4a', '#3b5a6b']
+  const palette = tokens.color.palette
   let h = 0
   for (const ch of g.title) h = (h * 31 + ch.codePointAt(0)!) >>> 0
   return palette[h % palette.length]
@@ -90,15 +95,29 @@ function click(g: Game, idx: number): void {
   emit('select', g.id)
 }
 
-/** roving tabindex：方向键移动（grid 按列、list 按行），Enter 选中 */
+/** roving tabindex：方向键移动（grid 按列、list 按行），Enter 选中。
+ *  移动后必须真的把焦点交到新卡片：只改 tabindex 不 focus，键盘用户停在原地，
+ *  下一次按键仍然作用在旧卡片上，roving 就死了。 */
+function moveFocus(next: number): void {
+  focusIdx.value = Math.max(0, Math.min(games.value.length - 1, next))
+  // focusIdx 变了之后，dom 上唯一 tabindex=0 的就是目标卡片
+  const el = containerRef.value?.querySelector('[tabindex="0"]')
+  if (el instanceof HTMLElement) el.focus()
+}
+
 function onKeydown(e: KeyboardEvent, idx: number): void {
-  const n = games.value.length
-  if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+  if (e.key === 'ArrowRight') {
     e.preventDefault()
-    focusIdx.value = Math.min(n - 1, idx + 1)
-  } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+    moveFocus(idx + 1)
+  } else if (e.key === 'ArrowLeft') {
     e.preventDefault()
-    focusIdx.value = Math.max(0, idx - 1)
+    moveFocus(idx - 1)
+  } else if (e.key === 'ArrowDown') {
+    e.preventDefault()
+    moveFocus(idx + (props.view === 'grid' ? cols.value : 1))
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault()
+    moveFocus(idx - (props.view === 'grid' ? cols.value : 1))
   } else if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault()
     click(games.value[idx], idx)
@@ -108,12 +127,25 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 
 <template>
   <div ref="containerRef" class="cover-wall" :class="view">
-    <!-- 空态：单 CTA -->
-    <div v-if="games.length === 0" class="empty glass">
+    <!-- 加载中：骨架提示（games 为空但还在拉库，别闪"库是空的"） -->
+    <div v-if="library.loading" class="empty glass">
+      <Loader2 class="empty-icon spin" :size="40" :stroke-width="1.5" />
+      <div class="empty-title">正在加载游戏库…</div>
+    </div>
+
+    <!-- 空态：库里确实没有游戏 -->
+    <div v-else-if="games.length === 0 && filteredEmpty" class="empty glass">
       <Flower2 class="empty-icon" :size="40" :stroke-width="1.5" />
       <div class="empty-title">游戏库还是空的</div>
       <div class="empty-hint">点「扫描导入」选择游戏目录，自动识别 exe 入库</div>
       <button class="empty-cta" @click="library.scanOpen = true">扫描导入</button>
+    </div>
+
+    <!-- 空态：有游戏但被搜索/分类过滤光了 -->
+    <div v-else-if="games.length === 0" class="empty glass">
+      <div class="empty-title">没有匹配的游戏</div>
+      <div class="empty-hint">换换关键词或分类试试</div>
+      <button class="empty-cta ghost" @click="library.keyword = ''; library.categoryFilter = ''">清除筛选</button>
     </div>
 
     <!-- 网格视图：窗口化 + 居中留白 -->
@@ -121,7 +153,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       v-else-if="view === 'grid'"
       class="scroller"
       :items="games"
-      :item-size="324"
+      :item-size="332"
       :grid-items="cols"
       :item-secondary-size="200"
       key-field="id"
@@ -195,7 +227,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           <div class="list-cols">
             <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
             <span v-else></span>
-            <span v-if="item.rating"><Star class="num" :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span>
+            <span v-if="item.rating"><Star class="num" :size="11" :fill="starColor" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span>
             <span v-else></span>
             <span v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</span>
             <span v-else></span>
@@ -229,11 +261,15 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   border-radius: 20px;
 }
 .empty-icon {
-  color: rgba(255, 255, 255, 0.48);
+  color: var(--hh-color-text-tertiary);
   margin-bottom: 12px;
 }
+.empty-icon.spin { animation: ic-spin 1s linear infinite; }
+@keyframes ic-spin {
+  to { transform: rotate(360deg); }
+}
 .empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; }
-.empty-hint { font-size: 13px; color: rgba(255, 255, 255, 0.5); margin-bottom: 0; }
+.empty-hint { font-size: 13px; color: var(--hh-color-text-soft); margin-bottom: 0; }
 .empty-cta {
   margin-top: 18px;
   height: 34px;
@@ -241,13 +277,20 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   border-radius: 10px;
   border: none;
   background: var(--hh-color-accent);
-  color: #fff;
+  color: var(--hh-color-on-accent);
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
   transition: background 0.15s ease;
 }
 .empty-cta:hover { background: var(--hh-color-accent-hover); }
+.empty-cta.ghost {
+  background: transparent;
+  border: 1px solid var(--hh-color-border-ghost);
+  color: var(--hh-color-text-muted-pure);
+  font-weight: 500;
+}
+.empty-cta.ghost:hover { background: var(--hh-color-surface-mid); }
 
 /* ============ 网格 ============ */
 /* item-view 是绝对定位（transform），网格行内每项水平偏移由 ESM 计算。
@@ -264,13 +307,13 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   border-radius: 12px;
   padding: 4px;
   transition: transform 0.18s ease;
-  outline: none;
+  /* 焦点环交给全局 :focus-visible（WCAG 2.4.11），不留 outline:none 掐死它 */
 }
 .cover-card:hover { transform: translateY(-4px); }
 .cover-card.selected .cover-thumb {
   box-shadow:
-    0 0 0 2px #4da3ff,
-    0 8px 24px rgba(77, 163, 255, 0.25);
+    0 0 0 2px var(--hh-color-accent),
+    0 8px 24px var(--hh-color-accent-selected-ring);
 }
 
 .cover-thumb {
@@ -278,7 +321,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   border-radius: 12px;
   overflow: hidden;
   position: relative;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.38);
+  box-shadow: 0 6px 20px var(--hh-color-thumb-shadow);
   transition: box-shadow 0.18s ease;
 }
 .cover-thumb img {
@@ -291,14 +334,14 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 .cover-letter {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 24px; font-weight: 600; color: rgba(255, 255, 255, 0.55);
+  font-size: 24px; font-weight: 600; color: var(--hh-color-text-mid);
 }
 
 /* 运行中徽章（评分不上卡） */
 .cover-running {
   position: absolute; top: 8px; left: 8px;
-  background: rgba(94, 194, 105, 0.9);
-  color: #fff; font-size: 11px; font-weight: 600;
+  background: var(--hh-color-success-opaque);
+  color: var(--hh-color-on-accent); font-size: 11px; font-weight: 600;
   padding: 3px 9px; border-radius: 8px;
   z-index: 2;
   display: flex; align-items: center; gap: 3px;
@@ -307,25 +350,25 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 /* 封面底部轻渐晕（标题在封面下，只做视觉过渡） */
 .cover-shade {
   position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.5), transparent);
+  background: linear-gradient(to top, var(--hh-color-shade-thumb), transparent);
   z-index: 1;
 }
 
-/* 标题区 32px：封面下方，非叠图 */
+/* 标题区 40px：封面下方，非叠图 */
 .cover-titlezone {
-  padding: 4px 2px 0;
-  height: 32px;
+  padding: 5px 2px 0;
+  height: 40px;
   box-sizing: border-box;
   overflow: hidden;
 }
 .cover-title {
   font-size: 13px; line-height: 18px; font-weight: 600;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hh-color-text-glow);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .cover-sub {
   font-size: 12px; line-height: 16px;
-  color: rgba(255, 255, 255, 0.48);
+  color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -340,29 +383,28 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   transition: background 0.15s ease;
   margin: 2px 0;
   box-sizing: border-box;
-  outline: none;
 }
-.list-row:hover { background: rgba(255, 255, 255, 0.06); }
-.list-row.selected { background: rgba(77, 163, 255, 0.14); }
+.list-row:hover { background: var(--hh-color-surface-soft); }
+.list-row.selected { background: var(--hh-color-accent-selected-bg); }
 .list-thumb {
   width: 44px; height: 66px;
   border-radius: 6px; overflow: hidden; flex-shrink: 0;
   position: relative;
-  box-shadow: 0 3px 10px rgba(0, 0, 0, 0.3);
+  box-shadow: 0 3px 10px var(--hh-color-thumb-shadow-soft);
 }
 .list-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .list-letter {
   position: absolute; inset: 0;
   display: flex; align-items: center; justify-content: center;
-  font-size: 22px; font-weight: 700; color: rgba(255, 255, 255, 0.4);
+  font-size: 22px; font-weight: 700; color: var(--hh-color-text-dim);
 }
 .list-running {
   position: absolute; top: 4px; right: 4px;
-  background: rgba(94, 194, 105, 0.9);
+  background: var(--hh-color-success-opaque);
   width: 18px; height: 18px;
   border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 10px; color: #fff;
+  font-size: 10px; color: var(--hh-color-on-accent);
 }
 .list-body { flex: 1; min-width: 0; }
 .list-title {
@@ -370,14 +412,14 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .list-meta {
-  font-size: 12px; color: rgba(255, 255, 255, 0.45);
+  font-size: 12px; color: var(--hh-color-text-muted);
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
 }
 /* 右侧三列 caption tabular-nums：发行 / 评分 / 时长 */
 .list-cols {
   display: flex; align-items: center; gap: 16px;
-  font-size: 12px; color: rgba(255, 255, 255, 0.48);
+  font-size: 12px; color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
   flex-shrink: 0;
 }

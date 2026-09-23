@@ -52,7 +52,8 @@ export function report(result: ActionResult | AddResult, okText?: string): boole
 
 /** IPC 通道本身被拒（主进程崩溃、频道未注册）也要有声音。 */
 export function reportRejection(e: unknown): void {
-  message.error(`操作失败：${e instanceof Error ? e.message : String(e)}`)
+  const msg = e instanceof Error ? e.message : String(e ?? '')
+  message.error(`操作失败：${msg.trim() || '未知错误（主进程未响应）'}`)
 }
 
 export async function addTask(input: {
@@ -136,6 +137,7 @@ export async function initTasks(): Promise<Array<() => void>> {
   downloads.settings = await window.hh.getSettings()
   await refreshTasks()
   const unsubs = wireTaskPushes()
-  setInterval(refreshTasks, REFRESH_MS)
+  const timer = setInterval(refreshTasks, REFRESH_MS)
+  unsubs.push(() => clearInterval(timer))
   return unsubs
 }

@@ -49,7 +49,12 @@ export const categories = computed(() => {
 })
 
 export async function refreshGames(): Promise<void> {
-  library.games = await window.hh.listGames()
+  library.loading = true
+  try {
+    library.games = await window.hh.listGames()
+  } finally {
+    library.loading = false
+  }
 }
 
 export function selectGame(id: string): void {
@@ -77,7 +82,7 @@ export function openScrape(gameId: string, query: string): void {
   library.scrapeOpen = true
   library.scrapeResults = []
   library.scrapeWarnings = []
-  void runSearch(query)
+  // 搜索只由 ScrapeDialog 的 watch(open) 触发，这里不再额外发一次，避免双重搜索竞态
 }
 
 export async function runSearch(query: string): Promise<void> {

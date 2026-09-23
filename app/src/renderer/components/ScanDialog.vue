@@ -7,12 +7,14 @@ const open = defineModel<boolean>('open')
 const dir = ref('')
 const scanning = ref(false)
 const result = ref('')
+const scanError = ref(false)
 const picked = ref<{ dir: string; exePath: string; rawTitle: string }[]>([])
 
 async function runScan(): Promise<void> {
   if (!dir.value) return
   scanning.value = true
   result.value = ''
+  scanError.value = false
   picked.value = []
   try {
     const r = await window.hh.scanDir(dir.value)
@@ -20,6 +22,7 @@ async function runScan(): Promise<void> {
     result.value = `扫描完成：发现 ${r.hits.length} 个游戏目录，新入库 ${r.added.length} 个（跳过 ${r.skipped} 个已有）`
     await refreshGames()
   } catch (e) {
+    scanError.value = true
     result.value = `扫描失败：${e instanceof Error ? e.message : String(e)}`
   } finally {
     scanning.value = false
@@ -43,7 +46,7 @@ async function pickDir(): Promise<void> {
         </button>
       </div>
 
-      <div v-if="result" class="result">{{ result }}</div>
+      <div v-if="result" class="result" :class="{ error: scanError }">{{ result }}</div>
 
       <div v-if="picked.length" class="hits">
         <div class="hits-title">发现的可执行文件（同目录 exe 已自动合并）：</div>
@@ -67,9 +70,9 @@ async function pickDir(): Promise<void> {
   height: 38px;
   border-radius: 10px;
   padding: 0 14px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: #fff;
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-on-accent);
   font-size: 13px;
   outline: none;
 }
@@ -77,34 +80,35 @@ async function pickDir(): Promise<void> {
   height: 38px; padding: 0 20px;
   border: none;
   border-radius: 10px;
-  background: linear-gradient(135deg, #4096ff, #2f6fed);
-  color: #fff; font-weight: 600; font-size: 13px;
+  background: var(--hh-color-accent-grad);
+  color: var(--hh-color-on-accent); font-weight: 600; font-size: 13px;
   cursor: pointer;
 }
 .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .scan-btn.ghost {
   background: transparent;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  color: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  color: var(--hh-color-text-strong);
   font-weight: 400;
 }
-.result { font-size: 13px; color: #7ed36a; }
+.result { font-size: 13px; color: var(--hh-color-success); }
+.result.error { color: var(--hh-color-error); }
 .hits {
   max-height: 260px;
   overflow-y: auto;
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  border: 1px solid var(--hh-color-panel-glass-border);
   border-radius: 10px;
   padding: 10px 12px;
 }
-.hits-title { font-size: 12px; color: rgba(255, 255, 255, 0.5); margin-bottom: 8px; }
+.hits-title { font-size: 12px; color: var(--hh-color-text-soft); margin-bottom: 8px; }
 .hit-row {
   display: flex; justify-content: space-between; gap: 10px;
   font-size: 12.5px;
   padding: 4px 0;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  border-bottom: 1px solid var(--hh-color-border-faint);
 }
-.hit-name { color: rgba(255, 255, 255, 0.85); white-space: nowrap; }
-.hit-path { color: rgba(255, 255, 255, 0.4); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hits-more { font-size: 12px; color: rgba(255, 255, 255, 0.4); padding-top: 6px; }
-.hint { font-size: 12px; color: rgba(255, 255, 255, 0.4); }
+.hit-name { color: var(--hh-color-text-stronger); white-space: nowrap; }
+.hit-path { color: var(--hh-color-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hits-more { font-size: 12px; color: var(--hh-color-text-dim); padding-top: 6px; }
+.hint { font-size: 12px; color: var(--hh-color-text-dim); }
 </style>

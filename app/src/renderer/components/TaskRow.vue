@@ -115,26 +115,26 @@ const primaryTitle = computed(() => {
   return '开始下载'
 })
 
-/** 状态色点颜色 */
+/** 状态色点颜色（真值在 tokens，经 CSS 变量引用） */
 const dotColor = computed(() => {
   switch (state.value) {
-    case 'downloading': return '#4da3ff'
-    case 'preparing': return '#e8b450'
-    case 'done': return '#5ec269'
-    case 'error': return '#e05555'
-    case 'paused': return '#8a8f9d'
-    default: return '#6a6f7d'
+    case 'downloading': return 'var(--hh-color-accent)'
+    case 'preparing': return 'var(--hh-color-warning)'
+    case 'done': return 'var(--hh-color-success)'
+    case 'error': return 'var(--hh-color-error)'
+    case 'paused': return 'var(--hh-color-neutral)'
+    default: return 'var(--hh-color-neutral-dim)'
   }
 })
 
 /** 自绘状态 chip 颜色（dot+label） */
 const chipTone = computed(() => {
   switch (badge.value.tone) {
-    case 'success': return { dot: '#5ec269', text: '#8ad17e' }
-    case 'error': return { dot: '#e05555', text: '#ff9a9a' }
-    case 'warning': return { dot: '#e8b450', text: '#e8b450' }
-    case 'blue': return { dot: '#4da3ff', text: '#7ec3ff' }
-    default: return { dot: '#8a8f9d', text: 'rgba(255,255,255,0.6)' }
+    case 'success': return { dot: 'var(--hh-color-success)', text: 'var(--hh-color-success-text)' }
+    case 'error': return { dot: 'var(--hh-color-error)', text: 'var(--hh-color-error-text)' }
+    case 'warning': return { dot: 'var(--hh-color-warning)', text: 'var(--hh-color-warning)' }
+    case 'blue': return { dot: 'var(--hh-color-accent)', text: 'var(--hh-color-accent-text)' }
+    default: return { dot: 'var(--hh-color-neutral)', text: 'var(--hh-color-text-mid-high)' }
   }
 })
 </script>
@@ -207,21 +207,21 @@ const chipTone = computed(() => {
   padding: 0 16px 0 12px;
   border-radius: 12px;
   margin-bottom: 8px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-card-border);
   cursor: pointer;
   transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
   overflow: hidden;
   box-sizing: border-box;
 }
 .task-row:hover {
-  background: rgba(255, 255, 255, 0.07);
-  border-color: rgba(255, 255, 255, 0.14);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+  background: var(--hh-color-card-hover);
+  border-color: var(--hh-color-surface-strong);
+  box-shadow: var(--hh-shadow-row-hover);
 }
 .task-row.selected {
-  background: rgba(77, 163, 255, 0.13);
-  border-color: rgba(77, 163, 255, 0.38);
+  background: var(--hh-color-accent-selected-bg);
+  border-color: var(--hh-color-accent-selected-border);
 }
 
 /* 状态色点：左缘 4px 竖条 */
@@ -244,7 +244,7 @@ const chipTone = computed(() => {
   flex: none;
   width: 26px;
   text-align: center;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hh-color-text-dim);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -253,10 +253,11 @@ const chipTone = computed(() => {
 @keyframes ic-spin {
   to { transform: rotate(360deg); }
 }
-.cell-ic .downloading,
-.cell-ic .preparing { color: #4da3ff; }
-.cell-ic .done { color: #5ec269; }
-.cell-ic .error { color: #e05555; }
+/* 状态图标配色：真值在 tokens（--hh-color-*），状态类挂在 .task-row 根上 */
+.task-row.downloading .cell-ic,
+.task-row.preparing .cell-ic { color: var(--hh-color-accent); }
+.task-row.done .cell-ic { color: var(--hh-color-success); }
+.task-row.error .cell-ic { color: var(--hh-color-error); }
 
 .cell-lead {
   flex: 1;
@@ -269,7 +270,7 @@ const chipTone = computed(() => {
   font-size: 13px;
   font-weight: 500;
   line-height: 20px;
-  color: rgba(255, 255, 255, 0.9);
+  color: var(--hh-color-text-glow);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -277,7 +278,7 @@ const chipTone = computed(() => {
 .sub {
   font-size: 12px;
   line-height: 18px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--hh-color-text-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -292,7 +293,7 @@ const chipTone = computed(() => {
   font-size: 13px;
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   font-variant-numeric: tabular-nums;
-  color: rgba(255, 255, 255, 0.65);
+  color: var(--hh-color-text-bright);
 }
 
 /* 自绘状态 chip */
@@ -304,7 +305,7 @@ const chipTone = computed(() => {
   height: 22px;
   padding: 0 9px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hh-color-surface-mid);
   white-space: nowrap;
 }
 .st-dot {
@@ -324,19 +325,19 @@ const chipTone = computed(() => {
   height: 3px;
   border-radius: 2px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--hh-color-surface-mid);
 }
 .bar-fill {
   position: absolute;
   top: 0; left: 0; bottom: 0;
-  background: linear-gradient(90deg, #2f6fed, #4da3ff);
+  background: linear-gradient(90deg, var(--hh-color-accent-grad-stop), var(--hh-color-accent));
   transition: width 0.15s linear;
   overflow: hidden;
 }
 .bar-fill.moving::after {
   content: '';
   position: absolute; inset: 0;
-  background: linear-gradient(100deg, transparent 30%, rgba(255, 255, 255, 0.4) 50%, transparent 70%);
+  background: linear-gradient(100deg, transparent 30%, var(--hh-color-shine-sweep) 50%, transparent 70%);
   transform: translateX(-100%);
   animation: bar-shine 1.2s linear infinite;
 }
@@ -344,7 +345,7 @@ const chipTone = computed(() => {
   to { transform: translateX(100%); }
 }
 .bar-fill.full {
-  background: linear-gradient(90deg, #3fa04b, #5ec269);
+  background: linear-gradient(90deg, var(--hh-color-success-deep), var(--hh-color-success));
 }
 .bar-fill.indet {
   width: 35%;
@@ -365,7 +366,8 @@ const chipTone = computed(() => {
   transition: opacity 0.167s ease;
 }
 .task-row:hover .cell-actions,
-.task-row.selected .cell-actions {
+.task-row.selected .cell-actions,
+.task-row .cell-actions:focus-within {
   opacity: 1;
 }
 .ibtn {
@@ -377,22 +379,22 @@ const chipTone = computed(() => {
   border: none;
   border-radius: 7px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.55);
+  color: var(--hh-color-text-mid);
   cursor: pointer;
   font-size: 14px;
   padding: 0;
   transition: background 0.15s, color 0.15s;
 }
 .ibtn:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.12);
-  color: rgba(255, 255, 255, 0.95);
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-hot);
 }
 .ibtn:disabled {
-  color: rgba(255, 255, 255, 0.18);
+  color: var(--hh-color-text-ghost);
   cursor: not-allowed;
 }
 .ibtn.danger:hover:not(:disabled) {
-  color: #e05555;
-  background: rgba(224, 85, 85, 0.16);
+  color: var(--hh-color-error);
+  background: var(--hh-color-error-hover-bg);
 }
 </style>

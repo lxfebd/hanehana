@@ -54,10 +54,6 @@ function submit(e?: Event): void {
 
 <template>
   <div class="dlg">
-    <div class="dlg-head">
-      <span class="dlg-title">新建下载</span>
-    </div>
-
     <div class="dlg-card">
       <Form layout="horizontal" :label-col="{ style: { width: 84 } }" :wrapper-col="{ flex: 1 }" @keydown.enter="submit">
         <Form.Item label="下载链接" required>
@@ -118,19 +114,9 @@ function submit(e?: Event): void {
   flex-direction: column;
   gap: 16px;
 }
-.dlg-head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.dlg-title {
-  font-size: 16px;
-  font-weight: 600;
-  color: rgba(255, 255, 255, 0.88);
-}
 .dlg-card {
-  background: rgba(255, 255, 255, 0.06);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--hh-color-surface-soft);
+  border: 1px solid var(--hh-color-panel-glass-border);
   border-radius: 12px;
   padding: 16px;
 }
@@ -148,11 +134,11 @@ function submit(e?: Event): void {
 .cs-error {
   font-size: 12px;
   line-height: 1.6;
-  color: #e05252;
+  color: var(--hh-color-error-danger);
 }
 .hint {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.45);
+  color: var(--hh-color-text-muted);
 }
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;

@@ -10,9 +10,12 @@
 import { computed, ref } from 'vue'
 import { Activity, Flower2, FolderOpen, Play, Star, Wand2 } from 'lucide-vue-next'
 import { launchGame, library, openScrape, refreshGames, selectedGame, thumbUrl } from '../stores/library'
+import { tokens } from '../design/tokens'
 
 const g = computed(() => selectedGame.value)
 const descExpanded = ref(false)
+/** 评分星星色（真值 tokens） */
+const starColor = tokens.color.star
 
 function fmtPlay(ms: number): string {
   if (ms <= 0) return '—'
@@ -35,19 +38,30 @@ function bannerImg(): string {
 }
 
 function bannerFallback(): string {
-  const c = g.value?.color ?? '#2a3a5f'
-  return `linear-gradient(160deg, ${c}cc, ${c}22 60%, #1a1a1f 100%)`
+  const c = g.value?.color ?? tokens.color.coverFallback
+  // 无图横幅：主色径向光晕打底 + 暗色渐变收边，不再是单色空洞
+  return `radial-gradient(120% 90% at 15% 0%, ${c}55 0%, transparent 55%),
+    radial-gradient(100% 80% at 85% 100%, ${c}44 0%, transparent 60%),
+    linear-gradient(160deg, ${c}cc, ${c}22 60%, ${tokens.color.bannerBase} 100%)`
 }
 
 /** 简介是否超过 6 行阈值（粗略按字符估算，180 字约 6 行） */
 const descTruncated = computed(() => !!g.value?.description && g.value.description.length > 180)
 
 async function toggleCategory(): Promise<void> {
-  if (!g.value) return
-  const cur = g.value.categories
-  const next = cur.includes('已通关') ? cur.filter((c) => c !== '已通关') : [...cur, '已通关']
-  await window.hh.updateGame(g.value.id, { categories: next })
-  await refreshGames()
+  const game = g.value
+  if (!game) return
+  // 乐观更新：先改本地镜像 + 拉回服务端新值，不触发全量重拉，避免闪烁与掉滚动位置
+  const next = game.categories.includes('已通关')
+    ? game.categories.filter((c) => c !== '已通关')
+    : [...game.categories, '已通关']
+  const fresh = await window.hh.updateGame(game.id, { categories: next })
+  if (fresh) {
+    const idx = library.games.findIndex((it) => it.id === game.id)
+    if (idx >= 0) library.games[idx] = fresh
+  } else {
+    void refreshGames()
+  }
 }
 
 function openDir(): void {
@@ -82,6 +96,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
           class="banner-tint"
           :style="{ background: bannerFallback() }"
         ></div>
+        <div class="banner-noise"></div>
         <div class="banner-scrim"></div>
 
         <div class="banner-cover">
@@ -95,7 +110,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
           <div class="banner-chips">
             <span v-if="g.releaseDate" class="chip">{{ g.releaseDate }}</span>
             <span v-if="g.rating" class="chip chip-rating">
-              <Star :size="11" :fill="'#ffd666'" :stroke-width="0" /> {{ g.rating.toFixed(1) }}
+              <Star :size="11" :fill="starColor" :stroke-width="0" /> {{ g.rating.toFixed(1) }}
             </span>
           </div>
         </div>
@@ -162,9 +177,9 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: rgba(255, 255, 255, 0.4);
+  color: var(--hh-color-text-dim);
 }
-.empty-icon { color: rgba(255, 255, 255, 0.4); }
+.empty-icon { color: var(--hh-color-text-dim); }
 .empty-text { font-size: 13px; }
 
 /* ============ 横幅 180px ============ */
@@ -190,9 +205,16 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   position: absolute; inset: 0;
   opacity: 0.35;
 }
+/* 无图兜底时仍有一点质感：胶片噪点，避免纯渐变显得发虚 */
+.banner-noise {
+  position: absolute; inset: 0;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
+  mix-blend-mode: overlay;
+}
 .banner-scrim {
   position: absolute; inset: 0;
-  background: linear-gradient(to top, #1a1a1f 0%, rgba(26, 26, 31, 0.55) 55%, rgba(26, 26, 31, 0.2) 100%);
+  background: var(--hh-color-banner-scrim);
 }
 .banner-cover {
   position: relative;
@@ -200,14 +222,14 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   border-radius: 8px;
   overflow: hidden;
   flex-shrink: 0;
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: 0 6px 20px var(--hh-color-shade-banner);
   z-index: 1;
 }
 .banner-img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .banner-letter {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 40px; font-weight: 700; color: rgba(255, 255, 255, 0.55);
+  font-size: 40px; font-weight: 700; color: var(--hh-color-text-mid);
 }
 .banner-meta {
   position: relative;
@@ -224,22 +246,22 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.5);
+  text-shadow: 0 1px 6px var(--hh-color-shade-text);
 }
 .banner-native {
   font-size: 12px;
-  color: rgba(255, 255, 255, 0.65);
-  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  color: var(--hh-color-text-bright);
+  text-shadow: 0 1px 4px var(--hh-color-shade-text);
 }
 .banner-chips { display: flex; gap: 6px; margin-top: 2px; }
 .chip {
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.14);
+  background: var(--hh-color-surface-strong);
   padding: 2px 8px;
   border-radius: 7px;
   display: flex; align-items: center; gap: 3px;
 }
-.chip-rating { color: #ffd666; font-weight: 600; }
+.chip-rating { color: var(--hh-color-star); font-weight: 600; }
 
 /* ============ 动作栏 ============ */
 .actions { display: flex; }
@@ -248,17 +270,17 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   height: 40px;
   border: none;
   border-radius: 10px;
-  background-image: linear-gradient(135deg, #4da3ff, #2f6fed);
-  color: #fff;
+  background-image: var(--hh-color-accent-grad);
+  color: var(--hh-color-on-accent);
   font-size: 14px; font-weight: 600;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 6px;
   transition: transform 0.12s, box-shadow 0.12s;
-  box-shadow: 0 4px 16px rgba(77, 163, 255, 0.35);
+  box-shadow: 0 4px 16px var(--hh-color-accent-shadow);
 }
 .primary-btn:hover {
   transform: translateY(-1px);
-  box-shadow: 0 6px 22px rgba(77, 163, 255, 0.5);
+  box-shadow: 0 6px 22px var(--hh-color-accent-shadow-hover);
 }
 .primary-btn:active { transform: translateY(0); }
 .actions-sub { display: flex; gap: 8px; }
@@ -266,15 +288,15 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   flex: 1;
   height: 36px;
   border-radius: 10px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
-  color: rgba(255, 255, 255, 0.8);
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-strong);
   font-size: 13px;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 6px;
   transition: background 0.12s;
 }
-.ghost-btn:hover { background: rgba(255, 255, 255, 0.13); }
+.ghost-btn:hover { background: var(--hh-color-surface-hover-soft); }
 
 /* ============ 元数据 ============ */
 .meta {
@@ -282,9 +304,9 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   font-size: 12.5px;
 }
 .meta-row { display: flex; justify-content: space-between; gap: 10px; }
-.meta-key { color: rgba(255, 255, 255, 0.42); flex-shrink: 0; }
-.meta-val { color: rgba(255, 255, 255, 0.8); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.link { color: #69b1ff; cursor: pointer; text-decoration: none; }
+.meta-key { color: var(--hh-color-text-dim-strong); flex-shrink: 0; }
+.meta-val { color: var(--hh-color-text-strong); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.link { color: var(--hh-color-link); cursor: pointer; text-decoration: none; }
 .link:hover { text-decoration: underline; }
 
 /* ============ 标签 ============ */
@@ -293,8 +315,8 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   font-size: 11px;
   padding: 3px 9px;
   border-radius: 6px;
-  background: rgba(77, 163, 255, 0.16);
-  color: #7ec3ff;
+  background: var(--hh-color-accent-bg);
+  color: var(--hh-color-accent-text);
 }
 
 /* ============ 分类 ============ */
@@ -303,17 +325,17 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   font-size: 11.5px;
   padding: 5px 10px;
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
+  border: 1px solid var(--hh-color-surface-hover);
   background: transparent;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--hh-color-text-mid-high);
   cursor: pointer;
   transition: all 0.12s;
 }
-.cat-chip:hover { background: rgba(255, 255, 255, 0.08); }
+.cat-chip:hover { background: var(--hh-color-surface-mid); }
 .cat-chip.on {
-  background: rgba(94, 194, 105, 0.18);
-  border-color: rgba(94, 194, 105, 0.4);
-  color: #8ad17e;
+  background: var(--hh-color-success-bg);
+  border-color: var(--hh-color-success-border);
+  color: var(--hh-color-success-text);
 }
 
 /* ============ 简介 ============ */
@@ -325,7 +347,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
 .desc {
   font-size: 13px;
   line-height: 20px;
-  color: rgba(255, 255, 255, 0.6);
+  color: var(--hh-color-text-mid-high);
   margin: 0;
   white-space: pre-wrap;
 }
