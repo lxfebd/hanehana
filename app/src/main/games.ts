@@ -19,6 +19,16 @@ export interface ScanResult {
   skipped: number
 }
 
+export interface BatchResult {
+  updated: number
+  removed: number
+}
+
+export interface BatchPatch {
+  id: string
+  patch: Partial<Game>
+}
+
 export async function handleScan(root: string): Promise<ScanResult> {
   if (!(await isValidDir(root))) {
     throw new Error('目录不存在或不可读：' + root)
@@ -37,6 +47,26 @@ export function handleRemove(id: string): void {
 
 export function handleUpdate(id: string, patch: Partial<Game>): Game | undefined {
   return updateGame(id, patch)
+}
+
+/** 批量更新：每个条目携带自己的 patch（白名单在 index.ts 的 sanitizeGamePatch 里逐个滤）。 */
+export function handleBatchUpdate(patches: BatchPatch[]): BatchResult {
+  let updated = 0
+  for (const { id, patch } of patches) {
+    if (updateGame(id, patch)) updated++
+  }
+  return { updated, removed: 0 }
+}
+
+export function handleBatchRemove(ids: string[]): BatchResult {
+  let removed = 0
+  for (const id of ids) {
+    if (getGame(id)) {
+      removeGame(id)
+      removed++
+    }
+  }
+  return { updated: 0, removed }
 }
 
 export function handleOpenDir(dir: string): void {

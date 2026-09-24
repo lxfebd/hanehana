@@ -226,12 +226,14 @@ export async function applyScrape(gameId: string, raw: unknown): Promise<{ ok: b
       coverPath = await downloadCover(r.provider, r.id, r.coverUrl)
     }
     const tagSet = new Set([...(g.tags ?? []), ...(r.tags ?? [])])
+    // manualEdit 标记过手填的字段，刮削不再覆盖（用户手改优先于站点数据）
+    const manual = g.manualEdit === true
     updateGame(gameId, {
-      title: r.title || g.title,
-      titleNative: r.titleNative,
-      description: r.description,
-      releaseDate: r.releaseDate,
-      rating: r.rating,
+      title: manual && g.title ? g.title : r.title || g.title,
+      titleNative: manual && g.titleNative ? g.titleNative : r.titleNative,
+      description: manual && g.description ? g.description : r.description,
+      releaseDate: manual && g.releaseDate ? g.releaseDate : r.releaseDate,
+      rating: manual && g.rating ? g.rating : r.rating,
       coverPath,
       color: coverPath ? coverColorOf(coverPath) : undefined,
       tags: [...tagSet],

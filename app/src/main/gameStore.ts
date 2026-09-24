@@ -85,7 +85,7 @@ export function findGameByExe(exePath: string): Game | undefined {
   return games.find((g) => g.exePath.toLowerCase() === norm)
 }
 
-export function addGames(entries: Omit<Game, 'id' | 'addedAt' | 'playMs' | 'tags' | 'categories' | 'sources'>[]): Game[] {
+export function addGames(entries: Omit<Game, 'id' | 'addedAt' | 'playMs' | 'tags' | 'categories' | 'sources' | 'favorite'>[]): Game[] {
   const now = Date.now()
   const added: Game[] = []
   for (const e of entries) {
@@ -97,6 +97,7 @@ export function addGames(entries: Omit<Game, 'id' | 'addedAt' | 'playMs' | 'tags
       tags: [],
       categories: [],
       sources: [],
+      favorite: false,
       addedAt: now,
     }
     games.push(g)
@@ -146,6 +147,8 @@ const PATCHABLE: readonly (keyof Game)[] = [
   'coverPath',
   'thumbPath',
   'thumbSrc',
+  'favorite',
+  'manualEdit',
 ]
 
 /**
@@ -165,6 +168,8 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
     switch (key) {
       case 'useLE':
       case 'useMagpie':
+      case 'favorite':
+      case 'manualEdit':
         if (typeof v === 'boolean') out[key] = v
         break
       case 'rating':

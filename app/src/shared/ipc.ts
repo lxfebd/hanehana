@@ -14,6 +14,8 @@ export const Ipc = {
   GameScan: 'hanehana:games:scan',
   GameUpdate: 'hanehana:games:update',
   GameRemove: 'hanehana:games:remove',
+  GameBatchUpdate: 'hanehana:games:batch-update',
+  GameBatchRemove: 'hanehana:games:batch-remove',
   // 元数据刮削
   ScrapeSearch: 'hanehana:scrape:search',
   ScrapeApply: 'hanehana:scrape:apply',

@@ -22,6 +22,8 @@ const bridge = {
   scanDir: (root: string) => ipcRenderer.invoke(Ipc.GameScan, root),
   updateGame: (id: string, patch: Partial<Game>) => ipcRenderer.invoke(Ipc.GameUpdate, id, patch),
   removeGame: (id: string) => ipcRenderer.invoke(Ipc.GameRemove, id),
+  batchUpdateGames: (entries: { id: string; patch: Partial<Game> }[]) => ipcRenderer.invoke(Ipc.GameBatchUpdate, entries),
+  batchRemoveGames: (ids: string[]) => ipcRenderer.invoke(Ipc.GameBatchRemove, ids),
 
   // 元数据刮削
   scrapeSearch: (title: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title),

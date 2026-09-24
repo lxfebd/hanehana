@@ -53,6 +53,10 @@ export interface Game {
   useMagpie: boolean
   /** 入库时间（epoch ms） */
   addedAt: number
+  /** 收藏夹标记（本地愿望单/收藏） */
+  favorite: boolean
+  /** 手动编辑过的标记（刮削不再覆盖用户手填字段） */
+  manualEdit?: boolean
 }
 
 export interface ScrapeResult {

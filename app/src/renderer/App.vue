@@ -2,9 +2,9 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass } from 'lucide-vue-next'
+import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
-import { categories, filteredGames, library, refreshGames, selectedGame, thumbUrl } from './stores/library'
+import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
 import { ui, applyDarkFromSettings } from './stores/ui'
 import CoverGrid from './components/CoverGrid.vue'
@@ -15,6 +15,8 @@ import DownloadView from './components/DownloadView.vue'
 import NewDownloadDialog from './components/NewDownloadDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
 import GameSites from './components/GameSites.vue'
+import BatchEditOverlay from './components/BatchEditOverlay.vue'
+import EditDialog from './components/EditDialog.vue'
 
 const bootInfo = ref('')
 let unsubPushes: Array<() => void> = []
@@ -214,6 +216,27 @@ onUnmounted(() => {
                   >{{ c }}</button>
                 </div>
 
+                <!-- 智能列表（动态筛选，Playnite 式） -->
+                <select v-model="library.smartList" class="smart-select" title="智能列表">
+                  <option v-for="l in SMART_LISTS" :key="l.id" :value="l.id">{{ l.label }}</option>
+                </select>
+
+                <button
+                  class="tool-btn"
+                  :class="{ active: library.favOnly }"
+                  title="只看收藏"
+                  :aria-pressed="library.favOnly"
+                  @click="library.favOnly = !library.favOnly"
+                ><Heart :size="15" /></button>
+
+                <button
+                  class="tool-btn"
+                  :class="{ active: library.selectMode }"
+                  title="多选模式"
+                  :aria-pressed="library.selectMode"
+                  @click="enterSelectMode(!library.selectMode)"
+                ><CheckSquare :size="15" /></button>
+
                 <div class="toolbar-count">{{ filteredCount }} 款</div>
 
                 <div class="segmented">
@@ -232,7 +255,10 @@ onUnmounted(() => {
                 </div>
               </div>
 
-              <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
+              <div class="cover-wrap">
+                <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
+                <BatchEditOverlay @done="library.selectMode = false" />
+              </div>
 
               <div v-if="library.error" class="error-banner glass">
                 {{ library.error }}
@@ -265,6 +291,7 @@ onUnmounted(() => {
 
         <ScanDialog v-model:open="library.scanOpen" />
         <ScrapeDialog v-model:open="library.scrapeOpen" />
+        <EditDialog v-model:open="library.editOpen" />
 
         <Modal
           v-model:open="downloads.addDialogOpen"
@@ -419,6 +446,13 @@ onUnmounted(() => {
   overflow: hidden;
 }
 
+/* 封面墙容器：相对定位承载批量编辑浮层（浮层 absolute 贴底） */
+.cover-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+
 /* 工具栏：搜索 + 分类 chips + 计数 + segmented（§5.3）。
    整条工具条收进一个卡片容器，与左右玻璃面板同层级——此前元素裸浮在玻璃上，
    与两侧面板断层，是"粗糙感"的主要来源之一。 */
@@ -498,6 +532,39 @@ onUnmounted(() => {
   font-weight: 600;
 }
 .toolbar-count { font-size: 12px; color: var(--hh-color-text-tertiary); white-space: nowrap; }
+
+/* 智能列表下拉 + 收藏/多选工具按钮（与 seg-btn 同口径） */
+.smart-select {
+  height: 32px;
+  border-radius: 10px;
+  padding: 0 10px;
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  color: var(--hh-color-text-glow);
+  font-size: 12.5px;
+  cursor: pointer;
+  outline: none;
+  font-family: inherit;
+}
+.smart-select:focus {
+  border-color: var(--hh-color-accent-focus-border);
+  box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
+}
+.tool-btn {
+  width: 32px; height: 32px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--hh-color-text-mid);
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.tool-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
+.tool-btn.active {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+}
 
 /* 视图 segmented：pill 容器 card 底 */
 .segmented {

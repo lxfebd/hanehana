@@ -24,7 +24,7 @@ import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleOpenDir, handleLaunch, handleRunning, detachAllRunning } from './games'
+import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning } from './games'
 import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
@@ -386,6 +386,22 @@ function wireIpc(): void {
   ipcMain.handle(Ipc.GameUpdate, (_e, id: unknown, patch: unknown) => {
     if (!isId(id)) return err('游戏不存在')
     return handleUpdate(id, sanitizeGamePatch(patch))
+  })
+  // 批量：entries=[{id, patch}]，逐条过白名单；未知 id 静默跳过
+  ipcMain.handle(Ipc.GameBatchUpdate, (_e, entries: unknown) => {
+    if (!Array.isArray(entries) || entries.length > 500) return err('选择无效')
+    const list = entries
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      .filter((x) => isId(x.id))
+      .map((x) => ({ id: x.id as string, patch: sanitizeGamePatch(x.patch) }))
+    if (!list.length) return { ok: true as const, updated: 0, removed: 0 }
+    return { ok: true as const, ...handleBatchUpdate(list) }
+  })
+  ipcMain.handle(Ipc.GameBatchRemove, (_e, ids: unknown) => {
+    if (!Array.isArray(ids)) return err('选择无效')
+    const list = ids.filter(isId)
+    if (!list.length) return { ok: true as const, ...handleBatchRemove([]) }
+    return { ok: true as const, ...handleBatchRemove(list) }
   })
   ipcMain.handle(Ipc.GameLaunch, (_e, id: unknown) => {
     if (!isId(id)) return { ok: false as const, error: '游戏不存在' }

@@ -21,9 +21,9 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { Activity, Flower2, Loader2, Star } from 'lucide-vue-next'
+import { Activity, Check, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
-import { library, selectGame, thumbUrl } from '../stores/library'
+import { library, selectGame, thumbUrl, toggleSelect } from '../stores/library'
 import { tokens } from '../design/tokens'
 
 const props = defineProps<{
@@ -107,6 +107,10 @@ function fmtPlay(ms: number): string {
 }
 
 function click(g: Game, idx: number): void {
+  if (library.selectMode) {
+    toggleSelect(g.id)
+    return
+  }
   focusIdx.value = idx
   selectGame(g.id)
   emit('select', g.id)
@@ -191,7 +195,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
             v-for="g in item.games"
             :key="g.id"
             class="cover-card"
-            :class="{ selected: selected === g.id }"
+            :class="{ selected: selected === g.id, multi: library.selectMode, checked: library.selectMode && library.selection.includes(g.id) }"
             role="gridcell"
             :tabindex="focusIdx === gIdx(g.id) ? 0 : -1"
             @click="click(g, gIdx(g.id))"
@@ -203,6 +207,12 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 
               <div v-if="library.runningIds.has(g.id)" class="cover-running">
                 <Activity :size="10" :stroke-width="2.5" /> 运行中
+              </div>
+              <div v-if="g.favorite" class="cover-fav" title="已收藏">
+                <Heart :size="10" :fill="'currentColor'" :stroke-width="0" />
+              </div>
+              <div v-if="library.selectMode && library.selection.includes(g.id)" class="cover-check">
+                <Check :size="13" :stroke-width="3" />
               </div>
 
               <!-- 压暗渐变只给真图用：占位色块上画只会糊出一团灰雾 -->
@@ -234,7 +244,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       <template #default="{ item, index }">
         <div
           class="list-row"
-          :class="{ selected: selected === item.id }"
+          :class="{ selected: selected === item.id, multi: library.selectMode, checked: library.selectMode && library.selection.includes(item.id) }"
           role="row"
           :tabindex="focusIdx === index ? 0 : -1"
           @click="click(item, index)"
@@ -245,6 +255,12 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
             <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
             <div v-if="library.runningIds.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
+            </div>
+            <div v-if="item.favorite" class="list-fav" title="已收藏">
+              <Heart :size="9" :fill="'currentColor'" :stroke-width="0" />
+            </div>
+            <div v-if="library.selectMode && library.selection.includes(item.id)" class="list-check">
+              <Check :size="12" :stroke-width="3" />
             </div>
           </div>
           <div class="list-body">
@@ -353,6 +369,14 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   background: var(--hh-color-card-hover);
   border-color: var(--hh-color-surface-hover);
 }
+.cover-card.multi { cursor: pointer; }
+.cover-card.checked {
+  background: var(--hh-color-accent-selected-bg);
+  border-color: var(--hh-color-accent);
+  box-shadow:
+    0 0 0 1px var(--hh-color-accent),
+    0 8px 24px var(--hh-color-accent-selected-ring);
+}
 .cover-card.selected {
   background: var(--hh-color-accent-soft);
   border-color: var(--hh-color-accent);
@@ -390,6 +414,26 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   padding: 3px 9px; border-radius: 8px;
   z-index: 2;
   display: flex; align-items: center; gap: 3px;
+}
+/* 收藏角标：右上角小爱心 */
+.cover-fav {
+  position: absolute; top: 8px; right: 8px;
+  color: var(--hh-color-star);
+  background: var(--hh-color-surface-strong);
+  width: 20px; height: 20px;
+  border-radius: 7px;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2;
+}
+/* 多选勾选角标：右下角实心对勾 */
+.cover-check {
+  position: absolute; bottom: 8px; right: 8px;
+  background: var(--hh-color-accent);
+  color: var(--hh-color-on-accent);
+  width: 22px; height: 22px;
+  border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  z-index: 2;
 }
 
 /* 封面底部轻渐晕（标题在封面下，只做视觉过渡） */
@@ -431,6 +475,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 }
 .list-row:hover { background: var(--hh-color-surface-soft); }
 .list-row.selected { background: var(--hh-color-accent-selected-bg); }
+.list-row.checked { background: var(--hh-color-accent-selected-bg); }
 .list-thumb {
   width: 44px; height: 66px;
   border-radius: 6px; overflow: hidden; flex-shrink: 0;
@@ -450,6 +495,23 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; color: var(--hh-color-on-accent);
+}
+.list-fav {
+  position: absolute; bottom: 3px; right: 3px;
+  color: var(--hh-color-star);
+  width: 15px; height: 15px;
+  border-radius: 5px;
+  background: var(--hh-color-surface-strong);
+  display: flex; align-items: center; justify-content: center;
+}
+.list-check {
+  position: absolute; top: 4px; left: 4px;
+  background: var(--hh-color-accent);
+  color: var(--hh-color-on-accent);
+  width: 18px; height: 18px;
+  border-radius: 999px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px;
 }
 .list-body { flex: 1; min-width: 0; }
 .list-title {

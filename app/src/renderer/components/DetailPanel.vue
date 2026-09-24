@@ -8,8 +8,8 @@
  *   - 标签 chips（accentBg 底）；分类 toggle chips；简介 6 行 clamp + 展开/收起
  */
 import { computed, ref } from 'vue'
-import { Activity, Flower2, FolderOpen, PanelRightClose, Play, Star, Wand2 } from 'lucide-vue-next'
-import { launchGame, library, openScrape, refreshGames, selectedGame, thumbUrl } from '../stores/library'
+import { Activity, Flower2, FolderOpen, Heart, PanelRightClose, Pencil, Play, Star, Wand2 } from 'lucide-vue-next'
+import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, thumbUrl, toggleFavorite } from '../stores/library'
 import { tokens } from '../design/tokens'
 
 const emit = defineEmits<{ collapse: [] }>()
@@ -141,7 +141,16 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
       </div>
       <div class="actions-sub">
         <button class="ghost-btn" @click="openScrape(g.id, g.rawTitle || g.title)"><Wand2 :size="14" /> 刮削</button>
-        <button class="ghost-btn" @click="openDir"><FolderOpen :size="14" /> 打开目录</button>
+        <button class="ghost-btn" @click="openEdit(g.id)"><Pencil :size="14" /> 编辑</button>
+        <button class="ghost-btn" @click="openDir"><FolderOpen :size="14" /> 目录</button>
+      </div>
+
+      <!-- 收藏行 -->
+      <div class="fav-row">
+        <button class="fav-btn" :class="{ on: g.favorite }" :aria-pressed="g.favorite" @click="toggleFavorite(g.id)">
+          <Heart :size="13" :fill="g.favorite ? 'currentColor' : 'none'" />
+          {{ g.favorite ? '已收藏' : '收藏' }}
+        </button>
       </div>
 
       <!-- 元数据两栏 -->
@@ -336,6 +345,28 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   transition: background 0.12s;
 }
 .ghost-btn:hover { background: var(--hh-color-surface-hover-soft); }
+
+/* 收藏行 */
+.fav-row { display: flex; }
+.fav-btn {
+  flex: 1;
+  height: 32px;
+  border-radius: 9px;
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  background: transparent;
+  color: var(--hh-color-text-mid);
+  font-size: 12.5px;
+  cursor: pointer;
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  transition: all 0.12s;
+}
+.fav-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
+.fav-btn.on {
+  background: var(--hh-color-warning-soft-bg);
+  border-color: var(--hh-color-star);
+  color: var(--hh-color-star);
+  font-weight: 600;
+}
 
 /* ============ 元数据 ============ */
 .meta {
