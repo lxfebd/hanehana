@@ -343,19 +343,27 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   cursor: pointer;
   border-radius: 12px;
   padding: 4px;
-  transition: transform 0.18s ease;
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-card-border);
+  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
   /* 焦点环交给全局 :focus-visible（WCAG 2.4.11），不留 outline:none 掐死它 */
 }
-.cover-card:hover { transform: translateY(-4px); }
-.cover-card.selected .cover-thumb {
+.cover-card:hover {
+  transform: translateY(-4px);
+  background: var(--hh-color-card-hover);
+  border-color: var(--hh-color-surface-hover);
+}
+.cover-card.selected {
+  background: var(--hh-color-accent-soft);
+  border-color: var(--hh-color-accent);
   box-shadow:
-    0 0 0 2px var(--hh-color-accent),
+    0 0 0 1px var(--hh-color-accent),
     0 8px 24px var(--hh-color-accent-selected-ring);
 }
 
 .cover-thumb {
   aspect-ratio: 3 / 4;
-  border-radius: 12px;
+  border-radius: 8px;
   overflow: hidden;
   position: relative;
   box-shadow: 0 6px 20px var(--hh-color-thumb-shadow);

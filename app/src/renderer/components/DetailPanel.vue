@@ -1,8 +1,8 @@
 <script setup lang="ts">
 /**
- * 详情面板（REDESIGN-SPEC §5.4）。
- *   - 横幅 180px：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
- *   - 前景左 cover 92x138；右列标题 16/22 两行 clamp + 原名 + chips
+ * 详情面板（REDESIGN-SPEC §5.4，樱夜 hero 化）。
+ *   - 横幅 224px hero：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
+ *   - 前景左 cover 104x156；右列标题 20/26 两行 clamp + 原名 + chips
  *   - 主按钮满宽 40（Play/运行中）、次行两 ghost 等宽（刮削/打开目录）
  *   - 元数据两栏：时长、上次、目录（link 色）、来源
  *   - 标签 chips（accentBg 底）；分类 toggle chips；简介 6 行 clamp + 展开/收起
@@ -100,7 +100,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
     </div>
 
     <template v-else>
-      <!-- 横幅 180px -->
+      <!-- 横幅 224px hero -->
       <div class="banner" :style="bannerImg() ? {} : { background: bannerFallback() }">
         <div
           v-if="bannerImg()"
@@ -221,12 +221,12 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
 .empty-icon { color: var(--hh-color-text-mid); }
 .empty-text { font-size: 13px; }
 
-/* ============ 横幅 180px ============ */
+/* ============ 横幅 224px hero ============ */
 .banner {
   border-radius: 14px;
   overflow: hidden;
   position: relative;
-  height: 180px;
+  height: 224px;
   display: flex;
   align-items: flex-end;
   gap: 14px;
@@ -257,8 +257,8 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
 }
 .banner-cover {
   position: relative;
-  width: 92px; height: 138px;
-  border-radius: 8px;
+  width: 104px; height: 156px;
+  border-radius: 10px;
   overflow: hidden;
   flex-shrink: 0;
   box-shadow: 0 6px 20px var(--hh-color-shade-banner);
@@ -268,7 +268,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
 .banner-letter {
   width: 100%; height: 100%;
   display: flex; align-items: center; justify-content: center;
-  font-size: 40px; font-weight: 700; color: var(--hh-color-text-mid);
+  font-size: 48px; font-weight: 700; color: var(--hh-color-text-mid);
 }
 .banner-meta {
   position: relative;
@@ -280,7 +280,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   padding-bottom: 2px;
 }
 .banner-title {
-  font-size: 16px; line-height: 22px; font-weight: 600;
+  font-size: 20px; line-height: 28px; font-weight: 700;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
