@@ -24,7 +24,8 @@ import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink } from './games'
+import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport } from './games'
+import { scanSteamLibrary } from './steam'
 import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
@@ -380,6 +381,34 @@ function wireIpc(): void {
     }
     return handleScan(root.trim())
   })
+  // Steam 库导入（G4）：扫库目录 → 返回候选（含 appid/官方名）
+  ipcMain.handle(Ipc.SteamScan, async () => {
+    const candidates = await scanSteamLibrary()
+    // 剔除已入库的（按 exe 去重，与扫描一致）
+    const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
+    return candidates.filter((c) => !existing.has(c.exePath.toLowerCase()))
+  })
+  // 导入选中的 Steam 候选（渲染层传来的白名单形状：dir/exePath/rawTitle/appid）
+  ipcMain.handle(Ipc.SteamImport, (_e, entries: unknown) => {
+    if (!Array.isArray(entries) || entries.length > 500) return err('选择无效')
+    const list = entries
+      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
+      .filter(
+        (x) =>
+          typeof x.dir === 'string' && x.dir &&
+          typeof x.exePath === 'string' && x.exePath &&
+          typeof x.rawTitle === 'string' && x.rawTitle,
+      )
+      .map((x) => ({
+        dir: x.dir as string,
+        exePath: x.exePath as string,
+        rawTitle: x.rawTitle as string,
+        appid: typeof x.appid === 'string' ? x.appid : undefined,
+      }))
+    if (!list.length) return { ok: true as const, added: 0, skipped: 0 }
+    const added = handleSteamImport(list)
+    return { ok: true as const, ...added }
+  })
   ipcMain.handle(Ipc.GameRemove, (_e, id: unknown) => {
     if (!isId(id)) return err('游戏不存在')
     handleRemove(id)
@@ -638,6 +667,10 @@ if (gotSingleInstanceLock) {
     // 游玩会话记录：游戏退出时 store 追加一条（统计报表的数据源）
     setSessionSink((sessions) => {
       if (sessions.length) store.appendPlaySessions(sessions)
+    })
+    // 异常退出（崩溃/被杀）：弹系统通知，玩家第一时间知道「刚才那游戏不是正常关的」
+    setCrashNotifier(({ title }) => {
+      notify(false, `${title} 可能异常退出`, '游戏进程非正常结束（崩溃或被杀）。如果频繁发生，试试用 LE 转区或以管理员身份运行。', 'crash')
     })
     // 代理必须在任何网络动作之前下发到 Chromium 侧（站点抓取层）。
     // 失败退回跟随系统代理：引擎侧会拿着同一份配置去下载，那时它会明确报错，

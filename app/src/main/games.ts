@@ -11,7 +11,7 @@ import { basename } from 'node:path'
 import { shell } from 'electron'
 import { addGames, getGame, getGames, removeGame, updateGame } from './gameStore'
 import { scanDir, isValidDir } from './scanner'
-import type { Game, PlaySession } from '../shared/types'
+import type { Game, PlaySession, SteamImportResult } from '../shared/types'
 
 export interface ScanResult {
   added: Game[]
@@ -39,6 +39,27 @@ export async function handleScan(root: string): Promise<ScanResult> {
   const fresh = hits.filter((h) => !existing.has(h.exePath.toLowerCase()))
   const added = addGames(fresh.map((h) => ({ dir: h.dir, exePath: h.exePath, rawTitle: h.rawTitle, title: h.rawTitle, useLE: false, useMagpie: false })))
   return { added, hits, skipped: hits.length - fresh.length }
+}
+
+/** Steam 导入（G4）：把选中的 Steam 候选入库。 */
+export function handleSteamImport(candidates: { dir: string; exePath: string; rawTitle: string; appid?: string }[]): SteamImportResult {
+  const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
+  const fresh = candidates.filter((c) => !existing.has(c.exePath.toLowerCase()))
+  const added = addGames(
+    fresh.map((c) => ({
+      dir: c.dir,
+      exePath: c.exePath,
+      rawTitle: c.rawTitle,
+      title: c.rawTitle,
+      useLE: false,
+      useMagpie: false,
+    })),
+  )
+  // appid 记进 tags，方便识别 Steam 来源（不建新字段，只增字段原则）
+  for (const g of added) {
+    if (g) updateGame(g.id, { tags: [...(g.tags ?? []), `steam:${candidates.find((c) => c.exePath === g.exePath)?.appid ?? ''}`].filter(Boolean) })
+  }
+  return { added: added.length, skipped: candidates.length - fresh.length }
 }
 
 export function handleRemove(id: string): void {
@@ -90,6 +111,12 @@ export function setSessionSink(sink: (sessions: PlaySession[]) => void): void {
   sessionSink = sink
 }
 
+/** 异常退出通知器（由 index.ts 注入）：崩溃/被杀时弹系统通知 */
+let crashNotifier: ((payload: { title: string; dir: string }) => void) | null = null
+export function setCrashNotifier(fn: (payload: { title: string; dir: string }) => void): void {
+  crashNotifier = fn
+}
+
 /** 游戏退出时落一条会话记录（供统计报表聚合）。 */
 function recordSession(id: string, title: string, start: number, end: number): void {
   const ms = end - start
@@ -97,11 +124,39 @@ function recordSession(id: string, title: string, start: number, end: number): v
   sessionSink?.([{ gameId: id, title, start, end, ms }])
 }
 
+/** 最近一次退出是否是异常（非 0 退出码 = 崩溃/被杀被工具强杀）。 */
+export interface CrashRecord {
+  title: string
+  dir: string
+}
+const recentCrashes = new Map<string, CrashRecord>()
+
+function recordExit(id: string, title: string, dir: string, code: number | null, signal: string | null): void {
+  // 正常退出：code 0 或 null（用户自己关窗口）；异常：非 0 退出码 / 信号终止
+  const abnormal = code !== 0 && code !== null
+  if (abnormal) {
+    recentCrashes.set(id, { title, dir })
+    crashNotifier?.({ title, dir })
+  }
+}
+
+/** 查询最近崩溃记录；消费后清除，避免重复通知。 */
+export function consumeRecentCrash(): CrashRecord | null {
+  const it = recentCrashes.entries().next()
+  if (it.done) return null
+  const [id, rec] = it.value
+  recentCrashes.delete(id)
+  return rec
+}
+
 export function handleLaunch(id: string): { ok: boolean; error?: string } {
   const g = getGame(id)
   if (!g) return { ok: false, error: '游戏不在库中' }
   if (!existsSync(g.exePath)) return { ok: false, error: '启动文件不存在：' + g.exePath }
-  if (runningProc.has(id)) return { ok: false, error: '游戏已在运行' }
+  // 重复启动防护（G10）：同一游戏已在运行时明确拒绝，并说明原因
+  if (runningProc.has(id)) {
+    return { ok: false, error: `${g.title} 已在运行中（想再开一份请先关掉当前窗口，或用「打开目录」手动启动）` }
+  }
 
   // .lnk 不是可执行映像，CreateProcess 会以异步 error 事件炸出来；
   // 快捷方式交给系统壳打开（代价：这条不计游玩时长）
@@ -136,7 +191,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
       runningProc.delete(id)
       runningSince.delete(id)
     })
-    proc.on('exit', () => {
+    proc.on('exit', (code, signal) => {
       const since = runningSince.get(id)
       if (since !== undefined) {
         const now = Date.now()
@@ -144,6 +199,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
         updateGame(id, { playMs: g.playMs + ms })
         recordSession(id, g.title, since, now)
       }
+      recordExit(id, g.title, g.dir, code, signal)
       runningProc.delete(id)
       runningSince.delete(id)
     })

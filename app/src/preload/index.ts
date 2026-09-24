@@ -25,6 +25,9 @@ const bridge = {
   removeGame: (id: string) => ipcRenderer.invoke(Ipc.GameRemove, id),
   batchUpdateGames: (entries: { id: string; patch: Partial<Game> }[]) => ipcRenderer.invoke(Ipc.GameBatchUpdate, entries),
   batchRemoveGames: (ids: string[]) => ipcRenderer.invoke(Ipc.GameBatchRemove, ids),
+  steamScan: (): Promise<import('../shared/types').SteamCandidate[]> => ipcRenderer.invoke(Ipc.SteamScan),
+  steamImport: (entries: { dir: string; exePath: string; rawTitle: string; appid?: string }[]): Promise<import('../shared/types').SteamImportResult> =>
+    ipcRenderer.invoke(Ipc.SteamImport, entries),
 
   // 元数据刮削
   scrapeSearch: (title: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title),

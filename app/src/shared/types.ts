@@ -10,6 +10,20 @@ export interface GameSource {
   provider: string
 }
 
+/** Steam 库候选（G4 平台导入）：扫描结果里的可导入项 */
+export interface SteamCandidate {
+  dir: string
+  exePath: string
+  rawTitle: string
+  appid?: string
+}
+
+/** Steam 导入结果：入库了多少、跳过多少（已存在/无启动项） */
+export interface SteamImportResult {
+  added: number
+  skipped: number
+}
+
 /** 一次游玩会话（启动 → 退出）。统计页按它聚合日/周/月时长。 */
 export interface PlaySession {
   gameId: string

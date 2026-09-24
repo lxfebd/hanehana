@@ -16,6 +16,8 @@ export const ui = reactive({
   preset: 'sakura' as 'sakura' | 'starnight' | 'mint',
   /** 右侧详情面板收起（只留竖条，点竖条展开） */
   detailCollapsed: false,
+  /** Steam 导入对话框 */
+  steamImportOpen: false,
 })
 
 /** 把主进程 settings.json 里的深浅/套件应用到渲染层（启动校正 + 保存后同步） */

@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3 } from 'lucide-vue-next'
+import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2 } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -18,6 +18,7 @@ import GameSites from './components/GameSites.vue'
 import BatchEditOverlay from './components/BatchEditOverlay.vue'
 import EditDialog from './components/EditDialog.vue'
 import StatsView from './components/StatsView.vue'
+import SteamImportDialog from './components/SteamImportDialog.vue'
 
 const bootInfo = ref('')
 let unsubPushes: Array<() => void> = []
@@ -191,6 +192,10 @@ onUnmounted(() => {
               <ScanSearch :size="16" class="nav-ic" />
               <span>扫描导入</span>
             </button>
+            <button class="nav-item" @click="ui.steamImportOpen = true">
+              <Gamepad2 :size="16" class="nav-ic" />
+              <span>Steam 导入</span>
+            </button>
             <button class="nav-item" @click="openSettings()">
               <Settings :size="16" class="nav-ic" />
               <span>设置</span>
@@ -309,6 +314,7 @@ onUnmounted(() => {
         <ScanDialog v-model:open="library.scanOpen" />
         <ScrapeDialog v-model:open="library.scrapeOpen" />
         <EditDialog v-model:open="library.editOpen" />
+        <SteamImportDialog v-model:open="ui.steamImportOpen" />
 
         <Modal
           v-model:open="downloads.addDialogOpen"
