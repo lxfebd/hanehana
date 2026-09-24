@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass } from 'lucide-vue-next'
+import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, filteredGames, library, refreshGames, selectedGame, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -125,7 +125,7 @@ onUnmounted(() => {
       <div class="app-shell">
         <div class="app-bg" :style="{ backgroundImage: appBgImage }" aria-hidden="true"></div>
         <header class="titlebar">
-          <span class="logo">羽花 HaneHana</span>
+          <span class="logo"><Flower2 :size="15" class="logo-ic" />羽花 HaneHana</span>
           <span class="no-drag tag">{{ bootInfo }}</span>
           <div class="titlebar-right no-drag"></div>
         </header>
@@ -302,9 +302,9 @@ onUnmounted(() => {
   z-index: 0;
   background-size: cover;
   background-position: center;
-  filter: blur(120px) saturate(1.7);
+  filter: blur(120px) saturate(1.8);
   transform: scale(1.12);
-  opacity: 0.8;
+  opacity: 0.86;
   pointer-events: none;
 }
 .app-bg::after {
@@ -320,7 +320,8 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-.logo { font-weight: 600; font-size: 14px; letter-spacing: 0.5px; }
+.logo { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; letter-spacing: 0.5px; }
+.logo-ic { color: var(--hh-color-accent); flex: none; }
 .tag { margin-left: 12px; font-size: 12px; opacity: 0.55; }
 .titlebar-right { flex: 1; }
 
