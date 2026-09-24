@@ -26,6 +26,8 @@ export const Ipc = {
   OpenDir: 'hanehana:games:openDir',
   // 原生目录选择对话框
   PickDir: 'hanehana:pickDir',
+  // 统计报表
+  StatsOverview: 'hanehana:stats:overview',
 
   // ---- 下载引擎（Rust fastdrop-engine 迁移）----
   TasksList: 'hanehana:tasks:list',

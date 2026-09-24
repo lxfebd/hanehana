@@ -8,7 +8,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
-import type { ErrorParams, Settings, TaskDef, TaskState, ThemeMode, ThemePresetId } from '../shared/types'
+import type { ErrorParams, PlaySession, Settings, TaskDef, TaskState, ThemeMode, ThemePresetId } from '../shared/types'
 import { DEFAULT_SETTINGS, THEME_MODES, THEME_PRESETS } from '../shared/types'
 
 const TASK_STATES: readonly string[] = [
@@ -53,6 +53,10 @@ function taskFile(): string {
 
 function settingsFile(): string {
   return join(dataDir(), 'settings.json')
+}
+
+function playSessionsFile(): string {
+  return join(dataDir(), 'play-sessions.json')
 }
 
 /**
@@ -180,6 +184,41 @@ export class Store {
 
   saveSettings(s: Settings): void {
     writeJsonAtomic(settingsFile(), normalizeSettings(s))
+  }
+
+  // ---------------------------------------------------------------- 游玩会话
+  // 统计报表的数据源。只追加不删改：每场会话一条，重放即可聚合。
+  loadPlaySessions(): PlaySession[] {
+    const data = readJson(playSessionsFile())
+    if (!Array.isArray(data)) return []
+    const out: PlaySession[] = []
+    for (const item of data) {
+      const d = item as Partial<PlaySession>
+      if (
+        d &&
+        typeof d.gameId === 'string' && d.gameId &&
+        typeof d.start === 'number' && Number.isFinite(d.start) &&
+        typeof d.end === 'number' && Number.isFinite(d.end) &&
+        typeof d.ms === 'number' && Number.isFinite(d.ms)
+      ) {
+        out.push({
+          gameId: d.gameId,
+          title: typeof d.title === 'string' ? d.title : '',
+          start: d.start,
+          end: d.end,
+          ms: d.ms,
+        })
+      }
+    }
+    return out
+  }
+
+  appendPlaySessions(sessions: PlaySession[]): void {
+    if (!sessions.length) return
+    const all = [...this.loadPlaySessions(), ...sessions]
+    // 只保留最近 2 年：统计页只需日/周/月粒度，无上限增长没有意义
+    const cutoff = Date.now() - 730 * 86400000
+    writeJsonAtomic(playSessionsFile(), all.filter((s) => s.end >= cutoff))
   }
 }
 

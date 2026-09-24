@@ -11,7 +11,7 @@ import { basename } from 'node:path'
 import { shell } from 'electron'
 import { addGames, getGame, getGames, removeGame, updateGame } from './gameStore'
 import { scanDir, isValidDir } from './scanner'
-import type { Game } from '../shared/types'
+import type { Game, PlaySession } from '../shared/types'
 
 export interface ScanResult {
   added: Game[]
@@ -84,6 +84,19 @@ const runningProc = new Map<string, ReturnType<typeof spawn>>()
 /** 每次全库查询时把运行中的 id 并进去（真实来源是 runningProc） */
 const runningSince = new Map<string, number>()
 
+/** 游玩会话记录器（由 index.ts 注入，避免 games.ts 直接依赖 Store） */
+let sessionSink: ((sessions: PlaySession[]) => void) | null = null
+export function setSessionSink(sink: (sessions: PlaySession[]) => void): void {
+  sessionSink = sink
+}
+
+/** 游戏退出时落一条会话记录（供统计报表聚合）。 */
+function recordSession(id: string, title: string, start: number, end: number): void {
+  const ms = end - start
+  if (ms < 1000) return
+  sessionSink?.([{ gameId: id, title, start, end, ms }])
+}
+
 export function handleLaunch(id: string): { ok: boolean; error?: string } {
   const g = getGame(id)
   if (!g) return { ok: false, error: '游戏不在库中' }
@@ -126,8 +139,10 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     proc.on('exit', () => {
       const since = runningSince.get(id)
       if (since !== undefined) {
-        const ms = Date.now() - since
+        const now = Date.now()
+        const ms = now - since
         updateGame(id, { playMs: g.playMs + ms })
+        recordSession(id, g.title, since, now)
       }
       runningProc.delete(id)
       runningSince.delete(id)

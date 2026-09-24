@@ -9,7 +9,7 @@ import { reactive } from 'vue'
 import { setTheme } from '../design/tokens'
 
 export const ui = reactive({
-  page: 'library' as 'library' | 'downloads' | 'games',
+  page: 'library' as 'library' | 'downloads' | 'games' | 'stats',
   settingsOpen: false,
   dark: true,
   /** 主题套件 id（settings.theme_preset） */

@@ -10,6 +10,54 @@ export interface GameSource {
   provider: string
 }
 
+/** 一次游玩会话（启动 → 退出）。统计页按它聚合日/周/月时长。 */
+export interface PlaySession {
+  gameId: string
+  /** 标题快照：游戏改名/移除后统计仍可读 */
+  title: string
+  /** 会话开始（epoch ms） */
+  start: number
+  /** 会话结束（epoch ms） */
+  end: number
+  /** 会话时长 ms */
+  ms: number
+}
+
+// ---------------------------------------------------------------- 统计报表（G5）
+
+export interface DayStat {
+  /** yyyy-mm-dd */
+  date: string
+  ms: number
+  /** 该日玩过的游戏数 */
+  games: number
+}
+
+export interface GameStat {
+  gameId: string
+  title: string
+  ms: number
+  sessions: number
+  lastPlayed?: number
+}
+
+export interface OverviewStats {
+  /** 近 30 天总时长（ms） */
+  monthMs: number
+  /** 近 7 天总时长（ms） */
+  weekMs: number
+  /** 总时长（ms，含老库 playMs） */
+  totalMs: number
+  /** 玩过的游戏数 */
+  playedGames: number
+  /** 今日时长（ms） */
+  todayMs: number
+  /** 最近 30 天按日聚合（升序） */
+  days: DayStat[]
+  /** 按游戏聚合（近 90 天，降序） */
+  topGames: GameStat[]
+}
+
 export interface Game {
   /** 稳定 id，uuid */
   id: string

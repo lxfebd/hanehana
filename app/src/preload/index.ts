@@ -19,6 +19,7 @@ const bridge = {
 
   // 游戏库
   listGames: (): Promise<Game[]> => ipcRenderer.invoke(Ipc.GameList),
+  statsOverview: () => ipcRenderer.invoke(Ipc.StatsOverview),
   scanDir: (root: string) => ipcRenderer.invoke(Ipc.GameScan, root),
   updateGame: (id: string, patch: Partial<Game>) => ipcRenderer.invoke(Ipc.GameUpdate, id, patch),
   removeGame: (id: string) => ipcRenderer.invoke(Ipc.GameRemove, id),

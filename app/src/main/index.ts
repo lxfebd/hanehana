@@ -24,12 +24,13 @@ import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning } from './games'
+import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink } from './games'
 import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
 import { Manager } from './manager'
 import { normalizeSettings, Store, dataDir } from './store'
+import { computeOverview } from './stats'
 import { applyChromiumProxy } from './netConfig'
 import { proxyFormatError } from '../shared/proxy'
 import { TRAY_ICON_DATA_URL } from './trayIcon'
@@ -371,6 +372,8 @@ function wireIpc(): void {
 
   // 游戏库
   ipcMain.handle(Ipc.GameList, () => getGames())
+  // 统计报表：重放游玩会话聚合（量级小，无需缓存）
+  ipcMain.handle(Ipc.StatsOverview, () => computeOverview(getGames(), store.loadPlaySessions()))
   ipcMain.handle(Ipc.GameScan, (_e, root: unknown) => {
     if (typeof root !== 'string' || !root.trim() || root.length > 4000) {
       throw new Error('请先选择要扫描的目录')
@@ -632,6 +635,10 @@ if (gotSingleInstanceLock) {
       (tasks) => store.saveTasks(tasks),
       initialDefs,
     )
+    // 游玩会话记录：游戏退出时 store 追加一条（统计报表的数据源）
+    setSessionSink((sessions) => {
+      if (sessions.length) store.appendPlaySessions(sessions)
+    })
     // 代理必须在任何网络动作之前下发到 Chromium 侧（站点抓取层）。
     // 失败退回跟随系统代理：引擎侧会拿着同一份配置去下载，那时它会明确报错，
     // 不该让一个失效的代理地址把整个软件挡在启动门外。

@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare } from 'lucide-vue-next'
+import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3 } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -17,6 +17,7 @@ import SettingsDialog from './components/SettingsDialog.vue'
 import GameSites from './components/GameSites.vue'
 import BatchEditOverlay from './components/BatchEditOverlay.vue'
 import EditDialog from './components/EditDialog.vue'
+import StatsView from './components/StatsView.vue'
 
 const bootInfo = ref('')
 let unsubPushes: Array<() => void> = []
@@ -175,6 +176,15 @@ onUnmounted(() => {
               <Compass :size="16" class="nav-ic" />
               <span>游戏站</span>
             </button>
+            <button
+              class="nav-item"
+              :class="{ active: page === 'stats' }"
+              :aria-current="page === 'stats' ? 'page' : undefined"
+              @click="page = 'stats'"
+            >
+              <BarChart3 :size="16" class="nav-ic" />
+              <span>统计</span>
+            </button>
 
             <div class="nav-spacer"></div>
             <button class="nav-item" @click="library.scanOpen = true">
@@ -268,6 +278,10 @@ onUnmounted(() => {
 
             <template v-else-if="page === 'downloads'">
               <DownloadView />
+            </template>
+
+            <template v-else-if="page === 'stats'">
+              <StatsView />
             </template>
 
             <!-- 游戏站：v-if 首次进入才挂载，之后 v-show 保活（webview 的会话与已打开页面不销毁）。
