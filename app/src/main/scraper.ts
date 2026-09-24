@@ -43,12 +43,19 @@ interface VndbVN {
   description?: string
   image?: { url: string }
   tags?: { id: string; name: string }[]
+  /** VNDB v2 的 developers 是关联结构（开发厂商） */
+  developers?: { developer?: { name?: string } }[]
+  /** VNDB v2 的 relations 是关联结构（前作/续作/系列/外传） */
+  relations?: { relation?: string; vn?: { id?: string; title?: string } }[]
+  aliases?: { alias?: string }[]
+  /** VNDB v2 length_minutes 是可选数字 */
+  length_minutes?: number
 }
 
 async function searchVndb(title: string): Promise<ScrapeCandidate[]> {
   const body = {
     filters: ['search', '=', title],
-    fields: 'id,title,alttitle,released,rating,image.url,description,tags.name',
+    fields: 'id,title,alttitle,released,rating,image.url,description,tags.name,developers.developer.name,relations.relation,relations.vn.title,aliases.alias,length_minutes',
     sort: 'id',
     page: 1,
     results: 8,
@@ -67,6 +74,14 @@ async function searchVndb(title: string): Promise<ScrapeCandidate[]> {
     rating: v.rating ? v.rating / 10 : undefined,
     coverUrl: v.image?.url,
     tags: (v.tags ?? []).slice(0, 12).map((t) => t.name),
+    developer: v.developers?.find((d) => d.developer?.name)?.developer?.name,
+    series: (v.relations ?? [])
+      .filter((r) => r.relation === 'seq' || r.relation === 'series' || r.relation === 'side story' || r.relation === 'fan disc')
+      .map((r) => r.vn?.title)
+      .filter((t): t is string => !!t)
+      .slice(0, 8),
+    aliases: (v.aliases ?? []).map((a) => a.alias).filter((a): a is string => !!a).slice(0, 12),
+    lengthMinutes: v.length_minutes,
   }))
 }
 
@@ -80,6 +95,8 @@ interface BgmSubject {
   summary?: string
   rating?: { score: number }
   images?: { large?: string; medium?: string; small?: string }
+  /** Bangumi 制作方（发行/制作公司） */
+  producers?: { id?: number; name?: string }[]
 }
 
 async function searchBangumi(title: string): Promise<ScrapeCandidate[]> {
@@ -96,6 +113,8 @@ async function searchBangumi(title: string): Promise<ScrapeCandidate[]> {
     releaseDate: s.date,
     rating: s.rating?.score,
     coverUrl: s.images?.large ?? s.images?.medium,
+    developer: (s.producers ?? []).find((p) => p?.name)?.name,
+    lengthMinutes: undefined,
   }))
 }
 
@@ -201,6 +220,17 @@ export function sanitizeScrapeResult(raw: unknown): ScrapeResult | null {
   if (Array.isArray(d.tags)) {
     out.tags = d.tags.filter((t): t is string => typeof t === 'string').slice(0, 64).map((t) => t.slice(0, 64))
   }
+  const developer = str(d.developer, 200)
+  if (developer) out.developer = developer
+  if (Array.isArray(d.series)) {
+    out.series = d.series.filter((t): t is string => typeof t === 'string').slice(0, 16).map((t) => t.slice(0, 200))
+  }
+  if (Array.isArray(d.aliases)) {
+    out.aliases = d.aliases.filter((t): t is string => typeof t === 'string').slice(0, 32).map((t) => t.slice(0, 200))
+  }
+  if (typeof d.lengthMinutes === 'number' && Number.isFinite(d.lengthMinutes)) {
+    out.lengthMinutes = Math.min(100000, Math.max(0, Math.floor(d.lengthMinutes)))
+  }
   const coverUrl = str(d.coverUrl, 2000)
   if (coverUrl) {
     // 不在白名单里就当没有封面：元数据其余部分照旧写入，而不是整条失败。
@@ -237,6 +267,10 @@ export async function applyScrape(gameId: string, raw: unknown): Promise<{ ok: b
       coverPath,
       color: coverPath ? coverColorOf(coverPath) : undefined,
       tags: [...tagSet],
+      developer: manual && g.developer ? g.developer : r.developer,
+      series: manual && g.series ? g.series : r.series,
+      aliases: manual && g.aliases ? g.aliases : r.aliases,
+      lengthMinutes: manual && g.lengthMinutes ? g.lengthMinutes : r.lengthMinutes,
       sources: [...(g.sources ?? []).filter((s) => s.provider !== r.provider), { provider: r.provider, id: r.id }],
     })
     // 封面换了就同步生成缩略图（失败不致命，UI 走占位色）

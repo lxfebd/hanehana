@@ -149,6 +149,10 @@ const PATCHABLE: readonly (keyof Game)[] = [
   'thumbSrc',
   'favorite',
   'manualEdit',
+  'developer',
+  'series',
+  'aliases',
+  'lengthMinutes',
 ]
 
 /**
@@ -176,12 +180,17 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
         if (typeof v === 'number' && Number.isFinite(v)) out.rating = Math.min(10, Math.max(0, v))
         break
       case 'tags':
-      case 'categories': {
+      case 'categories':
+      case 'series':
+      case 'aliases': {
         if (!Array.isArray(v)) break
         const list = v.filter((x): x is string => typeof x === 'string').map((x) => x.slice(0, 64))
         out[key] = list.slice(0, 200)
         break
       }
+      case 'lengthMinutes':
+        if (typeof v === 'number' && Number.isFinite(v)) out.lengthMinutes = Math.min(100000, Math.max(0, Math.floor(v)))
+        break
       case 'coverPath':
       case 'thumbPath':
       case 'thumbSrc':

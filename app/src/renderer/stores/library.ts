@@ -18,6 +18,9 @@ export const library = reactive({
   favOnly: false,
   /** 智能列表（预设动态筛选），'' = 不启用 */
   smartList: '' as SmartListId,
+  /** 元数据聚合筛选（G12）：点开系列/开发商后只看同系列/同开发商，'' = 关闭 */
+  metaKey: '' as 'series' | 'developer' | '',
+  metaValue: '',
   /** 批量选择集合（进入多选模式后收集） */
   selection: [] as string[],
   /** 多选模式开关 */
@@ -84,7 +87,7 @@ watch(
 )
 
 /** 索引随 games 数组更新；只在 refreshGames/applyScrapeResult 之后重算一次。 */
-const searchIndex = shallowRef<{ title: string; raw: string; native: string; tags: string }[]>([])
+const searchIndex = shallowRef<{ title: string; raw: string; native: string; tags: string; extra: string }[]>([])
 
 function rebuildIndex(): void {
   searchIndex.value = library.games.map((g) => ({
@@ -92,6 +95,7 @@ function rebuildIndex(): void {
     raw: g.rawTitle.toLowerCase(),
     native: (g.titleNative ?? '').toLowerCase(),
     tags: g.tags.join(' ').toLowerCase(),
+    extra: [g.developer, ...(g.series ?? []), ...(g.aliases ?? [])].filter(Boolean).join(' ').toLowerCase(),
   }))
 }
 
@@ -101,14 +105,20 @@ export const filteredGames = computed(() => {
   const cat = library.categoryFilter
   const fav = library.favOnly
   const smart = library.smartList
+  const meta = library.metaKey
+  const metaV = library.metaValue
   return library.games.filter((g, i) => {
     if (cat && !g.categories.includes(cat)) return false
     if (fav && !g.favorite) return false
     if (smart && !smartListTest(smart, g)) return false
+    if (meta) {
+      if (meta === 'series' && !(g.series ?? []).includes(metaV)) return false
+      if (meta === 'developer' && g.developer !== metaV) return false
+    }
     if (!kw) return true
     const s = idx[i]
     if (!s) return false
-    return s.title.includes(kw) || s.raw.includes(kw) || s.native.includes(kw) || s.tags.includes(kw)
+    return s.title.includes(kw) || s.raw.includes(kw) || s.native.includes(kw) || s.tags.includes(kw) || s.extra.includes(kw)
   })
 })
 
@@ -119,6 +129,12 @@ export const categories = computed(() => {
   for (const g of library.games) for (const c of g.categories) set.add(c)
   return [...set]
 })
+
+/** 点系列/开发商 chip：切到聚合视图 */
+export function filterByMeta(key: 'series' | 'developer', value: string): void {
+  library.metaKey = key
+  library.metaValue = value
+}
 
 export async function refreshGames(): Promise<void> {
   library.loading = true

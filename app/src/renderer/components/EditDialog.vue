@@ -19,6 +19,10 @@ const releaseDate = ref('')
 const rating = ref<number | undefined>(undefined)
 const tags = ref<string[]>([])
 const categories = ref<string[]>([])
+const developer = ref('')
+const series = ref<string[]>([])
+const aliases = ref<string[]>([])
+const lengthMinutes = ref<number | undefined>(undefined)
 
 const target = ref<Game | null>(null)
 
@@ -33,6 +37,10 @@ watch(open, (v) => {
   rating.value = target.value.rating ?? undefined
   tags.value = [...target.value.tags]
   categories.value = [...target.value.categories]
+  developer.value = target.value.developer ?? ''
+  series.value = [...(target.value.series ?? [])]
+  aliases.value = [...(target.value.aliases ?? [])]
+  lengthMinutes.value = target.value.lengthMinutes ?? undefined
 })
 
 async function save(): Promise<void> {
@@ -46,6 +54,10 @@ async function save(): Promise<void> {
     rating: rating.value ?? undefined,
     tags: tags.value.map((t) => t.trim()).filter(Boolean),
     categories: categories.value.map((c) => c.trim()).filter(Boolean),
+    developer: developer.value.trim(),
+    series: series.value.map((t) => t.trim()).filter(Boolean),
+    aliases: aliases.value.map((t) => t.trim()).filter(Boolean),
+    lengthMinutes: lengthMinutes.value ?? undefined,
   }
   const ok = await saveManualEdit(g.id, patch)
   if (ok) open.value = false
@@ -68,8 +80,26 @@ async function save(): Promise<void> {
         <Input v-model:value="releaseDate" placeholder="yyyy-mm-dd（可选）" />
       </label>
       <label class="field">
-        <span class="label">评分</span>
-        <InputNumber v-model:value="rating" :min="0" :max="10" :step="0.1" :precision="1" style="width: 120px" />
+        <span class="label">开发商</span>
+        <Input v-model:value="developer" placeholder="开发/制作公司（可选）" />
+      </label>
+      <div class="field-row">
+        <label class="field">
+          <span class="label">评分</span>
+          <InputNumber v-model:value="rating" :min="0" :max="10" :step="0.1" :precision="1" style="width: 120px" />
+        </label>
+        <label class="field">
+          <span class="label">通关时长（分钟）</span>
+          <InputNumber v-model:value="lengthMinutes" :min="0" :max="100000" :step="30" style="width: 140px" />
+        </label>
+      </div>
+      <label class="field">
+        <span class="label">系列</span>
+        <Select v-model:value="series" mode="tags" placeholder="所属系列（可选）" :open="false" />
+      </label>
+      <label class="field">
+        <span class="label">别名</span>
+        <Select v-model:value="aliases" mode="tags" placeholder="别名（可选）" :open="false" />
       </label>
       <label class="field">
         <span class="label">标签</span>
@@ -102,6 +132,13 @@ async function save(): Promise<void> {
   display: flex;
   flex-direction: column;
   gap: 6px;
+}
+.field-row {
+  display: flex;
+  gap: 16px;
+}
+.field-row .field {
+  flex: 1;
 }
 .label {
   font-size: 12.5px;

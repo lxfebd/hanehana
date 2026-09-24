@@ -23,7 +23,7 @@ import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Check, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
-import { library, selectGame, thumbUrl, toggleSelect } from '../stores/library'
+import { library, selectGame, thumbUrl, toggleSelect, debouncedKeyword } from '../stores/library'
 import { tokens } from '../design/tokens'
 
 const props = defineProps<{
@@ -63,6 +63,14 @@ onBeforeUnmount(() => {
   ro?.disconnect()
   ro = null
 })
+
+/** 筛选指纹：搜索词/分类/收藏/智能列表/元数据聚合任一变化都重建 scroller
+ *  （RecycleScroller 在 items 数量突变后会复用旧行，必须换 key 强制重建）。
+ *  搜索词必须用防抖后的值：用实时 keyword 的话，120ms 防抖窗口内先按旧结果
+ *  重建一次，随后 debouncedKeyword 更新但指纹不变，scroller 不会重建，残留旧行。 */
+const filterFingerprint = computed(
+  () => `${debouncedKeyword.value}|${library.categoryFilter}|${library.favOnly}|${library.smartList}|${library.metaKey}:${library.metaValue}`,
+)
 
 /** 网格 wrapper 宽度 = cols*200 - 16，居中留白 */
 const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
@@ -180,7 +188,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
         窗口缩放会留下旧列数时的横向残留 transform，直接溢出容器） -->
     <RecycleScroller
       v-else-if="view === 'grid'"
-      :key="`grid-${cols}`"
+      :key="`grid-${cols}-${filterFingerprint}`"
       class="scroller"
       :items="gridRows"
       :item-size="332"

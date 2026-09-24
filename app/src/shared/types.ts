@@ -91,6 +91,14 @@ export interface Game {
   categories: string[]
   /** 元数据来源引用 */
   sources: GameSource[]
+  /** 开发商 */
+  developer?: string
+  /** 系列名列表（VNDB relations 系列/前作/续作） */
+  series?: string[]
+  /** 别名 */
+  aliases?: string[]
+  /** 平均通关时长（分钟，VNDB length_minutes） */
+  lengthMinutes?: number
   /** 累计游玩毫秒 */
   playMs: number
   /** 最后游玩时间（epoch ms） */
@@ -118,6 +126,14 @@ export interface ScrapeResult {
   coverUrl?: string
   coverLocalPath?: string
   tags?: string[]
+  /** 开发商 */
+  developer?: string
+  /** 系列名列表 */
+  series?: string[]
+  /** 别名 */
+  aliases?: string[]
+  /** 平均通关时长（分钟） */
+  lengthMinutes?: number
 }
 
 export interface ScrapeCandidate {
@@ -130,6 +146,14 @@ export interface ScrapeCandidate {
   rating?: number
   coverUrl?: string
   tags?: string[]
+  /** 开发商 */
+  developer?: string
+  /** 系列名列表 */
+  series?: string[]
+  /** 别名 */
+  aliases?: string[]
+  /** 平均通关时长（分钟） */
+  lengthMinutes?: number
 }
 
 /**

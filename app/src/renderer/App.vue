@@ -248,6 +248,9 @@ onUnmounted(() => {
                 ><CheckSquare :size="15" /></button>
 
                 <div class="toolbar-count">{{ filteredCount }} 款</div>
+                <button v-if="library.metaKey" class="meta-chip" @click="library.metaKey = ''; library.metaValue = ''" :title="'清除筛选'">
+                  <X :size="12" /> {{ library.metaKey === 'series' ? '系列：' : '开发商：' }}{{ library.metaValue }}
+                </button>
 
                 <div class="segmented">
                   <button
@@ -579,6 +582,24 @@ onUnmounted(() => {
   background: var(--hh-color-select-bg);
   color: var(--hh-color-select-text);
 }
+
+/* 元数据聚合筛选提示条（G12）：激活时显示，一键清除 */
+.meta-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 999px;
+  border: 1px solid var(--hh-color-accent-ring);
+  background: var(--hh-color-accent-soft);
+  color: var(--hh-color-accent-text);
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s;
+}
+.meta-chip:hover { background: var(--hh-color-accent-chip-bg); }
 
 /* 视图 segmented：pill 容器 card 底 */
 .segmented {

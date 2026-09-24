@@ -9,7 +9,7 @@
  */
 import { computed, ref } from 'vue'
 import { Activity, Flower2, FolderOpen, Heart, PanelRightClose, Pencil, Play, Star, Wand2 } from 'lucide-vue-next'
-import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, thumbUrl, toggleFavorite } from '../stores/library'
+import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, thumbUrl, toggleFavorite, filterByMeta } from '../stores/library'
 import { tokens } from '../design/tokens'
 
 const emit = defineEmits<{ collapse: [] }>()
@@ -35,6 +35,16 @@ function fmtDate(ts?: number): string {
   if (!ts) return '—'
   return new Date(ts).toLocaleDateString('zh-CN')
 }
+
+/** 平均通关时长：分钟 → 可读文本（VNDB length_minutes） */
+const lengthText = computed(() => {
+  const m = g.value?.lengthMinutes
+  if (!m || m <= 0) return ''
+  if (m < 60) return `${m} 分钟`
+  const h = Math.floor(m / 60)
+  const rem = m % 60
+  return rem > 0 ? `${h} 小时 ${rem} 分钟` : `${h} 小时`
+})
 
 /** 横幅背景：thumb 预模糊位图（有 thumb 时），无则主色渐变兜底 */
 function bannerImg(): string {
@@ -156,9 +166,34 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
       <!-- 元数据两栏 -->
       <div class="meta">
         <div class="meta-row"><span class="meta-key">游玩时长</span><span class="meta-val">{{ fmtPlay(g.playMs) }}</span></div>
+        <div class="meta-row" v-if="lengthText"><span class="meta-key">通关时长</span><span class="meta-val">{{ lengthText }}</span></div>
         <div class="meta-row"><span class="meta-key">上次游玩</span><span class="meta-val">{{ fmtDate(g.lastPlayed) }}</span></div>
+        <div class="meta-row" v-if="g.developer">
+          <span class="meta-key">开发商</span>
+          <a class="meta-val link" :title="'看同开发商'" @click="filterByMeta('developer', g.developer as string)">{{ g.developer }}</a>
+        </div>
         <div class="meta-row"><span class="meta-key">游戏目录</span><a class="meta-val link" @click="openDir">{{ g.dir.split(/[\\/]/).pop() }}</a></div>
         <div class="meta-row" v-if="g.sources.length"><span class="meta-key">数据来源</span><span class="meta-val">{{ g.sources.map((s) => s.provider).join(' / ') }}</span></div>
+      </div>
+
+      <!-- 系列 chips（series 关联：前作/续作/外传，点击聚合筛选同系列） -->
+      <div v-if="g.series?.length" class="series">
+        <span class="meta-key series-key">系列</span>
+        <div class="series-chips">
+          <button
+            v-for="s in g.series.slice(0, 6)"
+            :key="s"
+            class="series-chip"
+            :class="{ on: library.metaKey === 'series' && library.metaValue === s }"
+            :title="'看同系列'"
+            @click="filterByMeta('series', s)"
+          >{{ s }}</button>
+        </div>
+      </div>
+
+      <!-- 别名行 -->
+      <div v-if="g.aliases?.length" class="aliases">
+        <span class="meta-key">别名：</span><span class="aliases-text" :title="g.aliases.join('，')">{{ g.aliases.slice(0, 6).join('，') }}</span>
       </div>
 
       <!-- 标签 chips -->
@@ -387,6 +422,44 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   border-radius: 6px;
   background: var(--hh-color-accent-bg);
   color: var(--hh-color-accent-text);
+}
+/* ============ 系列（G12） ============ */
+.series { display: flex; flex-direction: column; gap: 5px; }
+.series-key { font-size: 12.5px; color: var(--hh-color-text-dim-strong); }
+.series-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.series-chip {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--hh-color-accent-bg);
+  color: var(--hh-color-accent-text);
+  opacity: 0.85;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.series-chip:hover {
+  opacity: 1;
+  background: var(--hh-color-accent-chip-bg);
+}
+.series-chip.on {
+  opacity: 1;
+  border-color: var(--hh-color-accent-ring);
+  color: var(--hh-color-accent);
+  font-weight: 600;
+}
+.aliases {
+  font-size: 11.5px;
+  color: var(--hh-color-text-dim);
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.aliases-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 /* ============ 分类 ============ */
 .cats { display: flex; gap: 6px; flex-wrap: wrap; }
