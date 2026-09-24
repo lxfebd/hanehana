@@ -7,9 +7,10 @@
 import { reactive } from 'vue'
 import { message } from 'ant-design-vue'
 import type { ActionResult, AddResult, Settings, TaskRow } from '../../shared/types'
+import type { SiteDownloadPush } from '../../shared/ipc'
 import type { TaskSort } from '../status'
 import { library } from './library'
-import { ui } from './ui'
+import { ui, applyDarkFromSettings } from './ui'
 
 export const downloads = reactive({
   rows: [] as TaskRow[],
@@ -86,6 +87,7 @@ export async function removeTask(id: string, deleteFiles: boolean): Promise<void
 
 export async function openSettings(): Promise<void> {
   downloads.settings = await window.hh.getSettings()
+  applyDarkFromSettings(downloads.settings.dark)
   ui.settingsOpen = true
 }
 
@@ -134,9 +136,37 @@ export function wireTaskPushes(): Array<() => void> {
 export async function initTasks(): Promise<Array<() => void>> {
   if (!window.hh?.listTasks) return []
   downloads.settings = await window.hh.getSettings()
+  applyDarkFromSettings(downloads.settings.dark)
   await refreshTasks()
   const unsubs = wireTaskPushes()
+  // 游戏站下载推送挂在这里而不是 GameSites 组件里：浏览器下载的「完成」
+  // 提示可能在用户切回下载页签之后才到，挂在组件上就等于把这条消息丢掉。
+  unsubs.push(window.hh.onSiteDownload((p) => void handleSiteDownload(p)))
   const timer = setInterval(refreshTasks, REFRESH_MS)
   unsubs.push(() => clearInterval(timer))
   return unsubs
+}
+
+/**
+ * 游戏站下载的三条去向，独立播报：
+ *   captured —— 公开直链，已交给邮箱引擎（建任务进下载列表）
+ *   browser  —— 需要浏览器会话，Chromium 正在用当前 Cookie 下载（引擎帮不上忙）
+ *   done     —— 上面第二条的收尾，告诉用户文件落在哪、成没成
+ */
+async function handleSiteDownload(p: SiteDownloadPush): Promise<void> {
+  if (p.kind === 'browser') {
+    message.info(`${p.filename} 需要浏览器会话，已用浏览器下载到 ${p.dest}`)
+    return
+  }
+  if (p.kind === 'done') {
+    if (p.ok) message.success(`${p.filename} 下载完成`)
+    else message.error(`${p.filename}：${p.error ?? '浏览器下载失败'}`)
+    return
+  }
+  try {
+    const r = await window.hh.sitesAddTask({ url: p.url, filename: p.filename })
+    report(r, `已添加到下载列表：${p.filename ?? ''}`)
+  } catch (e) {
+    reportRejection(e)
+  }
 }

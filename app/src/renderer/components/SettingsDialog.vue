@@ -217,9 +217,9 @@ function save(): void {
           <div class="row-between">
             <div>
               <div class="lbl">深色模式</div>
-              <div class="hint">深色是本应用的唯一主题（桌面 galgame 管理器惯例），此开关仅作展示。</div>
+              <div class="hint">深色（纯黑单色）/ 浅色（纯白极简）双主题，保存后立即生效。</div>
             </div>
-            <Switch v-model:checked="form.dark" disabled />
+            <Switch v-model:checked="form.dark" />
           </div>
         </div>
       </TabPane>
@@ -278,7 +278,8 @@ function save(): void {
     </Tabs>
 
     <div class="dlg-foot">
-      <Button type="primary" @click="save">保存</Button>
+      <Button type="primary" :disabled="!!proxyError" @click="save">保存</Button>
+      <span v-if="proxyError" class="save-hint">代理格式不正确，无法保存</span>
     </div>
   </div>
 </template>
@@ -323,6 +324,10 @@ function save(): void {
 .hint-err {
   display: block;
   color: var(--hh-color-error-danger);
+}
+.save-hint {
+  font-size: 12px;
+  color: var(--hh-color-error-text);
 }
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;

@@ -1,22 +1,23 @@
 /**
  * HaneHana 主进程入口。
  *
- * 职责：起窗口（Windows 11 Mica 毛玻璃 + 自定义标题栏）、管托盘、
+ * 职责：起窗口（不透明底 + 网页层毛玻璃 + 自定义标题栏）、管托盘、
  * 持有下载调度器（Manager）、把任务事件透传给渲染进程。
  * 渲染进程不直接接触 Node 和文件系统——一切经由 preload 的 contextBridge。
  *
- * 窗口材质设计（调研结论落地）：
- *   - Win11 22H2+：backgroundMaterial: 'mica'，窗口底色 #202020 带透明通道，
- *     Mica 透出壁纸采样。这是 Electron 官方 API，不引入第三方原生模块。
- *   - 更低版本：自动降级为纯色底（Mica 不生效时 backgroundColor 兜底）。
+ * 窗口材质设计（实测结论）：
+ *   - 窗口底色不透明（深 #0A0A0A / 浅 #F7F7F8）。不用 Mica：
+ *     透明底 + backgroundMaterial:'mica' 在真机会直接漏出身后窗口（Mica 只采样壁纸），
+ *     内容区无底时穿透，比纯色更糟。
+ *   - 圆角：Win11 DWM 对所有顶层窗口自动绘制，无需任何 API。
+ *   - 毛玻璃：全在网页层——.app-bg 动态模糊封面底 + 半透明面板 backdrop-filter。
  *   - 标题栏：titleBarStyle: 'hidden' + titleBarOverlay 保留系统三个按钮，
- *     渲染层用 app-region: drag 画自定义标题栏，Mica 延伸到顶无接缝。
+ *     渲染层用 app-region: drag 画自定义标题栏。
  */
-import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
+import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
 import { existsSync, statSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { release as osRelease } from 'node:os'
 import { Ipc } from '../shared/ipc'
 import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
@@ -33,6 +34,7 @@ import { applyChromiumProxy } from './netConfig'
 import { proxyFormatError } from '../shared/proxy'
 import { TRAY_ICON_DATA_URL } from './trayIcon'
 import { checkUpdate, initAutoUpdater, installUpdate, setUpdatePush, updateEnabled } from './updater'
+import { wireSites } from './sites/bridge'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const preloadPath = join(here, '../preload/index.cjs')
@@ -71,13 +73,6 @@ let trayTimer: ReturnType<typeof setInterval> | null = null
 let store: Store
 let manager: Manager
 
-/** Windows 11 22H2+ 才支持 Mica。用版本号粗略判断，低版本走纯色兜底。 */
-function supportsMica(): boolean {
-  const m = /Windows NT (\d+\.\d+)/.exec(osRelease())
-  const build = Number(osRelease().split('.')[2] ?? '0')
-  return m?.[1] === '10.0' && build >= 22621
-}
-
 function showWindow(): void {
   if (!win || win.isDestroyed()) {
     createWindow()
@@ -88,34 +83,47 @@ function showWindow(): void {
   win.focus()
 }
 
+function winBackground(dark: boolean): string {
+  // 窗口必须不透明：实测 #00000000 + Mica 在真机是"穿透"的——
+  // Mica 只采样壁纸、不模糊其后其它窗口，内容区无封面底时直接漏出桌面，
+  // 比纯色更糟。圆角由 Win11 DWM 对所有顶层窗口自动绘制，不依赖 Mica；
+  // "液态玻璃"改在网页层用「动态模糊封面底 + 半透明面板」实现，稳定可控。
+  return dark ? '#0A0A0A' : '#F7F7F8'
+}
+
+/** 渲染层设置里的 dark → 主进程窗口与原生控件主题同步 */
+function applyThemeToWindow(dark: boolean): void {
+  nativeTheme.themeSource = dark ? 'dark' : 'light'
+  if (win && !win.isDestroyed()) {
+    win.setBackgroundColor(winBackground(dark))
+    win.setTitleBarOverlay({ color: '#00000000', symbolColor: dark ? '#ffffff' : '#18181B', height: 40 })
+  }
+}
+
 function createWindow(): void {
+  const initialDark = store ? store.loadSettings().dark : true
   const winOpts: Electron.BrowserWindowConstructorOptions = {
     width: 1280,
     height: 800,
     minWidth: 960,
     minHeight: 600,
     show: false,
-    backgroundColor: '#202020',
+    backgroundColor: winBackground(initialDark),
     title: 'HaneHana · 羽花',
-    ...(supportsMica()
-      ? {
-          backgroundMaterial: 'mica',
-          titleBarStyle: 'hidden',
-          titleBarOverlay: { color: '#00000000', symbolColor: '#ffffff', height: 40 },
-        }
-      : {
-          titleBarStyle: 'hidden',
-          titleBarOverlay: { color: '#00000000', symbolColor: '#ffffff', height: 40 },
-        }),
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#00000000', symbolColor: initialDark ? '#ffffff' : '#18181B', height: 40 },
     webPreferences: {
       preload: preloadPath,
       sandbox: true,
       contextIsolation: true,
       nodeIntegration: false,
+      // 游戏站页签的内嵌浏览器（OOPIF，自带独立会话）
+      webviewTag: true,
     },
   }
 
   win = new BrowserWindow(winOpts)
+  nativeTheme.themeSource = initialDark ? 'dark' : 'light'
 
   win.on('ready-to-show', () => {
     win?.show()
@@ -483,6 +491,8 @@ function wireIpc(): void {
     }
     s.saveSettings(saved)
     m.applySettings(saved)
+    // 深浅主题：主进程窗口底色/标题栏/原生控件跟随设置落盘值。
+    applyThemeToWindow(saved.dark)
     // 防休眠开关改了要立刻生效，不能等下一秒的定时器——用户可能正把最后一个
     // 任务勾上，然后就走开了。
     syncKeepAwake()
@@ -565,6 +575,13 @@ if (gotSingleInstanceLock) {
     // 终态 → 系统通知 + 任务栏闪动。挂在主进程而不是渲染层：窗口收进托盘时
     // 渲染层随时可能被丢弃，通知不能依赖它还活着。
     manager.onTerminal = notifyTerminal
+    // 游戏站：IPC + 捕获桥。依赖 Manager.add、当前设置（下载目录/线程数）
+    wireSites({
+      getWindow: () => win,
+      addTask: (input) => manager.add(input),
+      getDownloadDir: () => store.loadSettings().download_dir,
+      getThreads: () => store.loadSettings().threads,
+    })
     wireIpc()
     createWindow()
     createTray()

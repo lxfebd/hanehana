@@ -161,8 +161,8 @@ const chipTone = computed(() => {
       </span>
     </span>
 
-    <!-- 进度条：行底绝对定位 3px -->
-    <div class="prog">
+    <!-- 进度条：行底绝对定位 3px；done/error 终态进度无意义，轨道也不留（否则读成杂色边线） -->
+    <div v-if="state !== 'done' && state !== 'error'" class="prog">
       <div v-if="indeterminate" class="bar-fill indet" />
       <div
         v-else
@@ -204,7 +204,7 @@ const chipTone = computed(() => {
   align-items: center;
   gap: 12px;
   height: 64px;
-  padding: 0 16px 0 12px;
+  padding: 0 16px;
   border-radius: 12px;
   margin-bottom: 8px;
   background: var(--hh-color-card);
@@ -224,12 +224,14 @@ const chipTone = computed(() => {
   border-color: var(--hh-color-accent-selected-border);
 }
 
-/* 状态色点：左缘 4px 竖条 */
+/* 状态色点：贴卡片左缘的 4px 竖条（absolute 脱离 flex 流，随 12px 圆角裁切）。
+   此前作为 flex 子项排在 padding-left 内，缩进 13px 且满高，浅色主题下读成脱卡的独立竖线。 */
 .dot {
-  flex: none;
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
   width: 4px;
-  align-self: stretch;
-  border-radius: 2px;
   opacity: 0.85;
 }
 .task-row.downloading .dot {
@@ -321,7 +323,7 @@ const chipTone = computed(() => {
 /* 进度条：absolute 行底 */
 .prog {
   position: absolute;
-  left: 12px; right: 12px; bottom: 0;
+  left: 16px; right: 16px; bottom: 0;
   height: 3px;
   border-radius: 2px;
   overflow: hidden;
@@ -371,13 +373,13 @@ const chipTone = computed(() => {
   opacity: 1;
 }
 .ibtn {
-  width: 26px;
-  height: 26px;
+  width: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: var(--hh-color-text-mid);
   cursor: pointer;

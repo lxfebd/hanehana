@@ -8,14 +8,21 @@
  *   - 标签 chips（accentBg 底）；分类 toggle chips；简介 6 行 clamp + 展开/收起
  */
 import { computed, ref } from 'vue'
-import { Activity, Flower2, FolderOpen, Play, Star, Wand2 } from 'lucide-vue-next'
+import { Activity, Flower2, FolderOpen, PanelRightClose, Play, Star, Wand2 } from 'lucide-vue-next'
 import { launchGame, library, openScrape, refreshGames, selectedGame, thumbUrl } from '../stores/library'
 import { tokens } from '../design/tokens'
 
+const emit = defineEmits<{ collapse: [] }>()
 const g = computed(() => selectedGame.value)
 const descExpanded = ref(false)
-/** 评分星星色（真值 tokens） */
-const starColor = tokens.color.star
+/** 评分星星色（真值 tokens；reactive，切主题自动刷新） */
+const starColor = computed(() => tokens.color.star)
+
+/** 横幅/封面图加载失败：隐藏破图，露出占位字母与主色渐变底 */
+function imgErr(e: Event): void {
+  const img = e.target as HTMLImageElement
+  img.style.display = 'none'
+}
 
 function fmtPlay(ms: number): string {
   if (ms <= 0) return '—'
@@ -39,7 +46,8 @@ function bannerImg(): string {
 
 function bannerFallback(): string {
   const c = g.value?.color ?? tokens.color.coverFallback
-  // 无图横幅：主色径向光晕打底 + 暗色渐变收边，不再是单色空洞
+  // 无图横幅：主色径向光晕打底 + 暗色渐变收边，不再是单色空洞。
+  // 浅色主题下 coverFallback 是近白、渐变收边色也是浅的，光晕透明度低，不依赖主题态。
   return `radial-gradient(120% 90% at 15% 0%, ${c}55 0%, transparent 55%),
     radial-gradient(100% 80% at 85% 100%, ${c}44 0%, transparent 60%),
     linear-gradient(160deg, ${c}cc, ${c}22 60%, ${tokens.color.bannerBase} 100%)`
@@ -77,6 +85,14 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
 
 <template>
   <aside class="detail-panel glass">
+    <button
+      class="detail-collapse"
+      title="收起详情"
+      :aria-label="'收起详情'"
+      @click="emit('collapse')"
+    >
+      <PanelRightClose :size="14" />
+    </button>
     <!-- 未选中空态 -->
     <div v-if="!g" class="empty-state">
       <Flower2 :size="36" :stroke-width="1.5" class="empty-icon" />
@@ -100,7 +116,7 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
         <div class="banner-scrim"></div>
 
         <div class="banner-cover">
-          <img v-if="bannerImg()" :src="bannerImg()" class="banner-img" />
+          <img v-if="bannerImg()" :src="bannerImg()" class="banner-img" @error="imgErr" />
           <div v-else class="banner-letter">{{ g.title.slice(0, 1) }}</div>
         </div>
 
@@ -169,6 +185,29 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   flex-direction: column;
   gap: 12px;
 }
+.detail-collapse {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  align-self: flex-end;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 7px;
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-mid);
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+  margin-bottom: -40px;
+  flex: none;
+}
+.detail-collapse:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-glow);
+}
 
 .empty-state {
   flex: 1;
@@ -177,9 +216,9 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   align-items: center;
   justify-content: center;
   gap: 10px;
-  color: var(--hh-color-text-dim);
+  color: var(--hh-color-text-mid);
 }
-.empty-icon { color: var(--hh-color-text-dim); }
+.empty-icon { color: var(--hh-color-text-mid); }
 .empty-text { font-size: 13px; }
 
 /* ============ 横幅 180px ============ */
@@ -318,7 +357,6 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   background: var(--hh-color-accent-bg);
   color: var(--hh-color-accent-text);
 }
-
 /* ============ 分类 ============ */
 .cats { display: flex; gap: 6px; flex-wrap: wrap; }
 .cat-chip {

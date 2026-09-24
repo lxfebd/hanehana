@@ -81,7 +81,7 @@ cd app && npm run dist        # NSIS 安装包（--publish never，仅本地产�
 renderer (Vue3 + antd + token CSS) ──IPC──▶ main (Electron) ──stdio──▶ engine-rs (Rust 下载引擎，每任务一进程)
 ```
 
-数据目录：`~/.hanehana`（games.json / tasks.json / settings.json / covers / thumbs），可用 `HANEHANA_DATA_DIR` 覆盖。
+数据目录：`~/.hanehana`（games.json / tasks.json / settings.json / covers / thumbs），可用 `HANEHANA_DATA_DIR` 覆盖（测试与多开隔离用）。首启若检测到旧版 `%APPDATA%/hanehana` 游戏库会整体迁入；`HANEHANA_DATA_DIR` 指向隔离目录时不会迁移，避免本机旧库渗进测试 seed。
 
 ## 路线图
 

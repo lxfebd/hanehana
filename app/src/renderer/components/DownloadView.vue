@@ -206,8 +206,12 @@ function onAll(action: string): void {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 0;
+  padding: 8px 12px;
   flex-wrap: wrap;
+  border-radius: var(--hh-radius-md);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  backdrop-filter: blur(12px) saturate(1.3);
 }
 .seg-filter {
   display: flex;
@@ -235,7 +239,11 @@ function onAll(action: string): void {
   transition: background 0.15s ease, color 0.15s ease;
 }
 .seg-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
-.seg-chip.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
+.seg-chip.active {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
+}
 .seg-chip .cnt {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
@@ -288,15 +296,15 @@ function onAll(action: string): void {
 .dl-btn {
   width: 32px; height: 32px;
   border-radius: 9px;
-  border: 1px solid var(--hh-color-float-border);
-  background: var(--hh-color-panel-glass);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-bright);
   cursor: pointer;
   font-size: 14px;
   display: flex; align-items: center; justify-content: center;
   transition: all 0.15s;
 }
-.dl-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
+.dl-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-text-glow); }
 .dl-btn.primary {
   border: none;
   background-image: var(--hh-color-accent-grad);

@@ -36,8 +36,8 @@ const games = computed(() => props.games)
 const selected = computed(() => library.selectedId)
 /** 库里根本没有游戏（而非被筛选过滤光）——两种空态文案不同 */
 const filteredEmpty = computed(() => library.games.length === 0)
-/** 评分星星色（真值 tokens） */
-const starColor = tokens.color.star
+/** 评分星星色（真值 tokens；reactive，切主题自动刷新） */
+const starColor = computed(() => tokens.color.star)
 
 const containerRef = ref<HTMLElement | null>(null)
 const cols = ref(1)
@@ -67,7 +67,24 @@ onBeforeUnmount(() => {
 /** 网格 wrapper 宽度 = cols*200 - 16，居中留白 */
 const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
 
-/** 占位底色：优先封面主色，退回哈希调色板 */
+/** 按当前列数把游戏切分成多行（一行一个 RecycleScroller item）。
+ *   行 key 必须带上列数 c：窗口缩放列数变化时，同一行号的内容已完全不同，
+ *   不带 c 的话 RecycleScroller 按 key 复用旧行 DOM，残留上一档列数的卡片。 */
+const gridRows = computed(() => {
+  const c = cols.value
+  const rows: { k: string; games: Game[] }[] = []
+  for (let i = 0; i < games.value.length; i += c) {
+    rows.push({ k: `${c}-${Math.floor(i / c)}`, games: games.value.slice(i, i + c) })
+  }
+  return rows
+})
+
+/** 行内卡片要知道自己在全集里的 index（roving tabindex / 方向键） */
+function gIdx(id: string): number {
+  return games.value.findIndex((g) => g.id === id)
+}
+
+/** 占位底色：优先封面主色，退回哈希调色板（reactive，切主题自动刷新） */
 function placeholderBg(g: Game): string {
   if (g.color) return g.color
   const palette = tokens.color.palette
@@ -154,54 +171,61 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       <button class="empty-cta ghost" @click="library.keyword = ''; library.categoryFilter = ''">清除筛选</button>
     </div>
 
-    <!-- 网格视图：窗口化 + 居中留白 -->
+    <!-- 网格视图：行级窗口化 + 每行 flex 自己排列（grid 位置由 CSS 响应式驱动，
+        不依赖 RecycleScroller 的 grid 模式——它的 grid-items 变化后不刷新视图位置，
+        窗口缩放会留下旧列数时的横向残留 transform，直接溢出容器） -->
     <RecycleScroller
       v-else-if="view === 'grid'"
+      :key="`grid-${cols}`"
       class="scroller"
-      :items="games"
+      :items="gridRows"
       :item-size="332"
-      :grid-items="cols"
-      :item-secondary-size="200"
-      key-field="id"
+      key-field="k"
       :page-mode="false"
       :buffer="400"
-      item-class="grid-item-view"
-      list-class="grid-layer"
+      item-class="grid-row-item"
     >
-      <template #default="{ item, index }">
-        <div
-          class="cover-card"
-          :class="{ selected: selected === item.id }"
-          role="gridcell"
-          :tabindex="focusIdx === index ? 0 : -1"
-          @click="click(item, index)"
-          @keydown="onKeydown($event, index)"
-        >
-          <div class="cover-thumb" :style="{ background: placeholderBg(item) }">
-            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
-            <span v-else class="cover-letter">{{ item.title.slice(0, 2) }}</span>
+      <template #default="{ item }">
+        <div class="grid-row">
+          <div
+            v-for="g in item.games"
+            :key="g.id"
+            class="cover-card"
+            :class="{ selected: selected === g.id }"
+            role="gridcell"
+            :tabindex="focusIdx === gIdx(g.id) ? 0 : -1"
+            @click="click(g, gIdx(g.id))"
+            @keydown="onKeydown($event, gIdx(g.id))"
+          >
+            <div class="cover-thumb" :style="{ background: placeholderBg(g) }">
+              <img v-if="thumbUrl(g)" :src="thumbUrl(g)" loading="lazy" :alt="g.title" @error="imgErr" />
+              <span v-else class="cover-letter">{{ g.title.slice(0, 2) }}</span>
 
-            <div v-if="library.runningIds.has(item.id)" class="cover-running">
-              <Activity :size="10" :stroke-width="2.5" /> 运行中
+              <div v-if="library.runningIds.has(g.id)" class="cover-running">
+                <Activity :size="10" :stroke-width="2.5" /> 运行中
+              </div>
+
+              <!-- 压暗渐变只给真图用：占位色块上画只会糊出一团灰雾 -->
+              <div v-if="thumbUrl(g)" class="cover-shade"></div>
             </div>
-
-            <div class="cover-shade"></div>
-          </div>
-          <!-- 标题区 32px：标题 + 发行年/时长副行 -->
-          <div class="cover-titlezone">
-            <div class="cover-title" :title="item.title">{{ item.title }}</div>
-            <div class="cover-sub" v-if="fmtSub(item)">{{ fmtSub(item) }}</div>
+            <!-- 标题区 32px：标题 + 发行年/时长副行 -->
+            <div class="cover-titlezone">
+              <div class="cover-title" :title="g.title">{{ g.title }}</div>
+              <div class="cover-sub" v-if="fmtSub(g)">{{ fmtSub(g) }}</div>
+            </div>
           </div>
         </div>
       </template>
     </RecycleScroller>
 
-    <!-- 列表视图：单列窗口化 -->
+    <!-- 列表视图：单列窗口化。itemSize 80 = 行 72 + 上下 margin 4+4（8px 行距，与网格一致）；
+        RecycleScroller 按 itemSize 精确排位，item-view 内的 margin 不参与兄弟间距，
+        行距只能靠 itemSize 让步，否则行会紧贴。 -->
     <RecycleScroller
       v-else
       class="scroller"
       :items="games"
-      :item-size="72"
+      :item-size="80"
       key-field="id"
       :page-mode="false"
       :buffer="400"
@@ -299,16 +323,23 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 .empty-cta.ghost:hover { background: var(--hh-color-surface-mid); }
 
 /* ============ 网格 ============ */
-/* item-view 是绝对定位（transform），网格行内每项水平偏移由 ESM 计算。
-   居中：把「定位坐标系」（item-wrapper）收窄到实际内容宽再 margin auto。 */
-.grid-layer :deep(.vue-recycle-scroller__item-wrapper) {
+/* 行级虚拟化：scroller 只纵向窗口化行，行内 flex 自己排列。
+   卡片槽宽 200（184 封面 + 16 间距），行宽 = cols*200 - 16，margin auto 居中，
+   窗口缩放列数变化时行结构由 Vue 重建，不会残留旧位置。 */
+.grid-row {
+  display: flex;
+  gap: 16px;
   width: v-bind(gridWrapperW);
   margin: 0 auto;
+  padding: 8px 0 0;
+  box-sizing: border-box;
 }
-.grid-item-view {
-  display: inline-block;
+.grid-row-item {
+  display: block;
 }
 .cover-card {
+  flex: none;
+  width: 184px;
   cursor: pointer;
   border-radius: 12px;
   padding: 4px;
@@ -387,7 +418,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   border-radius: 12px;
   cursor: pointer;
   transition: background 0.15s ease;
-  margin: 2px 0;
+  margin: 4px 0;
   box-sizing: border-box;
 }
 .list-row:hover { background: var(--hh-color-surface-soft); }

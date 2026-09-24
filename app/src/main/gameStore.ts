@@ -9,30 +9,57 @@
  * 留下半个文件。单实例锁已保证同一时刻只有一个写入者。
  */
 import { app } from 'electron'
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import type { Game } from '../shared/types'
+import { dataDir as storeDataDir } from './store'
 
 /**
- * 游戏库数据目录：默认 userData（%APPDATA%/hanehana），
- * HANEHANA_DATA_DIR 仅测试隔离时覆盖。与任务/设置（~/.hanehana）分开是现状，
- * REDESIGN-SPEC §1 的诊断也以 games.json 在 %APPDATA%/hanehana 为前提。
+ * 游戏库数据目录：与任务/设置同一真值源（~/.hanehana），
+ * HANEHANA_DATA_DIR 仅测试隔离时覆盖。旧版本放在 %APPDATA%/hanehana，
+ * 见 migrateFromLegacyDir()。
  */
-export function gameDataDir(): string {
-  if (process.env.HANEHANA_DATA_DIR) return process.env.HANEHANA_DATA_DIR
-  return app.getPath('userData')
-}
-
-export const dataDir = gameDataDir()
+export const dataDir = storeDataDir()
 export const coversDir = join(dataDir, 'covers')
 export const thumbsDir = join(dataDir, 'thumbs')
 export const gamesPath = join(dataDir, 'games.json')
+
+/** 旧版游戏库目录：%APPDATA%/hanehana。首次启动时若有数据则整体搬入新目录。 */
+function legacyDir(): string {
+  return app.getPath('userData')
+}
+
+function migrateFromLegacyDir(): void {
+  const legacy = legacyDir()
+  // 迁移是一次性的「首启搬旧库」，且只在真实用户目录生效：
+  // - 目标已有数据（含 HANEHANA_DATA_DIR 隔离的测试 seed）绝不能被 legacy 覆盖；
+  // - HANEHANA_DATA_DIR 是测试/隔离通道，任何情况下都不得触发迁移，
+  //   否则本机旧库会悄悄渗进隔离目录，测试断言看到的不是 seed 而是旧数据。
+  if (process.env.HANEHANA_DATA_DIR || legacy === dataDir || !existsSync(join(legacy, 'games.json')) || existsSync(gamesPath)) {
+    return
+  }
+  console.log(`[hanehana] 检测到旧版游戏库目录 ${legacy}，迁移到 ${dataDir}`)
+  mkdirSync(dataDir, { recursive: true })
+  copyFileSync(join(legacy, 'games.json'), gamesPath)
+  for (const [src, dst] of [
+    [join(legacy, 'covers'), coversDir],
+    [join(legacy, 'thumbs'), thumbsDir],
+  ] as const) {
+    if (!existsSync(src)) continue
+    mkdirSync(dst, { recursive: true })
+    for (const f of readdirSync(src)) {
+      if (!existsSync(join(dst, f))) copyFileSync(join(src, f), join(dst, f))
+    }
+  }
+  // 迁移完成后旧目录原样保留（只读走，不删），用户可自行清理
+}
 
 let games: Game[] = []
 
 /** 启动时加载；文件不存在就是全新开始。 */
 export function loadGames(): Game[] {
   if (games.length > 0) return games
+  migrateFromLegacyDir()
   try {
     if (existsSync(gamesPath)) {
       games = JSON.parse(readFileSync(gamesPath, 'utf8')) as Game[]

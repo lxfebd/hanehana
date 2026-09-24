@@ -7,8 +7,14 @@ import type { ScrapeCandidate } from '../../shared/types'
 import { tokens } from '../design/tokens'
 
 const open = defineModel<boolean>('open')
-/** 刮削结果星色 = warning（bangumi 橙） */
-const starColor = tokens.color.warning
+/** 刮削结果星色 = warning（bangumi 橙；reactive，切主题自动刷新） */
+const starColor = computed(() => tokens.color.warning)
+
+/** 候选封面图加载失败：隐藏破图，露出占位字母 */
+function imgErr(e: Event): void {
+  const img = e.target as HTMLImageElement
+  img.style.display = 'none'
+}
 
 const query = ref('')
 const searching = ref(false)
@@ -75,7 +81,7 @@ async function apply(): Promise<void> {
           @click="pick(r)"
         >
           <div class="r-cover">
-            <img v-if="r.coverUrl" :src="r.coverUrl" loading="lazy" />
+            <img v-if="r.coverUrl" :src="r.coverUrl" loading="lazy" @error="imgErr" />
             <div v-else class="r-no-cover">{{ r.title.slice(0, 1) }}</div>
           </div>
           <div class="r-info">
@@ -161,10 +167,10 @@ async function apply(): Promise<void> {
 .r-native { font-size: 12px; color: var(--hh-color-text-soft); font-weight: 400; }
 .r-meta { display: flex; align-items: center; gap: 10px; margin: 5px 0; font-size: 12px; color: var(--hh-color-text-mid); }
 .r-badge {
-  font-size: 10px; text-transform: uppercase;
+  font-size: 11px; text-transform: uppercase;
   padding: 1px 7px; border-radius: 6px; font-weight: 600;
 }
-.r-badge.vndb { background: var(--hh-color-accent-bg); color: var(--hh-color-link); }
+.r-badge.vndb { background: var(--hh-color-select-bg); color: var(--hh-color-select-text); }
 .r-badge.bangumi { background: var(--hh-color-warning-soft-bg); color: var(--hh-color-warning); }
 .r-desc { font-size: 12px; color: var(--hh-color-text-muted); line-height: 1.5; }
 

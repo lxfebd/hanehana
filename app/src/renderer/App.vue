@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft } from 'lucide-vue-next'
+import { Download, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
-import { categories, filteredGames, library, refreshGames } from './stores/library'
+import { categories, filteredGames, library, refreshGames, selectedGame, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
-import { ui } from './stores/ui'
+import { ui, applyDarkFromSettings } from './stores/ui'
 import CoverGrid from './components/CoverGrid.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
@@ -14,18 +14,46 @@ import ScrapeDialog from './components/ScrapeDialog.vue'
 import DownloadView from './components/DownloadView.vue'
 import NewDownloadDialog from './components/NewDownloadDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
+import GameSites from './components/GameSites.vue'
 
 const bootInfo = ref('')
 let unsubPushes: Array<() => void> = []
+/** 窄窗口（<1100px）时详情面板宽度会把内容区挤没，自动收起 */
+let narrowMq: MediaQueryList | null = null
+let narrowMqFn: ((e: MediaQueryListEvent) => void) | null = null
 
 const filteredCount = computed(() => filteredGames.value.length)
 
-/** 当前页：library | downloads */
+/** 整窗动态底：选中游戏的封面铺满后重度模糊，玻璃面板浮在其上（Steam 式）。无选中时透明，露出系统 Mica。 */
+const appBgImage = computed(() => {
+  const g = selectedGame.value
+  if (!g) return ''
+  if (g.thumbPath) return `url("${thumbUrl(g)}")`
+  if (g.coverPath) return `url("file://${g.coverPath.replace(/\\/g, '/')}")`
+  return ''
+})
+
+/** 当前页：library | downloads | games */
 const page = computed({
   get: () => ui.page,
-  set: (v: 'library' | 'downloads') => (ui.page = v),
+  set: (v: 'library' | 'downloads' | 'games') => (ui.page = v),
 })
 const addSubmitKey = ref(0)
+
+/**
+ * 游戏站视图挂载过一次就留着（webview 的 src 一挂载就去加载站点首页，
+ * v-show 只藏不销毁：切走再切回来，搜索结果、已打开的页面和登录会话都得在）。
+ * 模板里 v-if 首次进入才挂载，之后 v-show 保活。
+ * watch immediate 是不把正确性押在「切到 games 一定发生在 App 挂载之后」这条时序上。
+ */
+const gamesMounted = ref(false)
+watch(
+  () => ui.page,
+  (p) => {
+    if (p === 'games') gamesMounted.value = true
+  },
+  { immediate: true },
+)
 
 /** 下载进行中数量（侧栏徽章） */
 const runningCount = computed(
@@ -48,6 +76,8 @@ async function saveSettings(s: unknown): Promise<void> {
       return
     }
     downloads.settings = r.settings
+    // 深浅主题设置落盘后的渲染层同步
+    applyDarkFromSettings(r.settings.dark)
     ui.settingsOpen = false
   } catch (e) {
     reportRejection(e)
@@ -61,7 +91,7 @@ onMounted(async () => {
       return
     }
     const info = await window.hh.hello()
-    bootInfo.value = `${info.name} v${info.version}`
+    bootInfo.value = `v${info.version}`
     await refreshGames()
     unsubPushes = await initTasks()
     library.error = ''
@@ -69,9 +99,22 @@ onMounted(async () => {
     const msg = e instanceof Error ? e.message : String(e ?? '')
     bootInfo.value = `连接主进程失败：${msg.trim() || '主进程未响应'}`
   }
+
+  // 窄窗口自动收起详情面板：360px 详情 + 208px 侧栏会把内容区挤没
+  if ('matchMedia' in window) {
+    narrowMq = window.matchMedia('(max-width: 1100px)')
+    narrowMqFn = (e: MediaQueryListEvent) => {
+      if (e.matches) ui.detailCollapsed = true
+    }
+    if (narrowMq.matches) ui.detailCollapsed = true
+    narrowMq.addEventListener('change', narrowMqFn)
+  }
 })
 
 onUnmounted(() => {
+  narrowMq?.removeEventListener('change', narrowMqFn as EventListener)
+  narrowMq = null
+  narrowMqFn = null
   for (const unsub of unsubPushes) unsub()
 })
 </script>
@@ -80,6 +123,7 @@ onUnmounted(() => {
   <ConfigProvider :locale="zhCN" :theme="antdTheme">
     <AntApp>
       <div class="app-shell">
+        <div class="app-bg" :style="{ backgroundImage: appBgImage }" aria-hidden="true"></div>
         <header class="titlebar">
           <span class="logo">羽花 HaneHana</span>
           <span class="no-drag tag">{{ bootInfo }}</span>
@@ -108,6 +152,15 @@ onUnmounted(() => {
               <Download :size="16" class="nav-ic" />
               <span>下载任务</span>
               <span class="count">{{ runningCount }}</span>
+            </button>
+            <button
+              class="nav-item"
+              :class="{ active: page === 'games' }"
+              :aria-current="page === 'games' ? 'page' : undefined"
+              @click="page = 'games'"
+            >
+              <Compass :size="16" class="nav-ic" />
+              <span>游戏站</span>
             </button>
 
             <div class="nav-spacer"></div>
@@ -176,7 +229,14 @@ onUnmounted(() => {
               </div>
             </template>
 
-            <DownloadView v-else />
+            <template v-else-if="page === 'downloads'">
+              <DownloadView />
+            </template>
+
+            <!-- 游戏站：v-if 首次进入才挂载，之后 v-show 保活（webview 的会话与已打开页面不销毁）。
+                 不能放进上面的 v-else 分支：v-if/v-else-if/v-else 链会让整个分支在别的页卸载，
+                 v-show 就没机会生效 —— 切走再切回，webview 会重新加载、搜索结果全丢。 -->
+            <GameSites v-if="gamesMounted" v-show="page === 'games'" />
           </main>
 
           <!-- 右侧详情面板：只在游戏库页显示。收起时留竖条，点击展开 -->
@@ -226,10 +286,38 @@ onUnmounted(() => {
 
 <style scoped>
 .app-shell {
+  position: relative;
   height: 100%;
   display: flex;
   flex-direction: column;
   color: var(--hh-color-text-glow);
+}
+
+/* 动态封面底：铺满 + 120px 模糊 + 提饱和，scale 收边防模糊晕白；
+   ::after 主题遮罩拉回对比度，文字才立得住。无图时整层透明，露出系统 Mica。
+   必须 fixed：absolute + scale 会撑破祖先 scrollWidth（溢出误报），fixed 不参与滚动区域。 */
+.app-bg {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-size: cover;
+  background-position: center;
+  filter: blur(120px) saturate(1.7);
+  transform: scale(1.12);
+  opacity: 0.8;
+  pointer-events: none;
+}
+.app-bg::after {
+  content: '';
+  position: absolute;
+  inset: -12%;
+  background: var(--hh-color-bg-scrim);
+}
+/* 标题栏与内容区抬到光晕底之上 */
+.app-shell > .titlebar,
+.app-shell > .layout {
+  position: relative;
+  z-index: 1;
 }
 
 .logo { font-weight: 600; font-size: 14px; letter-spacing: 0.5px; }
@@ -275,15 +363,14 @@ onUnmounted(() => {
 }
 .nav-item .nav-ic { flex: none; opacity: 0.8; }
 .nav-item:hover { background: var(--hh-color-surface-soft); color: var(--hh-color-text-glow); }
-.nav-item.active { background: var(--hh-color-accent-bg); color: var(--hh-color-accent-text); }
-.nav-item.active::before {
-  content: '';
-  position: absolute;
-  left: 0; top: 6px; bottom: 6px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--hh-color-accent);
+/* 选中态：白底胶囊 + 深色文字，图标随文字压暗。此前用 12% 白底 + 近白字，浅色主题下几乎看不见 */
+.nav-item.active {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
 }
+.nav-item.active .nav-ic { opacity: 1; color: var(--hh-color-select-icon); }
+/* 不再画左侧 2px 指示条：胶囊底色已表达选中，直线条压在圆角上反而读成脱出的杂线 */
 .nav-item .count {
   margin-left: auto;
   font-size: 11px;
@@ -292,26 +379,47 @@ onUnmounted(() => {
   border-radius: 10px;
   color: var(--hh-color-text-mid-high);
 }
-.nav-item.active .count { color: var(--hh-color-accent-text); }
+.nav-item.active .count {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+  opacity: 0.75;
+}
 .nav-spacer { flex: 1; }
+
+/* 极窄窗口：侧栏收成图标条（≤620px 时三列预算 208+12+12 也让内容区所剩无几）。
+   放在 .sidebar/.nav-item 定义之后，才能覆盖前面的 width:208px。 */
+@media (max-width: 620px) {
+  .sidebar { width: 56px; padding: 12px 8px; align-items: center; }
+  .nav-item { justify-content: center; padding: 0 6px; gap: 0; }
+  .nav-item span { display: none; }
+  .nav-item .count { display: flex; position: absolute; top: 3px; right: 2px; margin: 0; min-width: 16px; height: 16px; padding: 0 4px; align-items: center; justify-content: center; font-size: 9px; }
+}
 
 .content {
   flex: 1;
+  /* 三列布局中 content 是唯一可收缩的列；给个保底下限，
+     防止 flex 在极窄窗口把内容区压到 0 宽引发卡片横向溢出 */
+  min-width: 220px;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
 
-/* 工具栏：搜索 + 分类 chips + 计数 + segmented（§5.3） */
+/* 工具栏：搜索 + 分类 chips + 计数 + segmented（§5.3）。
+   整条工具条收进一个卡片容器，与左右玻璃面板同层级——此前元素裸浮在玻璃上，
+   与两侧面板断层，是"粗糙感"的主要来源之一。 */
 .toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 4px 0;
+  padding: 8px 12px;
   flex-wrap: wrap;
+  border-radius: var(--hh-radius-md);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  backdrop-filter: blur(12px) saturate(1.3);
 }
 .search-box {
   position: relative;
@@ -372,9 +480,10 @@ onUnmounted(() => {
 }
 .cat-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .cat-chip.active {
-  background: var(--hh-color-accent-bg);
+  background: var(--hh-color-select-bg);
   border-color: var(--hh-color-accent-ring);
-  color: var(--hh-color-accent-text);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
 }
 .toolbar-count { font-size: 12px; color: var(--hh-color-text-tertiary); white-space: nowrap; }
 
@@ -398,7 +507,10 @@ onUnmounted(() => {
   transition: background 0.15s ease, color 0.15s ease;
 }
 .seg-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
-.seg-btn.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
+.seg-btn.active {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+}
 
 .glass-btn {
   width: 36px; height: 36px;
@@ -411,7 +523,10 @@ onUnmounted(() => {
   transition: all 0.15s;
 }
 .glass-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
-.glass-btn.active { background: var(--hh-color-accent-chip-bg); color: var(--hh-color-accent-text); }
+.glass-btn.active {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+}
 
 .detail { width: 360px; position: relative; }
 
@@ -425,8 +540,9 @@ onUnmounted(() => {
   color: var(--hh-color-text-mid);
   cursor: pointer;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  padding-top: 12px;
   transition: background 0.15s, color 0.15s;
   margin: 8px;
 }

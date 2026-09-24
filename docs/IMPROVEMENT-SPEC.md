@@ -180,7 +180,47 @@ main.rs 101KB 拆 protocol/segment/checksum/http/state 五模块；host.rs 判�
 
 ### Phase 5 打磨与 DoD
 P2 批量（对比度/单真值色/glass 复用/scale 清理/点击目标/img @error/Settings 守卫/enter 范围/详情折叠/死代码删）；cdp_visual.mjs 8 断言；docs/shots/ 4 张基准图入库；本规格书 DoD 改写为可执行命令清单；README 终稿
-验收：e2e 18/18 + cdp_ui 9/9 + cdp_visual 8/8 + vitest 全绿 + cargo test 全绿 + CI 绿 + docs/shots 4 图 + 每 Phase 一个中文 commit + 无 push
+验收：e2e 29/29 + cdp_ui 9/9 + cdp_visual 8/8 + vitest 全绿 + cargo test 全绿 + CI 绿 + docs/shots 4 图 + 每 Phase 一个中文 commit + 无 push
+
+DoD 可执行命令清单（自上而下逐条通过，任一失败即为未达 DoD）：
+
+```bash
+# 0. 环境前置（本机为 Windows；POSIX shell 下命令等价）
+cd engine-rs && cargo test            # 引擎单测：20/20
+cd engine-rs && cargo build --release # 引擎产物存在，打包必需
+
+# 1. 前端静态校验 + 构建
+cd app && npm run typecheck           # vue-tsc 双 tsconfig，零错误
+cd app && npm run build               # electron-vite 构建产物，exit 0
+
+# 2. e2e 下载链路（自起服务器 + seed app + 真实下载 + 重启持久化）
+cd app && node scripts/e2e_download.mjs   # 输出 ===== 29 passed, 0 failed ====
+
+# 3. UI 回归（CDP 驱动真实窗口，起 app 自带 seed）
+cd app && node scripts/cdp_verify.mjs        # 主桥 + IPC + hello 链路
+cd app && node scripts/cdp_ui_download.mjs   # 9/9：侧栏/下载页/空态/过滤器/弹窗/设置页签
+cd app && node scripts/t6_virtual.mjs        # 1 万 seed：窗口化 <80 节点 + 首屏 <1s + 滚动
+cd app && node scripts/t7_library.mjs        # 游戏库屏关键路径
+cd app && node scripts/t8_detail.mjs         # 详情面板关键路径
+
+# 4. Phase 5 视觉验收（seed 24 游戏 + settings，抓 4 张基准图 + 8 断言）
+cd app && node scripts/phase5_visual.mjs # 输出 8/8 PASS；基准图写入 docs/shots/
+#   断言覆盖：token 单源 / glass-card 死代码 / 按钮渐变统一 / 点击目标 ≥30px /
+#   img @error / 详情折叠 / Settings 代理守卫 / 错误色单真值
+
+# 5. 死契约复核（P2 批量验收）
+cd app && grep -rE "[0-9a-fA-F]{6}" src/renderer/components --include="*.vue" 2>/dev/null | grep -v "hh-" ; test $? -eq 1   # 组件内无字面量色值
+cd app && grep -rn "glass-card" src || test $? -eq 1   # 无 .glass-card 残留
+cd app && grep -rn "@keyup.enter\|@keydown.enter\|@submit" src/renderer   # enter 仅收窄在具体控件
+
+# 6. CI（远端未 push，靠本地复跑等价步骤）
+#    .github/workflows/ci.yml：windows-latest + node20 + npm ci + typecheck + build + cargo test
+#    .github/workflows/release.yml：tag v* 触发，--publish always 仅 workflow 内
+
+# 7. 未决项（需用户点头才动）
+#    vitest：规格书 §4.8 测试金字塔的「单测层」；§6 明确属测试治理例外。
+#    本机未装 vitest，未新增依赖 → 该项列为待决策，不擅自安装。
+```
 
 ## §6 风险与非目标
 - 非目标：不新增依赖（vitest/stylelint 属测试治理例外，需用户点头）；不改 IPC channel 名；games.json 只增字段；不做多平台（Win 优先）；不重建扩展通道（进路线图）；不做 AI 插帧/超分

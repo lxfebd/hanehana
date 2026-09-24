@@ -42,81 +42,36 @@
 //! themselves are otherwise format-stable. Unknown-length downloads (no
 //! `Content-Length`, no `206`) never send `Range` and cannot be resumed.
 
+mod checksum;
+mod http;
+mod protocol;
+mod segment;
+mod state;
+
 use std::io::{SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use futures_util::TryStreamExt;
-use reqwest::header::HeaderValue;
-use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sha2::Digest;
-use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncSeekExt, AsyncWriteExt, BufReader, Stdout, stdin, stdout};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufReader, Stdout, stdin, stdout};
 use tokio::sync::{Mutex, mpsc};
 
-const CHUNK: u64 = 64 * 1024;
+use checksum::{Checksum, VerifyResult, parse_checksum, run_verify};
+use http::{FetchErr, check_ranges, error_event, fetch_and_write, fetch_unbounded, io_code, make_client, part_io_err, probe_total};
+use protocol::{Cmd, emit_line, read_stdin_line};
+use segment::{Segment, recompute_segment};
+use state::Bucket;
+
 const MIN_SEGMENT: u64 = 256 * 1024;
-/// 单次 `throttle()` 最多睡这么久就重新看一次桶。限速值随时可被 `set_rate` 改，
-/// 一口气睡「补齐整段所需的时间」会把调高/取消限速拖成没反应；极低限速下
-/// （比如 1 KiB/s）这也能让写盘保持小步推进，而不是一停几十秒。
-const THROTTLE_WAIT_CAP: Duration = Duration::from_millis(50);
-/// 校验和时一次读多少字节。只走一遍顺序读，靠系统页缓存，代价很小。
-const HASH_BUF: usize = 128 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
-/// TCP + TLS + 发请求的耗时上限。**不能**用 reqwest 的 `.timeout()`——那个覆盖
-/// 的是整个请求含读完响应体的总时长，任何超过 45s 的健康慢速下载都会被准时
-/// 掐断（实测：数据稳定流入中报 error decoding response body）。
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
-/// 从发请求到拿到响应头的上限。`.connect_timeout()` 只管 TCP/TLS 握手，
-/// 不管服务端处理时长，所以还得单独兜这一层。
-const HEADERS_TIMEOUT: Duration = Duration::from_secs(30);
-/// 整个探测（HEAD，失败则退回一次带 Range 的 GET）的总预算。必须比 `HEADERS_TIMEOUT`
-/// 宽一些，因为 `.send()` 的耗时包含 TCP/TLS 握手（`CONNECT_TIMEOUT` 15s），那段是从
-/// 30s 里扣的；留 10s 余量才不会让外层先超时、把内层的原因信息吞掉。
-const PROBE_TIMEOUT: Duration = Duration::from_secs(40);
-/// 相邻两段数据之间的空闲上限。真正判定「服务端死了」的开关，取代旧的整请求
-/// 超时——慢但健康的传输可以一直跑，只有真的卡住才断。
-const CHUNK_IDLE: Duration = Duration::from_secs(60);
 /// 指数退避封顶。重试次数不再封顶：下载任务应该无限重连，断多久都能续上。
 const RETRY_BACKOFF_CAP: u64 = 30;
-/// 攒够这么多新写入就 `sync_data` 一次，并把该段的「已落盘水位」推到这里。
-/// 边车只记已落盘的水位：不 fsync 的话，断电/强制结束进程后边车会说「这段下过了」，
-/// 而盘上其实还是 `set_len` 撑出来的空洞——续传跳过这段，成品就是一堆零字节。
-/// 64 MiB 是吞吐与「崩溃最多重下多少」的折中（1 GiB/s 下约 15 秒一次）。
-const FLUSH_BYTES: u64 = 64 * 1024 * 1024;
-const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
-                          (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 /// 引擎是长驻进程：每次 `probe` 建一个新任务并领一个递增代号。后台校验等异步结果
 /// 必须带着这个代号回来，主循环只接受「当前任务」的结果，否则上一轮任务会把
 /// 新任务的终态盖掉（跨任务串味）。
 static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
-
-#[derive(Default, Serialize, Deserialize)]
-struct Segment {
-    index: usize,
-    start: u64,
-    end: u64,
-    downloaded: u64,
-    /// 已经 `sync_data` 确认落盘的字节数（相对段首），恒 ≤ `downloaded`。
-    /// 写进边车的是它，不是 `downloaded`：崩溃后只有这部分是真的在盘上。
-    flushed: u64,
-    status: String,
-    speed: f64,
-}
-
-impl Segment {
-    fn new(index: usize, start: u64, end: u64) -> Self {
-        Self { index, start, end, downloaded: 0, flushed: 0, status: "waiting".into(), speed: 0.0 }
-    }
-    fn size(&self) -> u64 {
-        self.end - self.start + 1
-    }
-    fn done(&self) -> bool {
-        self.downloaded >= self.size()
-    }
-}
 
 /// 线程数变了、段重新切分后，新段 `[ns, ne]` 里到底有多少字节是「真的已经下过了」。
 /// 关键：老段真正下载的字节区间是 `[ostart, ostart+odone)`，把它和新段求交集长度才是
@@ -124,268 +79,6 @@ impl Segment {
 /// 旧算法累加 `min(odone, overlap)`，隐含假设老段已下载的字节都落在重叠区间的开头，
 /// 会把整段重叠区都当成已下载，凭空多出进度——这正是「中途改线程数导致文件损坏」的根因。
 /// 纯函数，便于单元测试。
-fn recompute_segment(ns: u64, ne: u64, old: &[(u64, u64, u64)]) -> u64 {
-    let new_excl = ne.saturating_add(1);
-    let mut got = 0u64;
-    for &(ostart, oend, odone) in old {
-        // 老段真实已下载区间 [ostart, oexcl)，钳到本老段末尾以内。
-        let oexcl = ostart.saturating_add(odone).min(oend.saturating_add(1));
-        let lo = ns.max(ostart);
-        let hi = new_excl.min(oexcl);
-        if hi > lo {
-            got += hi - lo;
-        }
-    }
-    got.min(ne - ns + 1)
-}
-
-// ---------------------------------------------------------------- 限速（令牌桶）
-
-/// KiB/s → 字节/秒。字段名叫 `rate_limit_kbps`，单位按 1024 算（和 UI 上的 KB/s 一致）。
-fn rate_bps(kbps: u64) -> u64 {
-    kbps.saturating_mul(1024)
-}
-
-/// 桶容量（= 允许的突发量），单位字节。取 ~100ms 的配额：
-/// 再大限速就形同虚设（起手能突发好几秒的量），再小则唤醒过密、写盘碎片化。
-/// 纯函数，便于单元测试。
-fn bucket_capacity(limit_bps: u64) -> u64 {
-    if limit_bps == 0 { 0 } else { (limit_bps / 10).max(1) }
-}
-
-/// `elapsed` 时间内按 `limit_bps` 能补多少令牌（字节）。纯函数，便于单元测试。
-/// 用微秒做中间单位：1 KiB/s 下 1ms 只值 1 字节，用毫秒会把低速档整体算成 0。
-fn refill_tokens(limit_bps: u64, elapsed: Duration) -> u64 {
-    (elapsed.as_micros() as u64).saturating_mul(limit_bps) / 1_000_000
-}
-
-/// 一个任务内所有分段共享的令牌桶。**不是**每段各限一份：
-/// 8 段并发时总速度仍受同一个上限约束（aria2 `--max-download-limit` 的语义）。
-#[derive(Debug)]
-struct Bucket {
-    /// 字节/秒。0 = 不限速（此时 `tokens` 恒 0，`throttle` 直接放行）。
-    limit_bps: u64,
-    /// 当前可用令牌（字节），上限见 `bucket_capacity`。
-    tokens: u64,
-    /// 上次补令牌的时刻。
-    last: Instant,
-}
-
-impl Bucket {
-    fn new(limit_kbps: u64) -> Self {
-        Self { limit_bps: rate_bps(limit_kbps), tokens: 0, last: Instant::now() }
-    }
-
-    /// 按流逝时间补令牌，钳在容量以内。
-    fn refill(&mut self) {
-        let now = Instant::now();
-        let elapsed = now.saturating_duration_since(self.last);
-        self.last = now;
-        if self.limit_bps == 0 {
-            self.tokens = 0;
-            return;
-        }
-        let cap = bucket_capacity(self.limit_bps);
-        self.tokens = self.tokens.saturating_add(refill_tokens(self.limit_bps, elapsed)).min(cap);
-    }
-
-    /// 运行中改限速（含调回 0 取消）。先结算旧速率攒下的令牌，再重置计时起点，
-    /// 否则「刚调高」要等到下一次长时间流逝才见效。
-    fn set_limit(&mut self, limit_kbps: u64) {
-        self.refill();
-        self.limit_bps = rate_bps(limit_kbps);
-        self.last = Instant::now();
-        self.tokens = self.tokens.min(bucket_capacity(self.limit_bps));
-    }
-}
-
-/// 想写 `want` 字节，问桶要配额。返回**本次可以立即写入**的字节数（<= `want`，
-/// 不限速时就是 `want`），不足的部分调用方下一轮再要——所以调用方必须按返回值写，
-/// 别把自己算的 `want` 全写下去。
-///
-/// 锁只在算令牌的那一小段持有，`sleep` 期间不放着锁，所以多个 worker 是真并发地
-/// 从同一个桶里扣配额。
-async fn throttle(bucket: &Arc<Mutex<Bucket>>, want: u64) -> u64 {
-    if want == 0 {
-        return 0;
-    }
-    loop {
-        let (grant, wait) = {
-            let mut b = bucket.lock().await;
-            if b.limit_bps == 0 {
-                return want;
-            }
-            b.refill();
-            if b.tokens > 0 {
-                let g = b.tokens.min(want);
-                b.tokens -= g;
-                (g, None)
-            } else {
-                // 一个令牌都没有：等出至少 1 字节配额，最长 `THROTTLE_WAIT_CAP`。
-                let cap_us = THROTTLE_WAIT_CAP.as_micros() as u64;
-                let micros = (1_000_000u64 / b.limit_bps.max(1)).clamp(1, cap_us);
-                (0, Some(Duration::from_micros(micros)))
-            }
-        };
-        if grant > 0 {
-            return grant;
-        }
-        tokio::time::sleep(wait.unwrap_or(THROTTLE_WAIT_CAP)).await;
-    }
-}
-
-// ---------------------------------------------------------------- 校验和
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Alg {
-    Sha256,
-    Sha1,
-    Md5,
-}
-
-impl Alg {
-    fn label(self) -> &'static str {
-        match self {
-            Alg::Sha256 => "sha256",
-            Alg::Sha1 => "sha1",
-            Alg::Md5 => "md5",
-        }
-    }
-    fn hex_len(self) -> usize {
-        match self {
-            Alg::Sha256 => 64,
-            Alg::Sha1 => 40,
-            Alg::Md5 => 32,
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct Checksum {
-    alg: Alg,
-    /// 小写十六进制。
-    hex: String,
-}
-
-impl Checksum {
-    fn display(&self) -> String {
-        format!("{}:{}", self.alg.label(), self.hex)
-    }
-}
-
-/// 解析 `"sha256:<hex>"` / `"sha1:<hex>"` / `"md5:<hex>"`（前缀大小写不敏感，
-/// 也接受 `sha-256`/`sha-1` 写法），裸 64 位十六进制按 sha256 处理。
-/// 空串 → `Ok(None)`（不校验，不做任何额外磁盘读）。
-/// 纯函数，便于单元测试。
-fn parse_checksum(raw: &str) -> Result<Option<Checksum>, String> {
-    let s = raw.trim();
-    if s.is_empty() {
-        return Ok(None);
-    }
-    let (alg, hex) = match s.split_once(':') {
-        Some((name, hex)) => {
-            let a = match name.trim().to_ascii_lowercase().as_str() {
-                "sha256" | "sha-256" => Alg::Sha256,
-                "sha1" | "sha-1" => Alg::Sha1,
-                "md5" => Alg::Md5,
-                other => return Err(format!("unsupported checksum algorithm: {other}")),
-            };
-            (a, hex.trim())
-        }
-        // 裸十六进制只认 sha256 的长度；其余一律要求写前缀，免得把 32 位 md5
-        // 猜成 sha1 之类，校验个寂寞。
-        None => {
-            if s.len() == Alg::Sha256.hex_len() {
-                (Alg::Sha256, s)
-            } else {
-                return Err(format!(
-                    "checksum needs an algorithm prefix (sha256:/sha1:/md5:), got {} hex digits",
-                    s.len()
-                ));
-            }
-        }
-    };
-    if !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(format!("{} checksum is not hexadecimal: {hex}", alg.label()));
-    }
-    if hex.len() != alg.hex_len() {
-        return Err(format!(
-            "{} checksum must be {} hex digits, got {}",
-            alg.label(),
-            alg.hex_len(),
-            hex.len()
-        ));
-    }
-    Ok(Some(Checksum { alg, hex: hex.to_ascii_lowercase() }))
-}
-
-/// 一遍顺序读把文件哈希出来。
-///
-/// 逐字节 `format!("{b:02x}")` 而不是 `{:x}` 打 `Output`：后者要求
-/// `GenericArray` 实现 `LowerHex`，而那需要给 `D::OutputSize` 加一堆关联类型约束，
-/// 换算法时每次都要重写。这里一次哈希一个文件，性能差异可以忽略。
-async fn hash_file<D: Digest + Send>(path: &str) -> Result<String, String> {
-    let mut f = tokio::fs::File::open(path).await.map_err(|e| format!("{path}: {e}"))?;
-    let mut hasher = D::new();
-    let mut buf = vec![0u8; HASH_BUF];
-    loop {
-        let n = f.read(&mut buf).await.map_err(|e| e.to_string())?;
-        if n == 0 {
-            break;
-        }
-        hasher.update(&buf[..n]);
-    }
-    Ok(hasher
-        .finalize()
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect())
-}
-
-/// 后台校验的产物：`error` 为 None 表示通过，否则是给用户看的整句错误 + 稳定码。
-struct VerifyResult {
-    task_id: u64,
-    gen: usize,
-    error: Option<String>,
-    code: &'static str,
-    params: Value,
-}
-
-async fn digest_file(cs: &Checksum, path: &str) -> Result<String, String> {
-    match cs.alg {
-        Alg::Sha256 => hash_file::<sha2::Sha256>(path).await,
-        Alg::Sha1 => hash_file::<sha1::Sha1>(path).await,
-        Alg::Md5 => hash_file::<md5::Md5>(path).await,
-    }
-}
-
-/// 起一次校验。三种结果都要变成可读文案：通过 / 不一致（保留文件不删）/ 读盘失败。
-async fn run_verify(cs: Checksum, path: String, task_id: u64, gen: usize, tx: mpsc::UnboundedSender<VerifyResult>) {
-    let (error, code, params) = match digest_file(&cs, &path).await {
-        Ok(actual) => {
-            if actual == cs.hex {
-                (None, "", Value::Null)
-            } else {
-                (
-                    Some(format!(
-                        "checksum mismatch: expected {}, got {}:{}",
-                        cs.display(),
-                        cs.alg.label(),
-                        actual
-                    )),
-                    "checksum_mismatch",
-                    json!({"alg": cs.alg.label(), "expected": cs.hex, "actual": actual}),
-                )
-            }
-        }
-        Err(e) => (
-            Some(format!("checksum verify failed: {e}")),
-            "checksum_verify_failed",
-            Value::Null,
-        ),
-    };
-    let _ = tx.send(VerifyResult { task_id, gen, error, code, params });
-}
 
 struct Task {
     url: String,
@@ -428,92 +121,6 @@ struct Task {
     /// 每次 run 递增。被取消的 worker 看到代际变化就退出，避免恢复时
     /// 出现两个 worker 同时写同一段。
     gen: usize,
-}
-
-struct FetchErr {
-    msg: String,
-    /// 稳定错误码（snake_case），随 `error` 事件和快照一起上报。
-    /// 界面按码查文案，`msg` 只作为原文留档：以前界面靠正则去认英文原话，
-    /// 引擎改一个词用户就看到「下载中断」，两边谁也不敢动字符串。
-    code: &'static str,
-    /// 码的参数（状态码、字节数、期望/实际摘要…），没有就是 `Null`。
-    params: Value,
-    fatal: bool,
-    /// 服务器无视了 Range 请求（本次 from>0）。这类错误「原地重试」毫无意义——
-    /// 每次都会拿到整份文件。worker 收到它要把该段 `done` 归零、重新 seek 到段首，
-    /// 从段首（对单段任务即偏移 0）重下才能自愈，而不是空转。
-    restart_from_zero: bool,
-}
-
-impl FetchErr {
-    fn new(code: &'static str, msg: impl Into<String>) -> Self {
-        Self { msg: msg.into(), code, params: Value::Null, fatal: false, restart_from_zero: false }
-    }
-    fn fatal(code: &'static str, msg: impl Into<String>) -> Self {
-        Self { fatal: true, ..Self::new(code, msg) }
-    }
-    fn with_params(mut self, params: Value) -> Self {
-        self.params = params;
-        self
-    }
-    fn restarting(mut self) -> Self {
-        self.restart_from_zero = true;
-        self
-    }
-}
-
-/// 把 reqwest 的错误链归到一个稳定码上。分类顺序即优先级，和界面文案表一致：
-/// 代理填错必须报「代理没生效」，不能被笼统的「连不上服务器」盖掉。
-fn req_code(e: &reqwest::Error) -> &'static str {
-    let s = req_err(e).to_lowercase();
-    if s.contains("proxy") {
-        "proxy_invalid"
-    } else if s.contains("dns") || s.contains("lookup") || s.contains("name resolution") || s.contains("name does not resolve") {
-        "dns"
-    } else if s.contains("certificate") || s.contains("tls") || s.contains("ssl") || s.contains("invalid peer") {
-        "tls"
-    } else if s.contains("refused") || s.contains("tcp connect error") || s.contains("connect") {
-        "connect_refused"
-    } else if s.contains("redirect") {
-        "redirect_loop"
-    } else {
-        "request_failed"
-    }
-}
-
-/// 把磁盘错误归到稳定码。Windows 的 `raw_os_error` 才是真凭据：
-/// 112 磁盘满、36 路径太长、123 文件名非法、5 无权限/被占用。
-fn io_code(e: &std::io::Error) -> &'static str {
-    if e.kind() == std::io::ErrorKind::PermissionDenied {
-        return "permission_denied";
-    }
-    match e.raw_os_error().unwrap_or(0) {
-        112 => "no_space",
-        36 => "name_too_long",
-        5 | 32 => "permission_denied",
-        123 | 124 => "invalid_filename",
-        _ => "part_io",
-    }
-}
-
-/// 统一的 `error` 事件形状。`error` 仍是原文（老主进程/日志都靠它），
-/// `code`/`params` 是新增字段：只加不改，旧读端照旧能跑。
-fn error_event(code: &str, msg: &str, params: &Value) -> Value {
-    json!({"event": "error", "error": msg, "code": code, "params": params})
-}
-
-/// 磁盘类错误一律 fatal：重试不会让磁盘腾出空间、也不会让只读目录变得可写。
-fn part_io_err(e: std::io::Error) -> FetchErr {
-    let code = io_code(&e);
-    let os = e.raw_os_error();
-    FetchErr::fatal(code, e.to_string()).with_params(json!({"os_error": os}))
-}
-
-/// 「服务器少发了字节」的错误。两条路径（干净 EOF / 流中途报错）共用同一形状，
-/// 免得同一个病因在界面上出现两种文案。
-fn truncated_err(written: u64, expect: u64) -> FetchErr {
-    FetchErr::new("truncated", format!("truncated: got {written} of {expect} bytes"))
-        .with_params(json!({"got": written, "expect": expect}))
 }
 
 impl Task {
@@ -739,424 +346,6 @@ impl Task {
     }
 }
 
-#[derive(Deserialize, Default)]
-struct Cmd {
-    #[serde(default)] cmd: String,
-    #[serde(default)] url: String,
-    #[serde(default)] dest: String,
-    #[serde(default)] threads: usize,
-    #[serde(default)] proxy: String,
-    #[serde(default)] user_agent: String,
-    #[serde(default)] n: usize,
-    /// 限速，单位 KiB/s，0 = 不限速。`probe` / `run` / `set_rate` 都接受。
-    /// 用 `Option` 是为了区分「JSON 里没这个字段」和「显式给 0」：前者**不改**当前限速，
-    /// 否则一条裸 `{"cmd":"run"}` 就会把 probe 设好的限速抹成不限速。
-    /// 对调用方没有额外负担——写 `"rate_limit_kbps": 512` 即可，和普通数字完全一样。
-    #[serde(default)] rate_limit_kbps: Option<u64>,
-    /// 完成后校验和，空 = 不校验（不产生任何额外磁盘读）。
-    /// 形如 `"sha256:<hex>"` / `"sha1:<hex>"` / `"md5:<hex>"`，裸 64 位十六进制按 sha256 处理。
-    #[serde(default)] checksum: String,
-}
-
-fn make_client(proxy: &str, user_agent: &str) -> Result<reqwest::Client, String> {
-    let mut b = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .http2_adaptive_window(true);
-    // 代理串解析不了必须当场报错，不能 `if let Ok(..)` 静默跳过：跳过等于用户填了
-    // 代理却一路直连，失败时他会去怀疑站点，而真正的原因是那行配置根本没生效。
-    if !proxy.is_empty() {
-        let p =
-            reqwest::Proxy::all(proxy).map_err(|e| format!("invalid proxy url: {proxy} ({e})"))?;
-        b = b.proxy(p);
-    }
-    let mut h = reqwest::header::HeaderMap::new();
-    let ua = if user_agent.is_empty() { USER_AGENT } else { user_agent };
-    if let Ok(ua) = HeaderValue::from_str(ua) {
-        h.insert("User-Agent", ua);
-    }
-    b.default_headers(h)
-        .build()
-        .map_err(|e| format!("http client build failed: {e}"))
-}
-
-/// reqwest 错误的 `to_string()` 只有最外层那句 `error sending request for url (...)`，
-/// 真正的病因（`tcp connect error` / `Connection refused`）藏在 source 链里。
-/// 界面是按这些关键词决定「连不上服务器」还是「网络传输中断，会自动重连」的：
-/// 代理地址填错时若只给外层，用户会以为站点在抽风，等一台根本没挂的站自愈。
-fn req_err(e: &reqwest::Error) -> String {
-    let mut msg = e.to_string();
-    let mut src = std::error::Error::source(e);
-    while let Some(s) = src {
-        msg.push_str(": ");
-        msg.push_str(&s.to_string());
-        src = s.source();
-    }
-    msg
-}
-
-/// 发请求并等响应头，单独封顶 `HEADERS_TIMEOUT`。
-///
-/// 不能用 reqwest 的 `.timeout()`：它把「读完整个响应体」也算进去，会掐断健康的
-/// 慢速下载。拆成「连接」「响应头」两段各自的短截止 + 正文靠 `CHUNK_IDLE` 空闲
-/// 检测，才既不误杀慢传输，也不会在永远不吐头的服务器上卡死。
-async fn send_headers(
-    req: reqwest::RequestBuilder,
-    deadline: Duration,
-) -> Result<reqwest::Response, FetchErr> {
-    match tokio::time::timeout(deadline, req.send()).await {
-        Ok(r) => r.map_err(|e| {
-            let code = req_code(&e);
-            FetchErr::fatal(code, req_err(&e))
-        }),
-        Err(_) => Err(FetchErr::new(
-            "no_reply",
-            format!("server did not reply within {}s", deadline.as_secs()),
-        )
-        .with_params(json!({"secs": deadline.as_secs()}))),
-    }
-}
-
-/// `Accept-Ranges` is a *response* header, so echoing it in the request proves
-/// nothing. Issue one 1-byte range request and require a real `206`.
-///
-/// 只看 `Accept-Ranges` 会放走一类真实存在的坏服务器：它挂着这个头却无视 Range，
-/// 每次都回 200 整份文件。被判「可分段」之后，每个 from>0 的段都会撞上 `fetch_and_write`
-/// 的错位保护，归零重下三次仍拿到 200，最终升级成 "server ignored Range request on
-/// every attempt" —— 用户端表现就是一个干脆的下载失败，而这本可以单线程正常下完。
-/// 所以这里只认真正的 206；判 false 退回单线程是安全的（首段 from==0，200 可接受）。
-async fn check_ranges(client: &reqwest::Client, url: &str) -> bool {
-    match send_headers(client.get(url).header("Range", "bytes=0-0"), HEADERS_TIMEOUT).await {
-        Ok(resp) => {
-            let st = resp.status().as_u16();
-            drop(resp);
-            st == 206
-        }
-        Err(_) => false,
-    }
-}
-
-/// 从响应头里问出总长度：优先 `Content-Range: bytes a-b/<total>` 的总长，退回
-/// `Content-Length`。缺头、非数字、或算出来是 0 都返回 `None` = **长度未知**
-/// （0 不能当已知长度用：拿它去分段会得到 `[0, u64::MAX]` 这种荒谬区间）。
-/// 纯函数，便于单元测试。
-fn total_from_headers(content_range: Option<&str>, content_length: Option<&str>) -> Option<u64> {
-    content_range
-        .and_then(|s| s.rsplit_once('/'))
-        .and_then(|(_, t)| t.trim().parse::<u64>().ok())
-        .or_else(|| content_length.and_then(|s| s.trim().parse::<u64>().ok()))
-        .filter(|&t| t > 0)
-}
-
-/// `Accept-Ranges: bytes` 只说明「这台服务器*可能*答得出区间」。探测阶段用它做的
-/// 判断仅限于「要不要再发一次带 Range 的 GET 去问长度」；真正能不能分段仍然只认
-/// `check_ranges` 拿到的 206（坑 2）。
-fn accepts_ranges_header(v: Option<&HeaderValue>) -> bool {
-    v.and_then(|s| s.to_str().ok())
-        .map(|s| s.to_ascii_lowercase().contains("bytes"))
-        .unwrap_or(false)
-}
-
-/// Total size via HEAD, falling back to a ranged GET when HEAD is unusable.
-/// Both legs share ONE `PROBE_TIMEOUT` budget: the fallback gets whatever the first
-/// leg left, so the total can't stack past the deadline. The fallback is skipped
-/// entirely when HEAD just timed out — a host that never answers HEAD won't answer
-/// GET either, so the second leg would only burn the remaining budget for nothing.
-///
-/// 返回 `Ok(None)` 表示「连上了、也正常应答了，但就是问不出长度」（chunked 流式接口）。
-/// 这和 `Err`（连不上/超时/服务端拒绝）必须严格区分：前者要退化成单流顺序下载，
-/// 后者才是真的失败。`Ok(None)` 的判定路径**不会**发出任何 `Range` 请求：
-/// HEAD 说得出话却没给长度时，只有它自己声称 `Accept-Ranges: bytes` 才值得再补一次
-/// 带区间的 GET（206 的 `Content-Range` 能报总长）；否则发 Range 只会白白拉回一整份
-/// 正文再丢掉——未知长度下载从探测阶段起就不该请求区间。
-async fn probe_total(client: &reqwest::Client, url: &str) -> Result<Option<u64>, FetchErr> {
-    fn total_from(resp: &reqwest::Response) -> Option<u64> {
-        total_from_headers(
-            resp.headers().get("Content-Range").and_then(|v| v.to_str().ok()).as_deref(),
-            resp.headers().get("Content-Length").and_then(|v| v.to_str().ok()).as_deref(),
-        )
-    }
-
-    let started = Instant::now();
-    match send_headers(client.head(url), PROBE_TIMEOUT).await {
-        // HEAD answered successfully: use it directly.
-        Ok(r) if r.status().is_success() => match total_from(&r) {
-            Some(t) => return Ok(Some(t)),
-            // 不支持区间的服务器不值得再发一次 Range 请求，直接判「长度未知」。
-            None if !accepts_ranges_header(r.headers().get("Accept-Ranges")) => return Ok(None),
-            None => {}
-        },
-        // HEAD timed out: the host isn't going to answer a ranged GET either.
-        Err(FetchErr { fatal: false, code, .. }) => {
-            return Err(FetchErr::new(code, "server did not reply"))
-        }
-        // HEAD 被拒（403/405）或发送失败：给带区间的 GET 剩下的预算。
-        _ => {}
-    }
-    let remaining = PROBE_TIMEOUT.saturating_sub(started.elapsed());
-    if remaining.is_zero() {
-        return Err(
-            FetchErr::new("no_reply", format!("server did not reply within {}s", PROBE_TIMEOUT.as_secs()))
-                .with_params(json!({"secs": PROBE_TIMEOUT.as_secs()})),
-        );
-    }
-    match send_headers(client.get(url).header("Range", "bytes=0-0"), remaining).await {
-        // 兜底这一次也问不出长度 → 同样是「未知长度」，不是失败。
-        Ok(r) => Ok(total_from(&r)),
-        Err(e) => Err(e),
-    }
-}
-
-/// Fetch one contiguous range and stream it straight into `file`.
-/// Returns how many bytes were written; 0 means "no progress".
-/// Reports the segment-relative offset as bytes arrive. The counter starts at
-/// `base` so the worker can read it directly instead of adding deltas.
-type OnProgress = Option<(Arc<AtomicU64>, u64)>;
-
-/// 已落盘水位的回报通道：每 `FLUSH_BYTES` 次 `sync_data` 成功后写一次，
-/// 值与 `OnProgress` 同口径（段内相对偏移）。worker 把它抄进 `Segment::flushed`，
-/// 边车只记这个值，于是「边车说下过了」永远等于「盘上真有这些字节」。
-type OnFlushed = Option<Arc<AtomicU64>>;
-
-/// 状态码里哪些重试也没意义。416 意味着请求的区间已经越界（客户端算错了偏移
-/// 或文件被改了），再重试只是把同一请求重放 N 次，必须停下来。
-fn is_fatal_status(st: u16) -> bool {
-    matches!(st, 401 | 403 | 404 | 410 | 416)
-}
-
-/// 解析 `Content-Range: bytes {first}-{last}/{total}` 头，返回 (first, last, total)。
-/// 无法解析（缺 total、单位不是 bytes、区间反了、或 `*` 通配）返回 None。
-/// 注意旧实现用 `split('=')` 找值，但这个头里根本没有 `=`，所以那条路永远走不通。
-fn parse_content_range(v: &str) -> Option<(u64, u64, u64)> {
-    let v = v.trim();
-    let (unit, rest) = v.split_once(char::is_whitespace)?;
-    if !unit.eq_ignore_ascii_case("bytes") {
-        return None;
-    }
-    let (range, total) = rest.trim().split_once('/')?;
-    let total = total.trim();
-    let total: u64 = if total == "*" { u64::MAX } else { total.parse().ok()? };
-    let (fs, ls) = range.split_once('-')?;
-    let first: u64 = fs.trim().parse().ok()?;
-    let last: u64 = ls.trim().parse().ok()?;
-    if last < first {
-        return None;
-    }
-    Some((first, last, total))
-}
-
-/// 本次响应「应当写入的字节数」。优先用 `Content-Range` 的区间长度（`last-first+1`），
-/// 并校验区间起点等于我们请求的 `from`——服务器返回别的区间意味着它没照我们的 Range 发，
-/// 写下去必坏，故用 Err(()) 让调用方判失败。`Content-Range` 缺失或解析不了才退回
-/// `Content-Length`（200 整份文件响应就走这条）。两者都没有时返回 Ok(None)。
-/// 纯函数，便于单元测试。
-fn expected_len(
-    content_range: Option<&str>,
-    content_length: Option<u64>,
-    from: u64,
-) -> Result<Option<u64>, ()> {
-    if let Some(cr) = content_range {
-        if let Some((first, last, _total)) = parse_content_range(cr) {
-            if first != from {
-                return Err(());
-            }
-            return Ok(Some(last - first + 1));
-        }
-    }
-    Ok(content_length)
-}
-
-async fn fetch_and_write(
-    client: &reqwest::Client,
-    url: &str,
-    from: u64,
-    end: u64,
-    size: u64,
-    file: &mut tokio::fs::File,
-    on_progress: OnProgress,
-    on_flushed: OnFlushed,
-    rate: &Arc<Mutex<Bucket>>,
-) -> Result<u64, FetchErr> {
-    let resp = send_headers(
-        client.get(url).header("Range", format!("bytes={from}-{end}")),
-        HEADERS_TIMEOUT,
-    )
-    .await?;
-    let st = resp.status().as_u16();
-    if !(resp.status().is_success() || st == 206) {
-        let e = FetchErr::new("http_status", format!("http {st}")).with_params(json!({"status": st}));
-        return Err(if is_fatal_status(st) { FetchErr { fatal: true, ..e } } else { e });
-    }
-    // 我们请求了 Range，服务器却没回 206 而是 200 —— 它无视了 Range，正文是整份文件。
-    // 真正危险的判据不是 ranges_ok，而是本次请求的起始偏移 from 是否为 0：
-    //   - from == 0：正文头一段恰好就是本段内容（写盘受 remaining 封顶），可安全接受；
-    //   - from  > 0：把「从 0 开始」的正文写到 from 偏移会整体错位 → 数据损坏。
-    // 后者必须失败，并让 worker 把该段 done 归零从段首重下（自愈），而不是原地空转。
-    if st != 206 && from != 0 {
-        return Err(FetchErr::new("range_ignored", "server ignored Range request")
-            .with_params(json!({"from": from}))
-            .restarting());
-    }
-    // 期望长度：优先 Content-Range（并校验区间起点），退回 Content-Length，再退回 size。
-    let cr = resp.headers().get("Content-Range").and_then(|v| v.to_str().ok());
-    let expect = match expected_len(cr, resp.content_length(), from) {
-        Ok(Some(n)) => n.min(end - from + 1),
-        Ok(None) => size,
-        Err(()) => {
-            return Err(FetchErr::fatal(
-                "range_mismatch",
-                format!("server returned a range not starting at {from}"),
-            )
-            .with_params(json!({"from": from})));
-        }
-    };
-    let mut stream = resp.bytes_stream();
-    let mut written = 0u64;
-    let mut remaining = end - from + 1;
-    // 本次尝试开始前已完成的量（与进度计数器同口径），落盘水位要用它换算成段内偏移。
-    let base = on_progress.as_ref().map(|(_, b)| *b).unwrap_or(0);
-    let mut unsynced = 0u64;
-    loop {
-        if remaining == 0 {
-            break;
-        }
-        // `timeout` wraps the stream item in `Ok`, so the match is on that outer layer.
-        match tokio::time::timeout(CHUNK_IDLE, stream.try_next()).await {
-            Ok(Ok(Some(bytes))) => {
-                if bytes.is_empty() {
-                    continue;
-                }
-                // Cap each write so long segments still report progress in small steps,
-                // and never write past the end of this segment.
-                let mut pos = 0usize;
-                while pos < bytes.len() {
-                    let room = remaining as usize;
-                    if room == 0 {
-                        break;
-                    }
-                    let want = ((pos + CHUNK as usize).min(bytes.len()) - pos).min(room);
-                    // 令牌桶在这里放行：桶空了就把写盘 await 住（本任务所有分段共用同一个
-                    // 桶，所以是总速度受限，不是每段各限一份）。只写真正拿到配额的那几个
-                    // 字节，剩下的下一轮再来。
-                    let chunk = throttle(rate, want as u64).await.min(want as u64) as usize;
-                    file.write_all(&bytes[pos..pos + chunk]).await.map_err(|e| {
-                        FetchErr::fatal(io_code(&e), e.to_string())
-                            .with_params(json!({"os_error": e.raw_os_error()}))
-                    })?;
-                    written += chunk as u64;
-                    remaining -= chunk as u64;
-                    pos += chunk;
-                    unsynced += chunk as u64;
-                    if unsynced >= FLUSH_BYTES {
-                        // fsync 失败就不推进水位，下载照常继续：数据还在页缓存里，
-                        // 下一次 sync 会一起带上，最坏情况只是崩溃后多重下一截。
-                        if file.sync_data().await.is_ok() {
-                            unsynced = 0;
-                            if let Some(f) = &on_flushed {
-                                f.store(base + written, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    if let Some((p, _)) = &on_progress {
-                        // 段内累计偏移，worker 直接读。`base` 是本次尝试前
-                        // 已完成的量，fetch 任务里不改 `done`，避免两处竞争。
-                        p.store(base + written, Ordering::Relaxed);
-                    }
-                }
-            }
-            Ok(Ok(None)) => {
-                // 流正常结束。字节数对不上就是服务器提前断链，必须重试：
-                // 否则 worker 会以为这一段完了，把残缺的 `.part` rename 成成品。
-                if written < expect {
-                    return Err(truncated_err(written, expect));
-                }
-                break;
-            }
-            Ok(Err(e)) => {
-                // 流中途炸了。能走到这里说明响应头已经拿到、body 已经开始传，所以
-                // 「声明的字节数没给够」就是截断——reqwest 对这种情况报的是
-                // `error decoding response body` 而不是干净 EOF，两种都得算。
-                // 少一个字节和整个 body 都没送来对重试策略没有区别：都是服务端
-                // 没兑现它自己声明的长度。真正连不上会走 `send_headers` 的分支。
-                if written < expect {
-                    return Err(truncated_err(written, expect));
-                }
-                return Err(FetchErr::new(req_code(&e), req_err(&e)));
-            }
-            Err(_) => {
-                return Err(FetchErr::new("read_timeout", "read timeout"));
-            }
-        }
-    }
-    // 段写完再落一次盘，把水位推到 written：否则最后这不足 FLUSH_BYTES 的一截
-    // 要等下一次 sync 才算数，崩溃后会白重下。
-    if file.sync_data().await.is_ok() {
-        if let Some(f) = &on_flushed {
-            f.store(base + written, Ordering::Relaxed);
-        }
-    }
-    Ok(written)
-}
-
-/// 长度未知时的单流下载：**不发 `Range`**，一直读到流自然结束。
-///
-/// 和 `fetch_and_write` 的关键区别：
-///  - 没有区间可对账，所以「读完」的唯一信号是 stream 给出 `None`（EOF）。中途报错
-///    或空闲超时一律算失败，由调用方从 0 重下（不允许请求区间，就没法要求服务端从
-///    偏移 X 续传）。
-///  - 收到 200 是完全正常的（我们根本没请求区间）；反过来，万一服务器对无 Range 的
-///    请求回了 206，说明正文只是文件的一段，拼起来必然缺字节 → 判失败。
-/// 返回值为实际写入的字节数，调用方据此回填 `total`。
-async fn fetch_unbounded(
-    client: &reqwest::Client,
-    url: &str,
-    file: &mut tokio::fs::File,
-    on_progress: OnProgress,
-    rate: &Arc<Mutex<Bucket>>,
-) -> Result<u64, FetchErr> {
-    let resp = send_headers(client.get(url), HEADERS_TIMEOUT).await?;
-    let st = resp.status().as_u16();
-    if !resp.status().is_success() {
-        let e = FetchErr::new("http_status", format!("http {st}")).with_params(json!({"status": st}));
-        return Err(if is_fatal_status(st) { FetchErr { fatal: true, ..e } } else { e });
-    }
-    if st == 206 {
-        return Err(FetchErr::fatal("unexpected_206", "server answered 206 to a request without Range"));
-    }
-    let mut stream = resp.bytes_stream();
-    let mut written = 0u64;
-    loop {
-        match tokio::time::timeout(CHUNK_IDLE, stream.try_next()).await {
-            Ok(Ok(Some(bytes))) => {
-                let mut pos = 0usize;
-                while pos < bytes.len() {
-                    let want = (bytes.len() - pos).min(CHUNK as usize);
-                    let chunk = throttle(rate, want as u64).await.min(want as u64) as usize;
-                    file.write_all(&bytes[pos..pos + chunk]).await.map_err(|e| {
-                        FetchErr::fatal(io_code(&e), e.to_string())
-                            .with_params(json!({"os_error": e.raw_os_error()}))
-                    })?;
-                    written += chunk as u64;
-                    pos += chunk;
-                    if let Some((p, base)) = &on_progress {
-                        p.store(base + written, Ordering::Relaxed);
-                    }
-                }
-            }
-            Ok(Ok(None)) => break, // EOF：长度未知的响应里，这就是「发完了」的唯一凭据。
-            Ok(Err(e)) => {
-                // 这里分不清「服务端提前断链」和「本来就只剩这点内容」，
-                // 只能按失败重下——重下的代价远比交付一个残缺文件小。
-                return Err(FetchErr::new(req_code(&e), req_err(&e)));
-            }
-            Err(_) => {
-                return Err(FetchErr::new("read_timeout", "read timeout"));
-            }
-        }
-    }
-    Ok(written)
-}
-
-/// Drive one segment to completion. Only the worker holding `gen` writes it.
 async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
     let (client, url, part, paused, cancelled, rate) = {
         let g = task.lock().await;
@@ -1718,11 +907,6 @@ async fn finalize(g: &mut Task) -> Option<Value> {
     }
 }
 
-async fn emit_line(out: &mut tokio::io::BufWriter<Stdout>, v: Value) {
-    let _ = out.write_all((v.to_string() + "\n").as_bytes()).await;
-    let _ = out.flush().await;
-}
-
 async fn handle(
     cmd: Cmd,
     task: &mut Option<Arc<Mutex<Task>>>,
@@ -2108,19 +1292,6 @@ async fn on_tick(
 /// 塞进一行坏字节，`main` 的 loop 就 `break`、进程安静 exit 0，协议里连一条 error 事件都没有。
 /// 现在非法字节被替换成 U+FFFD，交给 `serde_json` 报 bad json，进程照常存活。
 /// 返回：`Ok(Some(line))` 有内容 / `Ok(None)` 干净 EOF / `Err` 真的 IO 读取出错。
-async fn read_stdin_line(
-    reader: &mut BufReader<tokio::io::Stdin>,
-    buf: &mut Vec<u8>,
-) -> Result<Option<String>, std::io::Error> {
-    buf.clear();
-    let n = reader.read_until(b'\n', buf).await?;
-    if n == 0 {
-        return Ok(None);
-    }
-    let s = String::from_utf8_lossy(buf);
-    Ok(Some(s.trim().to_string()))
-}
-
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     let mut task: Option<Arc<Mutex<Task>>> = None;
@@ -2188,15 +1359,20 @@ async fn main() -> std::io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        accepts_ranges_header, bucket_capacity, error_event, expected_len, hash_file, io_code,
-        parse_checksum, parse_content_range, recompute_segment, refill_tokens, run_verify, throttle,
-        total_from_headers, truncated_err, Alg, Bucket, Checksum, FetchErr, CHUNK, HASH_BUF,
-    };
+    use super::*;
+    use crate::checksum::*;
+    use crate::http::*;
+    use crate::segment::recompute_segment;
+    use crate::state::*;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
     use tokio::sync::{mpsc, Mutex};
     use sha2::Digest;
+
+    /// 与 http.rs 同源的测试块大小（不导出，测试自备一份免得动生产契约）。
+    const CHUNK: u64 = 64 * 1024;
+    /// 同 `checksum::HASH_BUF`。
+    const HASH_BUF: usize = 128 * 1024;
 
     // ---- Content-Range 解析（对应缺陷 2：旧 split('=') 死代码）----
     #[test]
@@ -2433,7 +1609,7 @@ mod tests {
         // 跨多个读缓冲：分块 update 与一次性 digest 必须逐字节一致。
         // 数据里刻意含 0x00~0x0f 这类高位为零的字节，前导零一旦丢了这里就挂。
         let big: Vec<u8> = (0..(3 * HASH_BUF as u32 + 7))
-            .map(|i| ((i.wrapping_mul(2654435761)) >> 13) as u8)
+            .map(|i: u32| ((i.wrapping_mul(2654435761)) >> 13) as u8)
             .collect();
         assert!(big.iter().any(|&b| b < 0x10), "测试数据得含前导零字节才测得出格式问题");
         std::fs::write(&p, &big).unwrap();

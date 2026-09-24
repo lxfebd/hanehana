@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>HaneHana 设计方向对比 · 4 模板</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: #101014; color: #eee; font-family: 'Segoe UI Variable', 'Segoe UI', 'Microsoft YaHei UI', system-ui, sans-serif; padding: 24px; }
+  .page-title { text-align: center; margin-bottom: 24px; }
+  .page-title h1 { font-size: 22px; font-weight: 600; }
+  .page-title p { font-size: 13px; color: #999; margin-top: 6px; }
+  .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 1900px; margin: 0 auto; }
+  .card { border-radius: 16px; overflow: hidden; border: 1px solid rgba(255,255,255,0.08); background: #16161b; }
+  .card-head { padding: 14px 18px; display: flex; align-items: baseline; gap: 12px; border-bottom: 1px solid rgba(255,255,255,0.06); }
+  .card-head h2 { font-size: 16px; font-weight: 600; }
+  .card-head .src { font-size: 12px; color: #999; }
+  .card-head .sig { font-size: 12px; margin-left: auto; color: #c9a86a; }
+  .frame { padding: 16px; }
+
+  /* ============ 通用 app 布局骨架 ============ */
+  .app { border-radius: 12px; overflow: hidden; height: 520px; display: flex; flex-direction: column; position: relative; }
+  .app-titlebar { height: 34px; display: flex; align-items: center; padding: 0 14px; font-size: 12px; font-weight: 600; letter-spacing: 0.5px; }
+  .app-titlebar .dots { display: flex; gap: 6px; margin-right: 12px; }
+  .app-titlebar .dot { width: 10px; height: 10px; border-radius: 50%; }
+  .app-body { flex: 1; display: flex; min-height: 0; }
+  .app-side { width: 172px; flex: none; display: flex; flex-direction: column; padding: 10px 8px; }
+  .nav-item { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 10px; border-radius: 8px; font-size: 12.5px; margin-bottom: 2px; cursor: pointer; }
+  .nav-item .ic { width: 16px; height: 16px; border-radius: 4px; flex: none; }
+  .nav-item .cnt { margin-left: auto; font-size: 11px; padding: 0 7px; border-radius: 10px; }
+  .app-main { flex: 1; min-width: 0; display: flex; flex-direction: column; padding: 12px; gap: 10px; }
+  .toolbar { display: flex; align-items: center; gap: 8px; }
+  .search { flex: 1; height: 30px; border-radius: 8px; display: flex; align-items: center; padding: 0 10px; gap: 6px; font-size: 12px; color: #888; }
+  .chips { display: flex; gap: 5px; }
+  .chip { height: 26px; padding: 0 10px; border-radius: 999px; font-size: 11.5px; display: flex; align-items: center; cursor: pointer; }
+  .seg { display: flex; gap: 2px; padding: 2px; border-radius: 999px; }
+  .seg b { width: 26px; height: 26px; border-radius: 999px; display: flex; align-items: center; justify-content: center; font-size: 12px; }
+  .grid-wall { flex: 1; display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; overflow: hidden; align-content: start; }
+  .cover { border-radius: 10px; overflow: hidden; aspect-ratio: 3/4; position: relative; }
+  .cover .t { position: absolute; left: 6px; right: 6px; bottom: 5px; font-size: 10px; line-height: 13px; color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,0.8); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  /* 浅色底（H）上封面文字用深色叠影，保持可读 */
+  .t-white .cover .t { color: #18181B; text-shadow: 0 1px 3px rgba(255,255,255,0.9); }
+  .t-claude .cover .t { color: #3D3929; text-shadow: 0 1px 3px rgba(255,255,255,0.85); }
+  .app-detail { width: 210px; flex: none; display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+  .detail-banner { height: 92px; border-radius: 10px; position: relative; overflow: hidden; }
+  .detail-banner .tt { position: absolute; left: 10px; right: 10px; bottom: 8px; font-size: 12px; font-weight: 600; }
+  .detail-btn { height: 30px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 600; }
+  .detail-meta { display: flex; flex-direction: column; gap: 5px; font-size: 11px; }
+  .detail-meta div { display: flex; justify-content: space-between; }
+  .detail-meta .k { opacity: 0.55; }
+  .detail-tags { display: flex; flex-wrap: wrap; gap: 4px; }
+  .detail-tags span { font-size: 10px; padding: 2px 7px; border-radius: 5px; }
+
+  /* ============ 各模板 token 层 ============ */
+  /* A. TRAE Nimbus 深色工程绿 */
+  .t-trae { background: #1A1B1D; }
+  .t-trae .app-titlebar { background: #1A1B1D; color: #D1D3DB; border-bottom: 1px solid rgba(224,226,242,0.08); }
+  .t-trae .dot { background: #2A2D31; }
+  .t-trae .app-side { background: #1A1B1D; border-right: 1px solid rgba(224,226,242,0.08); }
+  .t-trae .nav-item { color: #9599A6; }
+  .t-trae .nav-item:hover { background: rgba(224,226,242,0.06); }
+  .t-trae .nav-item.on { background: rgba(50,240,140,0.12); color: #32F08C; }
+  .t-trae .nav-item.on .cnt { background: rgba(50,240,140,0.2); color: #32F08C; }
+  .t-trae .nav-item .ic { background: rgba(224,226,242,0.1); }
+  .t-trae .nav-item .cnt { background: rgba(224,226,242,0.08); color: #9599A6; }
+  .t-trae .app-main { background: #1A1B1D; }
+  .t-trae .search { background: #222427; border: 1px solid rgba(224,226,242,0.1); }
+  .t-trae .chip { background: #222427; border: 1px solid rgba(224,226,242,0.1); color: #9599A6; }
+  .t-trae .chip.on { background: rgba(50,240,140,0.16); border-color: #32F08C; color: #32F08C; }
+  .t-trae .seg { background: #222427; border: 1px solid rgba(224,226,242,0.1); }
+  .t-trae .seg b { color: #9599A6; }
+  .t-trae .seg b.on { background: rgba(50,240,140,0.2); color: #32F08C; }
+  .t-trae .cover { background: #2A2D31; border: 1px solid rgba(224,226,242,0.06); }
+  .t-trae .cover.sel { box-shadow: 0 0 0 2px #32F08C; }
+  .t-trae .app-detail { background: #222427; border-left: 1px solid rgba(224,226,242,0.08); }
+  .t-trae .detail-banner { background: linear-gradient(135deg, #2DD28822, #1A1B1D); }
+  .t-trae .detail-btn { background: #32F08C; color: #0C0C0D; }
+  .t-trae .detail-meta { color: #9599A6; }
+  .t-trae .detail-tags span { background: rgba(224,226,242,0.08); color: #9599A6; }
+
+  /* B. Claude 暖纸 + 陶土 */
+  .t-claude { background: #FAF9F5; }
+  .t-claude .app-titlebar { background: #FAF9F5; color: #3D3929; border-bottom: 1px solid #E3E0D4; }
+  .t-claude .dot { background: #E3E0D4; }
+  .t-claude .app-side { background: #F5F4EE; border-right: 1px solid #E3E0D4; }
+  .t-claude .nav-item { color: #6E6D68; }
+  .t-claude .nav-item:hover { background: #EDE9DE; }
+  .t-claude .nav-item.on { background: #EBE4DA; color: #B0562F; }
+  .t-claude .nav-item.on .cnt { background: #C96442; color: #FAF9F5; }
+  .t-claude .nav-item .ic { background: #E3E0D4; }
+  .t-claude .nav-item .cnt { background: #EDE9DE; color: #6E6D68; }
+  .t-claude .app-main { background: #FAF9F5; }
+  .t-claude .search { background: #FFFFFF; border: 1px solid #E3E0D4; }
+  .t-claude .chip { background: #FFFFFF; border: 1px solid #E3E0D4; color: #6E6D68; }
+  .t-claude .chip.on { background: #C96442; border-color: #C96442; color: #FFFFFF; }
+  .t-claude .seg { background: #F5F4EF; border: 1px solid #E3E0D4; }
+  .t-claude .seg b { color: #6E6D68; }
+  .t-claude .seg b.on { background: #FFFFFF; color: #3D3929; }
+  .t-claude .cover { background: #EDE9DE; border: 1px solid #E3E0D4; }
+  .t-claude .cover.sel { box-shadow: 0 0 0 2px #C96442; }
+  .t-claude .app-detail { background: #F5F4EF; border-left: 1px solid #E3E0D4; }
+  .t-claude .detail-banner { background: linear-gradient(135deg, #EBC6B6, #F5F4EF); }
+  .t-claude .detail-btn { background: #C96442; color: #FFFFFF; }
+  .t-claude .detail-meta { color: #6E6D68; }
+  .t-claude .detail-tags span { background: #EDE9DE; color: #6E6D68; }
+
+  /* C. Volcengine 源力 浅蓝企业 */
+  .t-volc { background: #FFFFFF; }
+  .t-volc .app-titlebar { background: #FFFFFF; color: #1D2129; border-bottom: 1px solid #DDE2E9; }
+  .t-volc .dot { background: #DDE2E9; }
+  .t-volc .app-side { background: #F7F9FB; border-right: 1px solid #DDE2E9; }
+  .t-volc .nav-item { color: #4E5969; }
+  .t-volc .nav-item:hover { background: #F1F4F8; }
+  .t-volc .nav-item.on { background: #EBF1FF; color: #1664FF; }
+  .t-volc .nav-item.on .cnt { background: #1664FF; color: #FFFFFF; }
+  .t-volc .nav-item .ic { background: #DDE2E9; }
+  .t-volc .nav-item .cnt { background: #F1F4F8; color: #4E5969; }
+  .t-volc .app-main { background: #FFFFFF; }
+  .t-volc .search { background: #F7F9FB; border: 1px solid #DDE2E9; }
+  .t-volc .chip { background: #FFFFFF; border: 1px solid #DDE2E9; color: #4E5969; }
+  .t-volc .chip.on { background: #1664FF; border-color: #1664FF; color: #FFFFFF; }
+  .t-volc .seg { background: #F7F9FB; border: 1px solid #DDE2E9; }
+  .t-volc .seg b { color: #4E5969; }
+  .t-volc .seg b.on { background: #FFFFFF; color: #1664FF; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }
+  .t-volc .cover { background: #F1F4F8; border: 1px solid #E5E8EE; }
+  .t-volc .cover.sel { box-shadow: 0 0 0 2px #1664FF; }
+  .t-volc .app-detail { background: #F7F9FB; border-left: 1px solid #DDE2E9; }
+  .t-volc .detail-banner { background: linear-gradient(135deg, #CCDDFF, #F7F9FB); }
+  .t-volc .detail-btn { background: #1664FF; color: #FFFFFF; }
+  .t-volc .detail-meta { color: #4E5969; }
+  .t-volc .detail-tags span { background: #EBF1FF; color: #1664FF; }
+
+  /* D. Nerv 深色高对比红 */
+  .t-nerv { background: #0F0F10; }
+  .t-nerv .app-titlebar { background: #0F0F10; color: #F4F9FF; border-bottom: 1px solid #303136; }
+  .t-nerv .dot { background: #303136; }
+  .t-nerv .app-side { background: #1A1A1B; border-right: 1px solid #303136; }
+  .t-nerv .nav-item { color: #CFD2DD; }
+  .t-nerv .nav-item:hover { background: #292D32; }
+  .t-nerv .nav-item.on { background: #EA343A22; color: #EA343A; }
+  .t-nerv .nav-item.on .cnt { background: #EA343A; color: #FFFFFF; }
+  .t-nerv .nav-item .ic { background: #303136; }
+  .t-nerv .nav-item .cnt { background: #292D32; color: #CFD2DD; }
+  .t-nerv .app-main { background: #0F0F10; }
+  .t-nerv .search { background: #171718; border: 1px solid #303136; }
+  .t-nerv .chip { background: #171718; border: 1px solid #303136; color: #CFD2DD; }
+  .t-nerv .chip.on { background: #EA343A; border-color: #EA343A; color: #FFFFFF; }
+  .t-nerv .seg { background: #171718; border: 1px solid #303136; }
+  .t-nerv .seg b { color: #CFD2DD; }
+  .t-nerv .seg b.on { background: #EA343A; color: #FFFFFF; }
+  .t-nerv .cover { background: #191A1C; border: 1px solid #303136; }
+  .t-nerv .cover.sel { box-shadow: 0 0 0 2px #EA343A; }
+  .t-nerv .app-detail { background: #1A1A1B; border-left: 1px solid #303136; }
+  .t-nerv .detail-banner { background: linear-gradient(135deg, #EA343A33, #0F0F10); }
+  .t-nerv .detail-btn { background: #EA343A; color: #FFFFFF; }
+  .t-nerv .detail-meta { color: #CFD2DD; }
+  .t-nerv .detail-tags span { background: #292D32; color: #CFD2DD; }
+
+  /* E. HuskarUI dark 画廊（antd 规范深色） */
+  .t-hus { background: #141414; }
+  .t-hus .app-titlebar { background: #141414; color: rgba(255,255,255,0.88); border-bottom: 1px solid #303030; }
+  .t-hus .dot { background: #424242; }
+  .t-hus .app-side { background: #141414; border-right: 1px solid #303030; }
+  .t-hus .nav-item { color: rgba(255,255,255,0.65); }
+  .t-hus .nav-item:hover { background: rgba(255,255,255,0.08); }
+  .t-hus .nav-item.on { background: #1668DC22; color: #1668DC; }
+  .t-hus .nav-item.on .cnt { background: #1668DC; color: #FFFFFF; }
+  .t-hus .nav-item .ic { background: #303030; }
+  .t-hus .nav-item .cnt { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.65); }
+  .t-hus .app-main { background: #141414; }
+  .t-hus .search { background: #1F1F1F; border: 1px solid #424242; }
+  .t-hus .chip { background: #1F1F1F; border: 1px solid #424242; color: rgba(255,255,255,0.65); }
+  .t-hus .chip.on { background: #1668DC; border-color: #1668DC; color: #FFFFFF; }
+  .t-hus .seg { background: #1F1F1F; border: 1px solid #424242; }
+  .t-hus .seg b { color: rgba(255,255,255,0.65); }
+  .t-hus .seg b.on { background: #1668DC; color: #FFFFFF; }
+  .t-hus .cover { background: #262626; border: 1px solid #303030; }
+  .t-hus .cover.sel { box-shadow: 0 0 0 2px #1668DC; }
+  .t-hus .app-detail { background: #1F1F1F; border-left: 1px solid #303030; }
+  .t-hus .detail-banner { background: linear-gradient(135deg, #1668DC33, #141414); }
+  .t-hus .detail-btn { background: #1668DC; color: #FFFFFF; }
+  .t-hus .detail-meta { color: rgba(255,255,255,0.65); }
+  .t-hus .detail-tags span { background: rgba(255,255,255,0.12); color: rgba(255,255,255,0.65); }
+
+  /* F. Golden Time 黑金暖棕（纯黑近底 + 金棕点，无蓝） */
+  .t-gold { background: #050302; }
+  .t-gold .app-titlebar { background: #050302; color: #E6DCCD; border-bottom: 1px solid #2D2B26; }
+  .t-gold .dot { background: #2D2B26; }
+  .t-gold .app-side { background: #050302; border-right: 1px solid #2D2B26; }
+  .t-gold .nav-item { color: #B8AD9C; }
+  .t-gold .nav-item:hover { background: rgba(245,240,231,0.07); }
+  .t-gold .nav-item.on { background: rgba(245,240,231,0.12); color: #E6DCCD; }
+  .t-gold .nav-item.on .cnt { background: #806A4D; color: #F5F0E7; }
+  .t-gold .nav-item .ic { background: #2D2B26; }
+  .t-gold .nav-item .cnt { background: #2D2B26; color: #B8AD9C; }
+  .t-gold .app-main { background: #050302; }
+  .t-gold .search { background: #100D09; border: 1px solid #2D2B26; }
+  .t-gold .chip { background: #100D09; border: 1px solid #2D2B26; color: #B8AD9C; }
+  .t-gold .chip.on { background: #806A4D; border-color: #806A4D; color: #F5F0E7; }
+  .t-gold .seg { background: #100D09; border: 1px solid #2D2B26; }
+  .t-gold .seg b { color: #B8AD9C; }
+  .t-gold .seg b.on { background: #806A4D; color: #F5F0E7; }
+  .t-gold .cover { background: #16130E; border: 1px solid #2D2B26; }
+  .t-gold .cover.sel { box-shadow: 0 0 0 2px #B08D57; }
+  .t-gold .app-detail { background: #0F0C08; border-left: 1px solid #2D2B26; }
+  .t-gold .detail-banner { background: linear-gradient(135deg, #806A4D55, #050302); }
+  .t-gold .detail-btn { background: #E6DCCD; color: #050302; }
+  .t-gold .detail-meta { color: #D1C7B6; }
+  .t-gold .detail-tags span { background: rgba(245,240,231,0.08); color: #D1C7B6; }
+
+  /* G. Minimalist 纯黑单色（zinc 全灰阶，零彩色） */
+  .t-mono { background: #0A0A0A; }
+  .t-mono .app-titlebar { background: #0A0A0A; color: #FAFAFA; border-bottom: 1px solid #27272A; }
+  .t-mono .dot { background: #27272A; }
+  .t-mono .app-side { background: #0A0A0A; border-right: 1px solid #27272A; }
+  .t-mono .nav-item { color: #A1A1AA; }
+  .t-mono .nav-item:hover { background: #27272A; }
+  .t-mono .nav-item.on { background: #27272A; color: #FAFAFA; }
+  .t-mono .nav-item.on .cnt { background: #FAFAFA; color: #0A0A0A; }
+  .t-mono .nav-item .ic { background: #27272A; }
+  .t-mono .nav-item .cnt { background: #27272A; color: #A1A1AA; }
+  .t-mono .app-main { background: #0A0A0A; }
+  .t-mono .search { background: #121212; border: 1px solid #3F3F46; }
+  .t-mono .chip { background: #121212; border: 1px solid #3F3F46; color: #A1A1AA; }
+  .t-mono .chip.on { background: #FAFAFA; border-color: #FAFAFA; color: #0A0A0A; }
+  .t-mono .seg { background: #121212; border: 1px solid #3F3F46; }
+  .t-mono .seg b { color: #A1A1AA; }
+  .t-mono .seg b.on { background: #FAFAFA; color: #0A0A0A; }
+  .t-mono .cover { background: #171717; border: 1px solid #27272A; }
+  .t-mono .cover.sel { box-shadow: 0 0 0 2px #FAFAFA; }
+  .t-mono .app-detail { background: #121212; border-left: 1px solid #27272A; }
+  .t-mono .detail-banner { background: linear-gradient(135deg, #FAFAFA1A, #0A0A0A); }
+  .t-mono .detail-btn { background: #FAFAFA; color: #0A0A0A; }
+  .t-mono .detail-meta { color: #A1A1AA; }
+  .t-mono .detail-tags span { background: #27272A; color: #A1A1AA; }
+
+  /* H. Minimalist 浅色极简（纯白 + 黑字，唯一的浅色） */
+  .t-white { background: #FFFFFF; }
+  .t-white .app-titlebar { background: #FFFFFF; color: #18181B; border-bottom: 1px solid #E4E4E7; }
+  .t-white .dot { background: #E4E4E7; }
+  .t-white .app-side { background: #FAFAFA; border-right: 1px solid #E4E4E7; }
+  .t-white .nav-item { color: #71717A; }
+  .t-white .nav-item:hover { background: #F4F4F5; }
+  .t-white .nav-item.on { background: #F4F4F5; color: #18181B; }
+  .t-white .nav-item.on .cnt { background: #18181B; color: #FAFAFA; }
+  .t-white .nav-item .ic { background: #E4E4E7; }
+  .t-white .nav-item .cnt { background: #F4F4F5; color: #71717A; }
+  .t-white .app-main { background: #FFFFFF; }
+  .t-white .search { background: #FAFAFA; border: 1px solid #E4E4E7; }
+  .t-white .chip { background: #FFFFFF; border: 1px solid #E4E4E7; color: #71717A; }
+  .t-white .chip.on { background: #18181B; border-color: #18181B; color: #FAFAFA; }
+  .t-white .seg { background: #F4F4F5; border: 1px solid #E4E4E7; }
+  .t-white .seg b { color: #71717A; }
+  .t-white .seg b.on { background: #FFFFFF; color: #18181B; box-shadow: 0 1px 4px rgba(0,0,0,0.06); }
+  .t-white .cover { background: #F4F4F5; border: 1px solid #E4E4E7; }
+  .t-white .cover.sel { box-shadow: 0 0 0 2px #18181B; }
+  .t-white .app-detail { background: #FAFAFA; border-left: 1px solid #E4E4E7; }
+  .t-white .detail-banner { background: linear-gradient(135deg, #18181B14, #FAFAFA); }
+  .t-white .detail-btn { background: #18181B; color: #FAFAFA; }
+  .t-white .detail-meta { color: #71717A; }
+  .t-white .detail-tags span { background: #F4F4F5; color: #71717A; }
+
+  .legend { font-size: 12px; color: #999; margin: 18px auto 0; max-width: 900px; text-align: center; line-height: 1.8; }
+</style>
+</head>
+<body>
+<div class="page-title">
+  <h1>羽花 HaneHana — 设计方向对比</h1>
+  <p>四个模板，同一个界面：侧栏 + 封面墙 + 详情面板。均用对应设计系统的真实 token 渲染。</p>
+</div>
+<div class="grid">
+  <!-- A: TRAE -->
+  <div class="card">
+    <div class="card-head"><h2>方向 A</h2><span class="src">TRAE Nimbus · 深色工程</span><span class="sig">品牌绿 · 夜航仪表</span></div>
+    <div class="frame"><div class="app t-trae">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- B: Claude -->
+  <div class="card">
+    <div class="card-head"><h2>方向 B</h2><span class="src">Claude · 暖纸编辑</span><span class="sig">陶土橙 · 书本质感</span></div>
+    <div class="frame"><div class="app t-claude">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- C: Volcengine -->
+  <div class="card">
+    <div class="card-head"><h2>方向 C</h2><span class="src">Volcengine 源力 · 浅蓝企业</span><span class="sig">源力蓝 · 克制产品</span></div>
+    <div class="frame"><div class="app t-volc">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- D: Nerv -->
+  <div class="card">
+    <div class="card-head"><h2>方向 D</h2><span class="src">Nerv · 深色高对比</span><span class="sig">警示红 · 监控舱</span></div>
+    <div class="frame"><div class="app t-nerv">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- E: HuskarUI (antd dark) -->
+  <div class="card">
+    <div class="card-head"><h2>方向 E</h2><span class="src">HuskarUI · antd 规范深色</span><span class="sig">规范蓝 · 官方复刻</span></div>
+    <div class="frame"><div class="app t-hus">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- F: Golden Time 黑金 -->
+  <div class="card">
+    <div class="card-head"><h2>方向 F</h2><span class="src">Golden Time · 黑金暖棕</span><span class="sig">纯黑近底 · 无蓝</span></div>
+    <div class="frame"><div class="app t-gold">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- G: Minimalist 纯黑单色 -->
+  <div class="card">
+    <div class="card-head"><h2>方向 G</h2><span class="src">Minimalist · 纯黑单色</span><span class="sig">zinc 灰阶 · 零彩色</span></div>
+    <div class="frame"><div class="app t-mono">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+
+  <!-- H: Minimalist 浅色极简 -->
+  <div class="card">
+    <div class="card-head"><h2>方向 H</h2><span class="src">Minimalist · 浅色极简</span><span class="sig">纯白 · 唯一的浅色</span></div>
+    <div class="frame"><div class="app t-white">
+      <div class="app-titlebar"><div class="dots"><span class="dot"></span><span class="dot"></span><span class="dot"></span></div>羽花 HaneHana</div>
+      <div class="app-body">
+        <div class="app-side">
+          <div class="nav-item on"><span class="ic"></span>全部游戏<span class="cnt">24</span></div>
+          <div class="nav-item"><span class="ic"></span>下载任务<span class="cnt">3</span></div>
+          <div style="flex:1"></div>
+          <div class="nav-item"><span class="ic"></span>扫描导入</div>
+          <div class="nav-item"><span class="ic"></span>设置</div>
+        </div>
+        <div class="app-main">
+          <div class="toolbar">
+            <div class="search">⌕ 搜索游戏 / 标签…</div>
+            <div class="chips"><span class="chip on">全部</span><span class="chip">RPG</span><span class="chip">AVG</span></div>
+            <div class="seg"><b class="on">▦</b><b>≡</b></div>
+          </div>
+          <div class="grid-wall">
+            <div class="cover sel"><div class="t">美少女万华镜</div></div>
+            <div class="cover"><div class="t">命运石之门</div></div>
+            <div class="cover"><div class="t">White Album 2</div></div>
+            <div class="cover"><div class="t">Summer Pockets</div></div>
+            <div class="cover"><div class="t">ATRI</div></div>
+            <div class="cover"><div class="t">月姫</div></div>
+          </div>
+        </div>
+        <div class="app-detail">
+          <div class="detail-banner"><div class="tt">美少女万华镜 -理与迷宫的少女们-</div></div>
+          <div class="detail-btn">▶ 启动游戏</div>
+          <div class="detail-meta">
+            <div><span class="k">游玩时长</span><span>26 小时</span></div>
+            <div><span class="k">上次游玩</span><span>2026-09-20</span></div>
+            <div><span class="k">评分</span><span>★ 8.9</span></div>
+          </div>
+          <div class="detail-tags"><span>汉化版</span><span>全年龄</span><span>恋爱</span><span>催泪</span></div>
+        </div>
+      </div>
+    </div></div>
+  </div>
+</div>
+
+<p class="legend">
+  A「夜航仪表」深绿 · B「暖纸书本」陶土橙 · C「源力产品」浅蓝 · D「监控舱」警示红 · E「官方复刻」antd 深蓝<br/>
+  F「黑金暖棕」= 真正纯黑底 + 金棕点缀，暖色调完全无蓝 · G「纯黑单色」= 全灰阶零彩色，最「狠」的克制<br/>
+  H「浅色极简」= 纯白 + 黑字，唯一不吃深色的选项，跟所有深色版差别最大
+</p>
+</body>
+</html>

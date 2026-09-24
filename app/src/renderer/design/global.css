@@ -5,10 +5,15 @@
  * 玻璃矩阵：
  *   - .glass       窗口级固定面板（主侧栏/详情面板外壳）：panelGlass + 16px blur
  *   - .glass-float 浮层（antd 走自身 token，本类是手写浮层兜底）：float 实色
- *   - .glass-card  卡片级（封面卡/任务行/工具条）：card 实半透明，无 blur（禁进滚动容器）
+ *   - 卡片级（封面卡/任务行/工具条）在各组件内自持样式：card 实半透明，无 blur
+ *     （禁进滚动容器），hover 行为各自声明——曾有一个 .glass-card 全局类，
+ *     零引用后移除（P2 死代码）。
  */
 :root {
   color-scheme: dark;
+}
+:root[data-theme='light'] {
+  color-scheme: light;
 }
 
 html,
@@ -36,7 +41,7 @@ body,
 /* 自定义标题栏拖拽区。按钮区必须 no-drag，否则点不动。 */
 .titlebar {
   -webkit-app-region: drag;
-  height: var(--hh-layout-titlebarh);
+  height: var(--hh-layout-titlebar-h);
   display: flex;
   align-items: center;
   padding: 0 var(--hh-space-x3) 0 var(--hh-space-x4);
@@ -50,40 +55,23 @@ body,
 
 /* ============ 面板级玻璃（固定面板，不进滚动容器） ============ */
 .glass {
-  background: var(--hh-color-panelglass);
-  backdrop-filter: blur(var(--hh-glass-blurpanel)) saturate(var(--hh-glass-saturate));
-  -webkit-backdrop-filter: blur(var(--hh-glass-blurpanel)) saturate(var(--hh-glass-saturate));
-  border: 1px solid var(--hh-color-panelglassborder);
+  background: var(--hh-color-panel-glass);
+  backdrop-filter: blur(var(--hh-glass-blur-panel)) saturate(var(--hh-glass-saturate));
+  -webkit-backdrop-filter: blur(var(--hh-glass-blur-panel)) saturate(var(--hh-glass-saturate));
+  border: 1px solid var(--hh-color-panel-glass-border);
   border-radius: var(--hh-radius-panel);
   box-shadow:
     var(--hh-shadow-card),
-    inset 0 1px 0 var(--hh-color-panelglasshighlight);
+    inset 0 1px 0 var(--hh-color-panel-glass-highlight),
+    inset 0 -1px 0 var(--hh-color-card-border);
 }
 
 /* 浮层级：Modal/下拉/Popconfirm 的兜底材质（antd 自身已走 component tokens） */
 .glass-float {
   background: var(--hh-color-float);
-  border: 1px solid var(--hh-color-floatborder);
+  border: 1px solid var(--hh-color-float-border);
   border-radius: var(--hh-radius-modal);
   box-shadow: var(--hh-shadow-float);
-}
-
-/* 卡片级：封面卡/任务行/工具条 —— 不自带 blur（防滚动容器性能灾难） */
-.glass-card {
-  background: var(--hh-color-card);
-  border: 1px solid var(--hh-color-cardborder);
-  border-radius: var(--hh-radius-lg);
-  transition:
-    transform var(--hh-motion-med) var(--hh-motion-easemove),
-    box-shadow var(--hh-motion-med) var(--hh-motion-easemove),
-    border-color var(--hh-motion-med) var(--hh-motion-easemove),
-    background var(--hh-motion-med) var(--hh-motion-easemove);
-}
-.glass-card:hover {
-  transform: translateY(-4px);
-  background: var(--hh-color-cardhover);
-  border-color: var(--hh-color-panelglassborder);
-  box-shadow: var(--hh-shadow-cardhover);
 }
 
 /* ============ 数字列统一 tabular-nums（铁律 §0-8） ============ */
@@ -100,14 +88,14 @@ body,
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.16);
+  background: var(--hh-color-surface-strong);
   border-radius: 999px;
   border: 4px solid transparent;
   background-clip: padding-box;
 }
 ::-webkit-scrollbar-thumb:hover {
   border-width: 2.5px;
-  background: rgba(255, 255, 255, 0.28);
+  background: var(--hh-color-surface-hover);
   background-clip: padding-box;
 }
 
@@ -142,7 +130,7 @@ body,
   background: var(--hh-color-float) !important;
 }
 .ant-modal-header {
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--hh-color-card-border);
 }
 .ant-input,
 .ant-input-number,
@@ -151,7 +139,7 @@ body,
   background: var(--hh-color-input) !important;
 }
 .ant-btn-primary {
-  box-shadow: 0 4px 14px rgba(77, 163, 255, 0.3);
+  box-shadow: 0 4px 14px var(--hh-color-accent-shadow);
 }
 .ant-select-dropdown,
 .ant-popover-inner,

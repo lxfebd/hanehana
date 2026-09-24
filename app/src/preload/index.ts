@@ -11,6 +11,7 @@ import type {
   TaskRow,
   UpdateStatus,
 } from '../shared/types'
+import type { Mirror, ResolveOutcome, SiteDownloadPush, SiteInfo, SiteMirrorOutcome, SiteSearchOutcome } from '../shared/ipc'
 
 const bridge = {
   /** 应用信息 + 引擎自检结论（设置页据此说明下载为什么不可用）。 */
@@ -65,6 +66,22 @@ const bridge = {
     const listener = (_e: Electron.IpcRendererEvent, id: string): void => cb(id)
     ipcRenderer.on(Ipc.TaskFocus, listener)
     return () => ipcRenderer.removeListener(Ipc.TaskFocus, listener)
+  },
+
+  // ---- 游戏站 ----
+  sitesList: (): Promise<SiteInfo[]> => ipcRenderer.invoke(Ipc.SitesList),
+  sitesSearch: (siteId: string, keyword: string): Promise<SiteSearchOutcome> =>
+    ipcRenderer.invoke(Ipc.SitesSearch, siteId, keyword),
+  sitesMirrors: (siteId: string, detailUrl: string): Promise<SiteMirrorOutcome> =>
+    ipcRenderer.invoke(Ipc.SitesMirrors, siteId, detailUrl),
+  sitesResolve: (mirror: Mirror): Promise<ResolveOutcome> => ipcRenderer.invoke(Ipc.SitesResolve, mirror),
+  sitesAddTask: (input: { url: string; filename?: string }): Promise<AddResult> =>
+    ipcRenderer.invoke(Ipc.SitesAddTask, input),
+  webviewOpenExternal: (url: string): Promise<void> => ipcRenderer.invoke(Ipc.WebviewOpenExternal, url),
+  onSiteDownload: (cb: (p: SiteDownloadPush) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: SiteDownloadPush): void => cb(p)
+    ipcRenderer.on(Ipc.SiteDownload, listener)
+    return () => ipcRenderer.removeListener(Ipc.SiteDownload, listener)
   },
 }
 
