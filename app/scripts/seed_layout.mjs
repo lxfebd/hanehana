@@ -96,14 +96,17 @@ const games = [
 
 writeFileSync(join(DATA_DIR, 'games.json'), JSON.stringify(games, null, 2), 'utf8')
 
-// 下载任务：覆盖各状态与长文件名
+// 下载任务：覆盖各状态与长文件名。
+// 「下载中」任务指向不可路由地址（10.255.255.1，RFC1918 黑洞）：真引擎启动后
+// 会一直停在连接中，截图前不会因 404/DNS 抢先翻成失败——验收图才能拍到
+// 粉色下载中状态与进度条（可路由的 example.com 会在开拍前就全变失败）。
 const tasks = [
-  { id: 't1', url: 'https://example.com/visual-novel-collection-part-1-of-12.7z', name: '美少女万华镜合集包 01.7z', state: 'downloading', total: 8.5e9, downloaded: 3.2e9, note: '测试长备注：包含全部汉化补丁与特典内容', threads: 16, error: '' },
-  { id: 't2', url: 'https://example.com/steins-gate-0-cn-patch.7z', name: '命运石之门0 汉化补丁.7z', state: 'queued', total: 2.1e9, downloaded: 0, note: '', threads: 8, error: '' },
-  { id: 't3', url: 'https://example.com/wa2-complete-pack.zip', name: 'White Album 2 完全版合集（含特典OST）.zip', state: 'paused', total: 12e9, downloaded: 6.8e9, note: '分卷下载中', threads: 32, error: '' },
-  { id: 't4', url: 'https://example.com/hanapatch.exe', name: '夏日补丁 v2.0.exe', state: 'done', total: 4e8, downloaded: 4e8, note: '', threads: 4, error: '' },
+  { id: 't1', url: 'https://10.255.255.1/visual-novel-collection-part-1-of-12.7z', name: '美少女万华镜合集包 01.7z', state: 'downloading', total: 8.5e9, downloaded: 3.2e9, note: '测试长备注：包含全部汉化补丁与特典内容', threads: 16, error: '' },
+  { id: 't2', url: 'https://10.255.255.1/steins-gate-0-cn-patch.7z', name: '命运石之门0 汉化补丁.7z', state: 'queued', total: 2.1e9, downloaded: 0, note: '', threads: 8, error: '' },
+  { id: 't3', url: 'https://10.255.255.1/wa2-complete-pack.zip', name: 'White Album 2 完全版合集（含特典OST）.zip', state: 'paused', total: 12e9, downloaded: 6.8e9, note: '分卷下载中', threads: 32, error: '' },
+  { id: 't4', url: 'https://10.255.255.1/hanapatch.exe', name: '夏日补丁 v2.0.exe', state: 'done', total: 4e8, downloaded: 4e8, note: '', threads: 4, error: '' },
   { id: 't5', url: 'https://example.com/broken-link.7z', name: '失效链接测试文件.7z', state: 'error', total: 0, downloaded: 0, note: '下载中断', threads: 8, error: '服务器连接被重置' },
-  { id: 't6', url: 'https://example.com/atribgm.rar', name: 'ATRI 原声带 OST.rar', state: 'downloading', total: 9.8e8, downloaded: 7.7e8, note: '下完自动解压', threads: 12, error: '' },
+  { id: 't6', url: 'https://10.255.255.1/atribgm.rar', name: 'ATRI 原声带 OST.rar', state: 'downloading', total: 9.8e8, downloaded: 7.7e8, note: '下完自动解压', threads: 12, error: '' },
 ]
 const defs = tasks.map((t) => ({
   id: t.id, url: t.url, dest: `D:\\Downloads\\${t.name}`, threads: t.threads, proxy: '',

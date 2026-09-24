@@ -2,16 +2,21 @@
 // 断言对象是真实渲染出来的 DOM/CSS（不是截图），可与 docs/shots/ 基准图互补。
 // 自带导航：无论从哪个页面连入，都会回到库页、点开详情与设置弹窗再逐条断言。
 //
-// 用法：node scripts/cdp_visual.mjs（默认连 9223，可用 HANEHANA_DEBUG_PORT 覆盖）
-import { join, dirname } from 'node:path'
+// 连接方式（Electron 44 / Chromium 140：/json HTTP 端点已不可用）：
+// 浏览器级 WS URL 由启动方（phase5_visual / redesign_accept）从 stderr 解析后
+// 经 HANEHANA_WS_URL 传入，脚本用 Target.getTargets + attachToTarget 挂到页面。
+// 用法：node scripts/cdp_visual.mjs（需 HANEHANA_WS_URL；可选 HANEHANA_DEBUG_PORT 仅记录）
+import { dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
-const PORT = process.env.HANEHANA_DEBUG_PORT || '9223'
+const WS_URL = process.env.HANEHANA_WS_URL
+if (!WS_URL) {
+  console.error('HANEHANA_WS_URL 未设置：需要浏览器级 DevTools WS URL（从应用 stderr 的 DevTools listening 行解析）')
+  process.exit(2)
+}
 
-const pages = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()
-const page = pages.find((p) => p.type === 'page' && !p.url.startsWith('devtools'))
-const ws = new WebSocket(page.webSocketDebuggerUrl)
+const ws = new WebSocket(WS_URL)
 let msgId = 0
 const pending = new Map()
 ws.onmessage = (ev) => {
@@ -21,13 +26,28 @@ ws.onmessage = (ev) => {
     pending.delete(m.id)
   }
 }
-await new Promise((r) => (ws.onopen = r))
-const send = (method, params = {}) =>
-  new Promise((res) => {
+await new Promise((resolve, reject) => {
+  const to = setTimeout(() => reject(new Error('browser ws open timeout')), 10000)
+  ws.onopen = () => { clearTimeout(to); resolve() }
+  ws.onerror = (e) => { clearTimeout(to); reject(new Error('browser ws error ' + (e?.message || ''))) }
+})
+let sessionId = null
+const sendRaw = (method, params = {}) =>
+  new Promise((res, rej) => {
     const mid = ++msgId
     pending.set(mid, res)
-    ws.send(JSON.stringify({ id: mid, method, params }))
+    const msg = { id: mid, method, params }
+    if (sessionId) msg.sessionId = sessionId // sessionId 必须在消息顶层，否则被当作普通 params 忽略
+    ws.send(JSON.stringify(msg))
+    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error('cdp timeout: ' + method)) } }, 12000)
   })
+const targets = await sendRaw('Target.getTargets')
+const page = (targets.result?.targetInfos || []).find((t) => t.type === 'page')
+if (!page) throw new Error('no page target')
+const att = await sendRaw('Target.attachToTarget', { targetId: page.targetId, flatten: true })
+sessionId = att.result?.sessionId
+if (!sessionId) throw new Error('attachToTarget failed: ' + JSON.stringify(att))
+const send = (method, params = {}) => sendRaw(method, params)
 const evalJs = async (expr) => {
   const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
   if (r.result?.exceptionDetails) return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
@@ -45,7 +65,15 @@ await evalJs(`(() => {
   const lib = [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('全部游戏'))
   if (lib) lib.click()
 })()`)
-await wait(500)
+// 等待库页渲染完成（封面卡挂载），否则断言会落在空白帧上
+const ready = await evalJs(`(async () => {
+  for (let i = 0; i < 40; i++) {
+    if (document.querySelectorAll('.cover-card').length > 0) return true
+    await new Promise(r => setTimeout(r, 250))
+  }
+  return false
+})()`)
+if (!ready) console.warn('库页封面卡 10s 未出现，继续尝试')
 await evalJs(`document.querySelector('.cover-card')?.click()`)
 await wait(600)
 
@@ -100,12 +128,18 @@ const hitTargets = await evalJs(`(async () => {
 })()`)
 check('点击目标 ≥30px', hitTargets.n === 0 || hitTargets.bad.length === 0, `n=${hitTargets.n} dpr=${hitTargets.dpr} bad=[${hitTargets.bad}]`)
 
-// 5. img @error 兜底：封面/横幅的 img 都挂了 onerror（隐藏破图）
-const imgGuard = await evalJs(`(() => {
+// 5. img @error 兜底：触发错误事件后破图会被隐藏（Vue @error 绑定不会暴露为
+//    img.onerror 属性，正确做法是 dispatchEvent 一个 error 事件验证隐藏行为）
+const imgGuard = await evalJs(`(async () => {
   const imgs = [...document.querySelectorAll('.cover-card img, .detail-banner img, .r-cover img')]
   if (!imgs.length) return { n: 0, ok: true }
-  const ok = imgs.every(img => img.onerror !== null)
-  return { n: imgs.length, ok }
+  const bad = []
+  for (const img of imgs) {
+    img.dispatchEvent(new Event('error', { bubbles: false }))
+    // @error 处理 → img.style.display = 'none'
+    if (getComputedStyle(img).display !== 'none') bad.push(img.className || img.src.slice(0, 40))
+  }
+  return { n: imgs.length, ok: bad.length === 0, bad }
 })()`)
 check('封面/横幅 img @error 兜底', imgGuard.ok, `n=${imgGuard.n}`)
 
