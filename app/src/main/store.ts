@@ -8,8 +8,8 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
-import type { ErrorParams, Settings, TaskDef, TaskState } from '../shared/types'
-import { DEFAULT_SETTINGS } from '../shared/types'
+import type { ErrorParams, Settings, TaskDef, TaskState, ThemeMode, ThemePresetId } from '../shared/types'
+import { DEFAULT_SETTINGS, THEME_MODES, THEME_PRESETS } from '../shared/types'
 
 const TASK_STATES: readonly string[] = [
   'queued',
@@ -100,6 +100,14 @@ export function normalizeSettings(raw: unknown): Settings {
     if (typeof d.max_concurrent === 'number') s.max_concurrent = clampInt(d.max_concurrent, 1, 16)
     if (typeof d.confirm_delete === 'boolean') s.confirm_delete = d.confirm_delete
     if (typeof d.dark === 'boolean') s.dark = d.dark
+    if (typeof d.theme_mode === 'string' && THEME_MODES.includes(d.theme_mode as ThemeMode)) {
+      s.theme_mode = d.theme_mode as ThemeMode
+    }
+    if (typeof d.theme_preset === 'string' && THEME_PRESETS.includes(d.theme_preset as ThemePresetId)) {
+      s.theme_preset = d.theme_preset as ThemePresetId
+    }
+    // 自定义背景图：只收存在的路径，防手改坏值
+    if (typeof d.bg_image === 'string' && d.bg_image && existsSync(d.bg_image)) s.bg_image = d.bg_image
     if (typeof d.notify_on_finish === 'boolean') s.notify_on_finish = d.notify_on_finish
     if (typeof d.notify_on_error === 'boolean') s.notify_on_error = d.notify_on_error
     if (typeof d.close_to_tray === 'boolean') s.close_to_tray = d.close_to_tray

@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 import { Ipc } from '../shared/ipc'
 import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
-import type { TaskProgressPush, TaskRow } from '../shared/types'
+import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
 import { handleScan, handleRemove, handleUpdate, handleOpenDir, handleLaunch, handleRunning, detachAllRunning } from './games'
@@ -100,6 +100,21 @@ function applyThemeToWindow(dark: boolean): void {
   }
 }
 
+/**
+ * 三态主题模式 → 主进程侧生效值。
+ * - system：nativeTheme.themeSource = 'system'，由系统深浅决定
+ * - dark/light：固定覆盖
+ * 返回当前生效的 dark（供窗口/渲染层同步），系统模式时取 shouldUseDarkColors。
+ */
+function applyThemeMode(mode: 'system' | 'dark' | 'light'): boolean {
+  if (mode === 'system') {
+    nativeTheme.themeSource = 'system'
+    return nativeTheme.shouldUseDarkColors
+  }
+  nativeTheme.themeSource = mode
+  return mode === 'dark'
+}
+
 function createWindow(): void {
   const initialDark = store ? store.loadSettings().dark : true
   const winOpts: Electron.BrowserWindowConstructorOptions = {
@@ -123,7 +138,9 @@ function createWindow(): void {
   }
 
   win = new BrowserWindow(winOpts)
-  nativeTheme.themeSource = initialDark ? 'dark' : 'light'
+  // 三态：system 模式跟随系统当前深浅（而不是写死的 initialDark）
+  const effDark = applyThemeMode(store ? store.loadSettings().theme_mode : 'dark')
+  applyThemeToWindow(effDark)
 
   win.on('ready-to-show', () => {
     win?.show()
@@ -395,6 +412,20 @@ function wireIpc(): void {
     return picked
   })
 
+  // 自定义背景图：原生文件对话框返回路径（渲染层存进 settings.bg_image）。
+  // 只放行图片格式；路径交给 normalizeSettings 的 existsSync 兜底。
+  ipcMain.handle(Ipc.PickBgImage, async () => {
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      title: '选择背景图',
+      filters: [
+        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] },
+      ],
+    }
+    const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return r.canceled ? '' : r.filePaths[0] ?? ''
+  })
+
   // 元数据刮削
   ipcMain.handle(Ipc.ScrapeSearch, (_e, title: string) => searchScrape(title))
   ipcMain.handle(Ipc.ScrapeApply, (_e, gameId: unknown, result: unknown) => {
@@ -479,7 +510,20 @@ function wireIpc(): void {
   ipcMain.handle(Ipc.SettingsGet, () => s.loadSettings())
   ipcMain.handle(Ipc.SettingsSave, async (_e, next) => {
     // 不直接把渲染层的对象写盘：normalizeSettings 会把非法字段回落到默认值。
+    const prev = s.loadSettings()
+    const raw = (next && typeof next === 'object' ? next : {}) as Partial<Settings>
     const saved = normalizeSettings(next)
+    // 固定模式（非 system）下 dark 与 theme_mode 必须一致，否则窗口跟谁走说不清：
+    // - 只改了 theme_mode（老脚本只翻 dark 时 mode 原样回带）→ 以 theme_mode 对齐 dark
+    // - 只改了 dark（老调用 {...s, dark:x}，mode 原样回带）→ theme_mode 跟随 dark 意图
+    // - 两者都改（新设置面板一次提交）→ 信任调用方已对齐
+    if (saved.theme_mode !== 'system') {
+      const modeChanged = typeof raw.theme_mode === 'string' && raw.theme_mode !== prev.theme_mode
+      const darkChanged = typeof raw.dark === 'boolean' && raw.dark !== prev.dark
+      if (modeChanged && !darkChanged) saved.dark = saved.theme_mode === 'dark'
+      else if (darkChanged && !modeChanged) saved.theme_mode = saved.dark ? 'dark' : 'light'
+      else saved.dark = saved.theme_mode === 'dark'
+    }
     // 代理要「先确认能下发，再落盘」。顺序反了的话：盘里是新代理、Chromium 还在用
     // 旧代理，用户看到的就是「设置了代理但没生效」，而这正是最难自己查出来的一种。
     const bad = proxyFormatError(saved.proxy)
@@ -491,8 +535,15 @@ function wireIpc(): void {
     }
     s.saveSettings(saved)
     m.applySettings(saved)
-    // 深浅主题：主进程窗口底色/标题栏/原生控件跟随设置落盘值。
-    applyThemeToWindow(saved.dark)
+    // 深浅主题：主进程窗口底色/标题栏/原生控件跟随模式（system 时按系统当前深浅）。
+    const effDark = applyThemeMode(saved.theme_mode)
+    applyThemeToWindow(effDark)
+    // 落盘值保持「当前生效」语义：system 模式时把 dark 同步成系统实际值，
+    // 渲染层与老脚本读到的 dark 始终与屏幕一致。
+    if (saved.theme_mode === 'system' && saved.dark !== effDark) {
+      s.saveSettings({ ...saved, dark: effDark })
+      saved.dark = effDark
+    }
     // 防休眠开关改了要立刻生效，不能等下一秒的定时器——用户可能正把最后一个
     // 任务勾上，然后就走开了。
     syncKeepAwake()
@@ -585,6 +636,18 @@ if (gotSingleInstanceLock) {
     wireIpc()
     createWindow()
     createTray()
+    // 跟随系统：系统深浅切换时实时同步窗口 + 渲染层（theme_mode='system' 才有效，
+    // 固定深浅时 themeSource 已锁定，'updated' 不会因设置而触发）。
+    nativeTheme.on('updated', () => {
+      const st = store.loadSettings()
+      if (st.theme_mode !== 'system') return
+      const effDark = nativeTheme.shouldUseDarkColors
+      applyThemeToWindow(effDark)
+      if (st.dark !== effDark) {
+        store.saveSettings({ ...st, dark: effDark })
+      }
+      win?.webContents.send(Ipc.ThemeChanged, { dark: effDark })
+    })
     // 自动更新：状态推送进渲染层（“关于”页渲染更新提示）。
     setUpdatePush((s) => win?.webContents.send(Ipc.UpdateStatus, s))
     initAutoUpdater()

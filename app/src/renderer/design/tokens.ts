@@ -5,18 +5,22 @@
  * antd seed 只喂实色 hex（§0-3），半透明只存在于这个 CSS 变量层
  * 与 antd component tokens 的定点覆盖。
  *
- * 主题：樱夜双主题（视觉重设计定稿，对标 VN 启动器 / GalSpace 沉浸式媒体库）。
- * - darkTokens  深色：紫调夜黑 #0E0B16 底 + 樱花粉 #FF7BA9 品牌 accent，
- *               状态用真彩色（绿/琥珀/红），封面取色光晕底做全窗氛围
- * - lightTokens 浅色：薰衣草白 #F8F6FC 底 + 深樱 #E0447E accent，同一粉色系
- * 所有 key 保持一致，组件 CSS 只消费 var(--hh-*)，切主题不触及组件。
+ * 多主题架构（T7）：
+ * - 每套主题 = 一组「种子色」（dark/light 各一份）+ 布局/圆角覆盖。
+ * - deriveDark/deriveLight 把种子色派生为完整调色板，key 集合恒定，
+ *   组件 CSS 只消费 var(--hh-*)，换主题/换套件不触及组件。
+ * - setTheme(darkMode, presetId) 重刷 CSS 变量与响应式 colorState。
  *
- * tokens.color 是 Vue reactive：切主题时 Object.assign 原地换值，
- * 组件里 `computed(() => tokens.color.star)` 这类静态消费也能跟着刷新。
+ * 套件：
+ * - sakura  樱夜：紫调夜黑 + 樱花粉（视觉重设计定稿基准）
+ * - starnight 星海：夜蓝 + 星青，侧栏加宽、圆角收紧
+ * - mint    薄荷：墨绿 + 薄荷绿，侧栏收窄、圆角拉满
  */
 import { reactive } from 'vue'
 
 export type ThemeName = 'dark' | 'light'
+export type ThemeMode = 'system' | 'dark' | 'light'
+export type ThemePresetId = 'sakura' | 'starnight' | 'mint'
 
 const base = {
   glass: { blurPanel: '28px', blurFloat: '24px', saturate: '1.6' },
@@ -62,226 +66,483 @@ const base = {
   },
 } as const
 
-/**
- * 深色樱夜：紫调夜黑 #0E0B16 + 樱花粉 #FF7BA9 accent。
- * 层级靠「夜黑紫阶 + 粉色 accent」而非纯灰度；状态色回归真彩色，
- * 让下载中/完成/失败在封面墙里一眼可辨。
- */
-const darkColor = {
-  windowFallback: '#0E0B16',
-  // 动态封面光晕底上的主题遮罩：紫黑夜色，上浅下深——顶部让封面氛围透出来，
-  // 底部压住封面墙与任务区，文字立得住
-  bgScrim: 'linear-gradient(180deg, rgba(14,11,22,0.52) 0%, rgba(14,11,22,0.74) 100%)',
-  panelGlass: 'rgba(26,20,44,0.62)',
-  panelGlassBorder: 'rgba(255,255,255,0.08)',
-  panelGlassHighlight: 'rgba(255,255,255,0.10)',
-  card: 'rgba(255,255,255,0.05)',
-  cardBorder: 'rgba(255,255,255,0.09)',
-  cardHover: 'rgba(255,255,255,0.08)',
-  float: '#1A1430',
-  floatBorder: 'rgba(255,255,255,0.12)',
-  input: '#140F26',
-  text: 'rgba(244,241,255,0.92)',
-  textSecondary: 'rgba(244,241,255,0.70)',
-  textTertiary: 'rgba(244,241,255,0.50)',
+type BaseLayout = {
+  titlebarH: number
+  sidebarW: number
+  detailW: number
+  cardW: number
+  cardGap: number
+  coverRatio: number
+  titleZone: number
+  rowH: number
+  taskRowH: number
+  overlayRight: number
+}
+type BaseRadius = {
+  xs: number
+  sm: number
+  md: number
+  lg: number
+  panel: number
+  modal: number
+  pill: number
+}
+
+// ---------------------------------------------------------------- 种子色与派生
+
+type RGB = readonly [number, number, number]
+type Hex = string
+
+/** 深色主题种子（deriveDark 用）。nightPanel 只服务深色玻璃底，浅色用白玻璃。 */
+interface DarkSeeds {
+  night: RGB
+  nightPanel: RGB
+  float: RGB
+  input: RGB
+  textBase: RGB
+  textHot: RGB
+  accent: Hex
+  accentHover: Hex
+  onAccent: Hex
+  star: Hex
+  coverFallback: Hex
+  bannerBase: Hex
+  palette: Hex[]
+  success: Hex
+  successText: Hex
+  successDeep: Hex
+  warning: Hex
+  error: Hex
+  errorText: Hex
+  errorDanger: Hex
+}
+
+/** 浅色主题种子（deriveLight 用）。 */
+interface LightSeeds {
+  night: RGB
+  float: RGB
+  input: RGB
+  textBase: RGB
+  textHot: RGB
+  accent: Hex
+  accentHover: Hex
+  onAccent: Hex
+  star: Hex
+  coverFallback: Hex
+  bannerBase: Hex
+  palette: Hex[]
+  success: Hex
+  successText: Hex
+  successDeep: Hex
+  warning: Hex
+  error: Hex
+  errorText: Hex
+  errorDanger: Hex
+}
+
+function rgbCss(c: RGB): string {
+  return `${c[0]},${c[1]},${c[2]}`
+}
+function rgba(c: RGB, a: number): string {
+  return `rgba(${rgbCss(c)},${a})`
+}
+function hexToRgb(h: Hex): RGB {
+  const n = parseInt(h.slice(1), 16)
+  return [(n >> 16) & 0xff, (n >> 8) & 0xff, n & 0xff]
+}
+function rgbToHex(c: RGB): Hex {
+  return `#${c.map((v) => v.toString(16).padStart(2, '0')).join('')}`
+}
+/** 与白/黑混合（t 为混合比例，0..1；dir=1 混白，-1 混黑） */
+function mix(h: Hex, dir: 1 | -1, t: number): Hex {
+  const [r, g, b] = hexToRgb(h)
+  const tgt = dir === 1 ? 255 : 0
+  const f = (v: number): number => Math.round(v + (tgt - v) * t)
+  return `#${[f(r), f(g), f(b)].map((v) => v.toString(16).padStart(2, '0')).join('')}`
+}
+function gradToTop(baseHex: Hex, a1: number, a2: number): string {
+  const [r, g, b] = hexToRgb(baseHex)
+  return `linear-gradient(to top, ${baseHex} 0%, rgba(${r},${g},${b},${a1}) 55%, rgba(${r},${g},${b},${a2}) 100%)`
+}
+
+function deriveDark(s: DarkSeeds) {
+  const tb = s.textBase
+  return {
+    windowFallback: rgbToHex(s.night),
+    bgScrim: `linear-gradient(180deg, rgba(${rgbCss(s.night)},0.52) 0%, rgba(${rgbCss(s.night)},0.74) 100%)`,
+    panelGlass: rgba(s.nightPanel, 0.62),
+    panelGlassBorder: 'rgba(255,255,255,0.08)',
+    panelGlassHighlight: 'rgba(255,255,255,0.10)',
+    card: 'rgba(255,255,255,0.05)',
+    cardBorder: 'rgba(255,255,255,0.09)',
+    cardHover: 'rgba(255,255,255,0.08)',
+    float: rgbToHex(s.float),
+    floatBorder: 'rgba(255,255,255,0.12)',
+    input: rgbToHex(s.input),
+    text: rgba(tb, 0.92),
+    textSecondary: rgba(tb, 0.7),
+    textTertiary: rgba(tb, 0.5),
+    accent: s.accent,
+    accentHover: s.accentHover,
+    accentBg: rgba(hexToRgb(s.accent), 0.14),
+    success: s.success,
+    warning: s.warning,
+    error: s.error,
+    scrim: 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))',
+    scrimSoft: 'linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0))',
+    onAccent: s.onAccent,
+    accentGrad: `linear-gradient(135deg, ${mix(s.accent, 1, 0.28)}, ${mix(s.accent, -1, 0.12)})`,
+    accentGradStop: mix(s.accent, -1, 0.12),
+    accentText: mix(s.accent, 1, 0.35),
+    accentSoft: rgba(hexToRgb(s.accent), 0.1),
+    accentCardBg: rgba(hexToRgb(s.accent), 0.1),
+    accentSelectedBg: rgba(hexToRgb(s.accent), 0.16),
+    accentSelectedRing: rgba(hexToRgb(s.accent), 0.45),
+    accentChipBg: rgba(hexToRgb(s.accent), 0.25),
+    accentFocusBorder: rgba(hexToRgb(s.accent), 0.75),
+    accentFocusRing: rgba(hexToRgb(s.accent), 0.18),
+    accentBtnShadow: rgba(hexToRgb(s.accent), 0.35),
+    accentRing: rgba(hexToRgb(s.accent), 0.45),
+    accentSelectedBorder: rgba(hexToRgb(s.accent), 0.55),
+    accentShadow: rgba(hexToRgb(s.accent), 0.35),
+    accentShadowHover: rgba(hexToRgb(s.accent), 0.5),
+    surfaceHoverSoft: 'rgba(255,255,255,0.10)',
+    thumbShadow: 'rgba(0,0,0,0.5)',
+    thumbShadowSoft: 'rgba(0,0,0,0.35)',
+    shineSweep: 'rgba(255,255,255,0.35)',
+    textHot: rgba(s.textHot, 0.98),
+    textGhost: rgba(tb, 0.18),
+    star: s.star,
+    coverFallback: s.coverFallback,
+    bannerBase: s.bannerBase,
+    textFaint: rgba(tb, 0.3),
+    textDim: rgba(tb, 0.4),
+    textMuted: rgba(tb, 0.45),
+    textSoft: rgba(tb, 0.5),
+    textMid: rgba(tb, 0.55),
+    textMidHigh: rgba(tb, 0.62),
+    textDimStrong: rgba(tb, 0.42),
+    textSoftDim: rgba(tb, 0.35),
+    textBright: rgba(tb, 0.68),
+    textStrong: rgba(tb, 0.82),
+    textStronger: rgba(tb, 0.88),
+    textGlow: rgba(tb, 0.92),
+    textMutedPure: rgba(tb, 0.75),
+    successText: s.successText,
+    successBg: rgba(hexToRgb(s.success), 0.14),
+    successBorder: rgba(hexToRgb(s.success), 0.35),
+    successOpaque: rgba(hexToRgb(s.success), 0.92),
+    successDeep: s.successDeep,
+    errorText: s.errorText,
+    errorSoftText: s.errorText,
+    errorSoftBg: rgba(hexToRgb(s.error), 0.12),
+    errorDanger: s.errorDanger,
+    errorHoverBg: rgba(hexToRgb(s.error), 0.18),
+    warningSoftBg: rgba(hexToRgb(s.warning), 0.16),
+    link: mix(s.accent, 1, 0.3),
+    selectBg: s.accent,
+    selectText: s.onAccent,
+    selectIcon: s.onAccent,
+    neutral: mix(s.accent, 1, 0.45),
+    neutralDim: mix(s.accent, 1, 0.3),
+    surfaceSoft: 'rgba(255,255,255,0.05)',
+    surfaceMid: 'rgba(255,255,255,0.08)',
+    surfaceHover: 'rgba(255,255,255,0.11)',
+    surfaceStrong: 'rgba(255,255,255,0.14)',
+    surfaceBright: 'rgba(255,255,255,0.04)',
+    borderFaint: 'rgba(255,255,255,0.06)',
+    borderGhost: 'rgba(255,255,255,0.18)',
+    borderGhostSoft: 'rgba(255,255,255,0.15)',
+    shadeThumb: 'rgba(0,0,0,0.5)',
+    shadeThumbSoft: 'rgba(0,0,0,0.38)',
+    shadeText: 'rgba(0,0,0,0.5)',
+    shadeBanner: 'rgba(0,0,0,0.5)',
+    bannerScrim: gradToTop(s.bannerBase, 0.55, 0.2),
+    palette: s.palette,
+  }
+}
+
+function deriveLight(s: LightSeeds) {
+  const tb = s.textBase
+  return {
+    windowFallback: rgbToHex(s.night),
+    bgScrim: `linear-gradient(180deg, rgba(${rgbCss(s.night)},0.55) 0%, rgba(${rgbCss(s.night)},0.80) 100%)`,
+    panelGlass: 'rgba(255,255,255,0.66)',
+    panelGlassBorder: rgba(tb, 0.1),
+    panelGlassHighlight: 'rgba(255,255,255,0.75)',
+    card: rgba(tb, 0.035),
+    cardBorder: rgba(tb, 0.1),
+    cardHover: rgba(tb, 0.06),
+    float: rgbToHex(s.float),
+    floatBorder: rgba(tb, 0.14),
+    input: rgbToHex(s.input),
+    text: rgba(tb, 0.92),
+    textSecondary: rgba(tb, 0.68),
+    textTertiary: rgba(tb, 0.48),
+    accent: s.accent,
+    accentHover: s.accentHover,
+    accentBg: rgba(hexToRgb(s.accent), 0.1),
+    success: s.success,
+    warning: s.warning,
+    error: s.error,
+    scrim: `linear-gradient(to top, rgba(${rgbCss(tb)},0.85), rgba(${rgbCss(tb)},0))`,
+    scrimSoft: `linear-gradient(to top, rgba(${rgbCss(tb)},0.65), rgba(${rgbCss(tb)},0))`,
+    onAccent: s.onAccent,
+    accentGrad: `linear-gradient(135deg, ${mix(s.accent, 1, 0.18)}, ${s.accent})`,
+    accentGradStop: s.accent,
+    accentText: mix(s.accent, -1, 0.25),
+    accentSoft: rgba(hexToRgb(s.accent), 0.08),
+    accentCardBg: rgba(hexToRgb(s.accent), 0.07),
+    accentSelectedBg: rgba(hexToRgb(s.accent), 0.1),
+    accentSelectedRing: rgba(hexToRgb(s.accent), 0.25),
+    accentChipBg: rgba(hexToRgb(s.accent), 0.16),
+    accentFocusBorder: rgba(hexToRgb(s.accent), 0.65),
+    accentFocusRing: rgba(hexToRgb(s.accent), 0.12),
+    accentBtnShadow: rgba(hexToRgb(s.accent), 0.3),
+    accentRing: rgba(hexToRgb(s.accent), 0.35),
+    accentSelectedBorder: rgba(hexToRgb(s.accent), 0.45),
+    accentShadow: rgba(hexToRgb(s.accent), 0.28),
+    accentShadowHover: rgba(hexToRgb(s.accent), 0.4),
+    surfaceHoverSoft: rgba(tb, 0.06),
+    thumbShadow: rgba(tb, 0.22),
+    thumbShadowSoft: rgba(tb, 0.14),
+    shineSweep: 'rgba(255,255,255,0.55)',
+    textHot: rgba(s.textHot, 0.96),
+    textGhost: rgba(tb, 0.16),
+    star: s.star,
+    coverFallback: s.coverFallback,
+    bannerBase: s.bannerBase,
+    textFaint: rgba(tb, 0.28),
+    textDim: rgba(tb, 0.38),
+    textMuted: rgba(tb, 0.45),
+    textSoft: rgba(tb, 0.5),
+    textMid: rgba(tb, 0.55),
+    textMidHigh: rgba(tb, 0.62),
+    textDimStrong: rgba(tb, 0.42),
+    textSoftDim: rgba(tb, 0.32),
+    textBright: rgba(tb, 0.68),
+    textStrong: rgba(tb, 0.82),
+    textStronger: rgba(tb, 0.88),
+    textGlow: rgba(tb, 0.9),
+    textMutedPure: rgba(tb, 0.75),
+    successText: s.successText,
+    successBg: rgba(hexToRgb(s.success), 0.1),
+    successBorder: rgba(hexToRgb(s.success), 0.32),
+    successOpaque: rgba(hexToRgb(s.success), 0.92),
+    successDeep: s.successDeep,
+    errorText: s.errorText,
+    errorSoftText: s.errorText,
+    errorSoftBg: rgba(hexToRgb(s.error), 0.08),
+    errorDanger: s.errorDanger,
+    errorHoverBg: rgba(hexToRgb(s.error), 0.12),
+    warningSoftBg: rgba(hexToRgb(s.warning), 0.12),
+    link: mix(s.accent, -1, 0.18),
+    selectBg: s.accent,
+    selectText: s.onAccent,
+    selectIcon: s.onAccent,
+    neutral: mix(s.accent, 1, 0.55),
+    neutralDim: mix(s.accent, 1, 0.35),
+    surfaceSoft: rgba(tb, 0.04),
+    surfaceMid: rgba(tb, 0.07),
+    surfaceHover: rgba(tb, 0.09),
+    surfaceStrong: rgba(tb, 0.12),
+    surfaceBright: rgba(tb, 0.02),
+    borderFaint: rgba(tb, 0.06),
+    borderGhost: rgba(tb, 0.16),
+    borderGhostSoft: rgba(tb, 0.13),
+    shadeThumb: rgba(tb, 0.35),
+    shadeThumbSoft: rgba(tb, 0.25),
+    shadeText: rgba(tb, 0.5),
+    shadeBanner: rgba(tb, 0.28),
+    bannerScrim: gradToTop(s.bannerBase, 0.55, 0.2),
+    palette: s.palette,
+  }
+}
+
+// ---------------------------------------------------------------- 主题套件
+
+const SAKURA_DARK: DarkSeeds = {
+  night: [14, 11, 22],
+  nightPanel: [26, 20, 44],
+  float: [26, 20, 48],
+  input: [20, 15, 38],
+  textBase: [244, 241, 255],
+  textHot: [255, 252, 255],
   accent: '#FF7BA9',
   accentHover: '#FF96BC',
-  accentBg: 'rgba(255,123,169,0.14)',
-  success: '#4ADE80',
-  warning: '#FBBF24',
-  error: '#F87171',
-  scrim: 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))',
-  scrimSoft: 'linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0))',
-  // ---- 语义衍生（组件只准消费 var(--hh-color-*)） ----
   onAccent: '#2B0A16',
-  accentGrad: 'linear-gradient(135deg, #FF9BC0, #FF6D9E)',
-  accentGradStop: '#FF6D9E',
-  accentText: '#FF8FB8',
-  accentSoft: 'rgba(255,123,169,0.10)',
-  accentCardBg: 'rgba(255,123,169,0.10)',
-  accentSelectedBg: 'rgba(255,123,169,0.16)',
-  accentSelectedRing: 'rgba(255,123,169,0.45)',
-  accentChipBg: 'rgba(255,123,169,0.25)',
-  accentFocusBorder: 'rgba(255,123,169,0.75)',
-  accentFocusRing: 'rgba(255,123,169,0.18)',
-  accentBtnShadow: 'rgba(255,123,169,0.35)',
-  accentRing: 'rgba(255,123,169,0.45)',
-  accentSelectedBorder: 'rgba(255,123,169,0.55)',
-  accentShadow: 'rgba(255,123,169,0.35)',
-  accentShadowHover: 'rgba(255,123,169,0.50)',
-  surfaceHoverSoft: 'rgba(255,255,255,0.10)',
-  thumbShadow: 'rgba(0,0,0,0.5)',
-  thumbShadowSoft: 'rgba(0,0,0,0.35)',
-  shineSweep: 'rgba(255,255,255,0.35)',
-  textHot: 'rgba(255,252,255,0.98)',
-  textGhost: 'rgba(244,241,255,0.18)',
   star: '#FFC94E',
   coverFallback: '#241B3E',
   bannerBase: '#171029',
-  // 文字层级：透明度从弱到强
-  textFaint: 'rgba(244,241,255,0.30)',
-  textDim: 'rgba(244,241,255,0.40)',
-  textMuted: 'rgba(244,241,255,0.45)',
-  textSoft: 'rgba(244,241,255,0.50)',
-  textMid: 'rgba(244,241,255,0.55)',
-  textMidHigh: 'rgba(244,241,255,0.62)',
-  textDimStrong: 'rgba(244,241,255,0.42)',
-  textSoftDim: 'rgba(244,241,255,0.35)',
-  textBright: 'rgba(244,241,255,0.68)',
-  textStrong: 'rgba(244,241,255,0.82)',
-  textStronger: 'rgba(244,241,255,0.88)',
-  textGlow: 'rgba(245,243,255,0.92)',
-  textMutedPure: 'rgba(244,241,255,0.75)',
-  // 状态衍生：真彩色（下载/完成/失败在封面墙里一眼可辨）
-  successText: '#7CE9A2',
-  successBg: 'rgba(74,222,128,0.14)',
-  successBorder: 'rgba(74,222,128,0.35)',
-  successOpaque: 'rgba(74,222,128,0.92)',
-  successDeep: '#22C55E',
-  errorText: '#FCA5A5',
-  errorSoftText: '#FCA5A5',
-  errorSoftBg: 'rgba(248,113,113,0.12)',
-  errorDanger: '#EF4444',
-  errorHoverBg: 'rgba(239,68,68,0.18)',
-  warningSoftBg: 'rgba(251,191,36,0.16)',
-  link: '#FFA5C5',
-  // 选中态（nav / 分类芯片 / 徽标共用）：实心樱花粉胶囊 + 深梅文字，双主题同构
-  selectBg: '#FF7BA9',
-  selectText: '#2B0A16',
-  selectIcon: '#2B0A16',
-  // 中性灰（任务点/进度底）：薰衣草灰
-  neutral: '#8B84A6',
-  neutralDim: '#5F5878',
-  // 元素表面
-  surfaceSoft: 'rgba(255,255,255,0.05)',
-  surfaceMid: 'rgba(255,255,255,0.08)',
-  surfaceHover: 'rgba(255,255,255,0.11)',
-  surfaceStrong: 'rgba(255,255,255,0.14)',
-  surfaceBright: 'rgba(255,255,255,0.04)',
-  borderFaint: 'rgba(255,255,255,0.06)',
-  borderGhost: 'rgba(255,255,255,0.18)',
-  borderGhostSoft: 'rgba(255,255,255,0.15)',
-  // 遮罩
-  shadeThumb: 'rgba(0,0,0,0.5)',
-  shadeThumbSoft: 'rgba(0,0,0,0.38)',
-  shadeText: 'rgba(0,0,0,0.5)',
-  shadeBanner: 'rgba(0,0,0,0.5)',
-  bannerScrim: 'linear-gradient(to top, #171029 0%, rgba(23,16,41,0.55) 55%, rgba(23,16,41,0.2) 100%)',
-  // 哈希调色板（无主色封面的占位底色）— 深色下去饱和紫调
   palette: ['#372C55', '#2C3355', '#2F4038', '#3D342E', '#3C2B41', '#2C3547'],
-} as const
-
-/**
- * 浅色樱夜：薰衣草白 #F8F6FC + 深樱 #E0447E accent。
- * 与深色同一粉色系；文字用梅色墨 #26183A 系而非纯黑，弱化系统工具的冷硬感。
- */
-const lightColor = {
-  windowFallback: '#F8F6FC',
-  // 动态封面光晕底上的主题遮罩：上浅下深，底部压住封面墙
-  bgScrim: 'linear-gradient(180deg, rgba(248,246,252,0.55) 0%, rgba(248,246,252,0.80) 100%)',
-  panelGlass: 'rgba(255,255,255,0.66)',
-  panelGlassBorder: 'rgba(46,26,74,0.10)',
-  panelGlassHighlight: 'rgba(255,255,255,0.75)',
-  card: 'rgba(46,26,74,0.035)',
-  cardBorder: 'rgba(46,26,74,0.10)',
-  cardHover: 'rgba(46,26,74,0.06)',
-  float: '#FFFFFF',
-  floatBorder: 'rgba(46,26,74,0.14)',
-  input: '#FFFFFF',
-  text: 'rgba(38,24,58,0.92)',
-  textSecondary: 'rgba(38,24,58,0.68)',
-  textTertiary: 'rgba(38,24,58,0.48)',
+  success: '#4ADE80',
+  successText: '#7CE9A2',
+  successDeep: '#22C55E',
+  warning: '#FBBF24',
+  error: '#F87171',
+  errorText: '#FCA5A5',
+  errorDanger: '#EF4444',
+}
+const SAKURA_LIGHT: LightSeeds = {
+  night: [248, 246, 252],
+  float: [255, 255, 255],
+  input: [255, 255, 255],
+  textBase: [38, 24, 58],
+  textHot: [38, 24, 58],
   accent: '#E0447E',
   accentHover: '#E85C92',
-  accentBg: 'rgba(224,68,126,0.10)',
-  success: '#16A34A',
-  warning: '#D97706',
-  error: '#DC2626',
-  scrim: 'linear-gradient(to top, rgba(38,24,58,0.85), rgba(38,24,58,0))',
-  scrimSoft: 'linear-gradient(to top, rgba(38,24,58,0.65), rgba(38,24,58,0))',
-  // ---- 语义衍生（组件只准消费 var(--hh-color-*)） ----
   onAccent: '#FFFFFF',
-  accentGrad: 'linear-gradient(135deg, #F0629B, #E0447E)',
-  accentGradStop: '#E0447E',
-  accentText: '#C2185B',
-  accentSoft: 'rgba(224,68,126,0.08)',
-  accentCardBg: 'rgba(224,68,126,0.07)',
-  accentSelectedBg: 'rgba(224,68,126,0.10)',
-  accentSelectedRing: 'rgba(224,68,126,0.25)',
-  accentChipBg: 'rgba(224,68,126,0.16)',
-  accentFocusBorder: 'rgba(224,68,126,0.65)',
-  accentFocusRing: 'rgba(224,68,126,0.12)',
-  accentBtnShadow: 'rgba(224,68,126,0.30)',
-  accentRing: 'rgba(224,68,126,0.35)',
-  accentSelectedBorder: 'rgba(224,68,126,0.45)',
-  accentShadow: 'rgba(224,68,126,0.28)',
-  accentShadowHover: 'rgba(224,68,126,0.40)',
-  surfaceHoverSoft: 'rgba(46,26,74,0.06)',
-  thumbShadow: 'rgba(46,26,74,0.22)',
-  thumbShadowSoft: 'rgba(46,26,74,0.14)',
-  shineSweep: 'rgba(255,255,255,0.55)',
-  textHot: 'rgba(38,24,58,0.96)',
-  textGhost: 'rgba(38,24,58,0.16)',
   star: '#D97706',
   coverFallback: '#EDE8F4',
   bannerBase: '#F3EFF9',
-  // 文字层级：透明度从弱到强
-  textFaint: 'rgba(38,24,58,0.28)',
-  textDim: 'rgba(38,24,58,0.38)',
-  textMuted: 'rgba(38,24,58,0.45)',
-  textSoft: 'rgba(38,24,58,0.50)',
-  textMid: 'rgba(38,24,58,0.55)',
-  textMidHigh: 'rgba(38,24,58,0.62)',
-  textDimStrong: 'rgba(38,24,58,0.42)',
-  textSoftDim: 'rgba(38,24,58,0.32)',
-  textBright: 'rgba(38,24,58,0.68)',
-  textStrong: 'rgba(38,24,58,0.82)',
-  textStronger: 'rgba(38,24,58,0.88)',
-  textGlow: 'rgba(38,24,58,0.90)',
-  textMutedPure: 'rgba(38,24,58,0.75)',
-  // 状态衍生：真彩色
-  successText: '#15803D',
-  successBg: 'rgba(22,163,74,0.10)',
-  successBorder: 'rgba(22,163,74,0.32)',
-  successOpaque: 'rgba(22,163,74,0.92)',
-  successDeep: '#15803D',
-  errorText: '#DC2626',
-  errorSoftText: '#DC2626',
-  errorSoftBg: 'rgba(220,38,38,0.08)',
-  errorDanger: '#DC2626',
-  errorHoverBg: 'rgba(220,38,38,0.12)',
-  warningSoftBg: 'rgba(217,119,6,0.12)',
-  link: '#C2185B',
-  // 选中态：实心深樱胶囊 + 白字
-  selectBg: '#E0447E',
-  selectText: '#FFFFFF',
-  selectIcon: '#FFFFFF',
-  // 中性灰（任务点/进度底）
-  neutral: '#B9B0CC',
-  neutralDim: '#8F85A8',
-  // 元素表面
-  surfaceSoft: 'rgba(46,26,74,0.04)',
-  surfaceMid: 'rgba(46,26,74,0.07)',
-  surfaceHover: 'rgba(46,26,74,0.09)',
-  surfaceStrong: 'rgba(46,26,74,0.12)',
-  surfaceBright: 'rgba(46,26,74,0.02)',
-  borderFaint: 'rgba(46,26,74,0.06)',
-  borderGhost: 'rgba(46,26,74,0.16)',
-  borderGhostSoft: 'rgba(46,26,74,0.13)',
-  // 遮罩
-  shadeThumb: 'rgba(38,24,58,0.35)',
-  shadeThumbSoft: 'rgba(38,24,58,0.25)',
-  shadeText: 'rgba(38,24,58,0.5)',
-  shadeBanner: 'rgba(38,24,58,0.28)',
-  bannerScrim: 'linear-gradient(to top, #F3EFF9 0%, rgba(243,239,249,0.55) 55%, rgba(243,239,249,0.2) 100%)',
-  // 哈希调色板（浅色下去饱和薰衣草调）
   palette: ['#D8CFE6', '#CBD2E4', '#CFDAD1', '#DED6CB', '#DFCDD6', '#CFD8E4'],
-} as const
+  success: '#16A34A',
+  successText: '#15803D',
+  successDeep: '#15803D',
+  warning: '#D97706',
+  error: '#DC2626',
+  errorText: '#DC2626',
+  errorDanger: '#DC2626',
+}
 
-export const themeColors = { dark: darkColor, light: lightColor } as const
+const STARNIGHT_DARK: DarkSeeds = {
+  night: [9, 14, 28],
+  nightPanel: [18, 26, 46],
+  float: [16, 23, 42],
+  input: [12, 19, 36],
+  textBase: [232, 242, 255],
+  textHot: [250, 253, 255],
+  accent: '#63D3FF',
+  accentHover: '#8BE1FF',
+  onAccent: '#04212F',
+  star: '#FFD94E',
+  coverFallback: '#10233F',
+  bannerBase: '#0B1626',
+  palette: ['#16283F', '#1A2E4A', '#16303F', '#1F2B3C', '#1C2A3E', '#1B2F4A'],
+  success: '#34D399',
+  successText: '#6EE7B7',
+  successDeep: '#10B981',
+  warning: '#FBBF24',
+  error: '#F87171',
+  errorText: '#FCA5A5',
+  errorDanger: '#EF4444',
+}
+const STARNIGHT_LIGHT: LightSeeds = {
+  night: [243, 247, 252],
+  float: [255, 255, 255],
+  input: [255, 255, 255],
+  textBase: [23, 37, 58],
+  textHot: [23, 37, 58],
+  accent: '#0E7FB8',
+  accentHover: '#1292D2',
+  onAccent: '#FFFFFF',
+  star: '#B45309',
+  coverFallback: '#E3EDF7',
+  bannerBase: '#EAF1F9',
+  palette: ['#D3DDE8', '#CBD8E6', '#CFD9E2', '#D9DDE2', '#D8D9E2', '#CBD9E4'],
+  success: '#0F9D58',
+  successText: '#0B7A44',
+  successDeep: '#0B7A44',
+  warning: '#B45309',
+  error: '#C62828',
+  errorText: '#C62828',
+  errorDanger: '#C62828',
+}
+
+const MINT_DARK: DarkSeeds = {
+  night: [10, 17, 14],
+  nightPanel: [18, 30, 24],
+  float: [15, 26, 21],
+  input: [11, 21, 17],
+  textBase: [232, 250, 240],
+  textHot: [250, 255, 251],
+  accent: '#5EE6A8',
+  accentHover: '#7CF0BB',
+  onAccent: '#03231A',
+  star: '#FFD94E',
+  coverFallback: '#0F241C',
+  bannerBase: '#0B1B14',
+  palette: ['#153026', '#16302A', '#122B22', '#232E27', '#1E2D28', '#143028'],
+  success: '#34D399',
+  successText: '#6EE7B7',
+  successDeep: '#10B981',
+  warning: '#FBBF24',
+  error: '#F87171',
+  errorText: '#FCA5A5',
+  errorDanger: '#EF4444',
+}
+const MINT_LIGHT: LightSeeds = {
+  night: [244, 250, 247],
+  float: [255, 255, 255],
+  input: [255, 255, 255],
+  textBase: [23, 52, 40],
+  textHot: [23, 52, 40],
+  accent: '#0E8F5E',
+  accentHover: '#12A56F',
+  onAccent: '#FFFFFF',
+  star: '#B45309',
+  coverFallback: '#E2F0E9',
+  bannerBase: '#E9F3EE',
+  palette: ['#D3E5DC', '#D2E4DC', '#CFE2D6', '#DEE5D8', '#DDE4D9', '#D0E4DA'],
+  success: '#0F9D58',
+  successText: '#0B7A44',
+  successDeep: '#0B7A44',
+  warning: '#B45309',
+  error: '#C62828',
+  errorText: '#C62828',
+  errorDanger: '#C62828',
+}
+
+export interface ThemePresetMeta {
+  name: string
+  desc: string
+  /** 预览色样（accent） */
+  swatch: Hex
+  dark: DarkSeeds
+  light: LightSeeds
+  layout?: Partial<BaseLayout>
+  radius?: Partial<BaseRadius>
+}
+
+export const themePresets: Record<ThemePresetId, ThemePresetMeta> = {
+  sakura: {
+    name: '樱夜',
+    desc: '紫夜星空 + 樱花粉',
+    swatch: '#FF7BA9',
+    dark: SAKURA_DARK,
+    light: SAKURA_LIGHT,
+  },
+  starnight: {
+    name: '星海',
+    desc: '夜蓝深海 + 星青辉光',
+    swatch: '#63D3FF',
+    dark: STARNIGHT_DARK,
+    light: STARNIGHT_LIGHT,
+    layout: { sidebarW: 232 },
+    radius: { panel: 12, modal: 16 },
+  },
+  mint: {
+    name: '薄荷',
+    desc: '墨绿森林 + 薄荷清露',
+    swatch: '#5EE6A8',
+    dark: MINT_DARK,
+    light: MINT_LIGHT,
+    layout: { sidebarW: 192 },
+    radius: { panel: 20, modal: 20 },
+  },
+}
+
+export const THEME_PRESET_IDS = Object.keys(themePresets) as ThemePresetId[]
+
+// 默认套件（樱夜，向后兼容组件 import { tokens }）
+const DEFAULT_PRESET: ThemePresetId = 'sakura'
+const defaultColorsDark = deriveDark(themePresets[DEFAULT_PRESET].dark)
+const defaultColorsLight = deriveLight(themePresets[DEFAULT_PRESET].light)
+
+export const themeColors = { dark: defaultColorsDark, light: defaultColorsLight } as const
 
 /** tokens.color 响应式真值：切主题时原地替换，组件 computed 自动重算 */
-export const colorState = reactive({ ...darkColor })
+export const colorState = reactive({ ...defaultColorsDark })
 
 /** 深色主题（默认，向后兼容组件 import { tokens }）；
  *  color 是 reactive，切主题由 setTheme 原地更新 */
@@ -298,18 +559,23 @@ export const tokens = {
 
 export type Tokens = typeof tokens
 
-export type TokenColors = typeof darkColor
+export type TokenColors = ReturnType<typeof deriveDark>
 
 const DEFAULT_DARK = true
 
 /** 运行时当前主题（applyCssVars/setTheme 前由 main.ts 设置） */
 export let currentDarkMode = DEFAULT_DARK
+export let currentPresetId: ThemePresetId = DEFAULT_PRESET
 
-/** 组装一套完整主题：base 常量 + 对应调色板 */
-export function makeTheme(darkMode: boolean) {
+/** 组装一套完整主题：base 常量 + 套件布局/圆角覆盖 + 对应调色板 */
+export function makeTheme(darkMode: boolean, presetId: ThemePresetId = currentPresetId) {
+  const preset = themePresets[presetId]
+  const palette = darkMode ? deriveDark(preset.dark) : deriveLight(preset.light)
   return {
     ...base,
-    color: darkMode ? darkColor : lightColor,
+    layout: { ...base.layout, ...(preset.layout ?? {}) },
+    radius: { ...base.radius, ...(preset.radius ?? {}) },
+    color: palette,
   }
 }
 
@@ -319,9 +585,10 @@ export function makeTheme(darkMode: boolean) {
  * - colorState 原地 Object.assign，Vue 组件里 computed(() => tokens.color.x) 自动刷新
  * - 同步 html[data-theme] 与 color-scheme
  */
-export function setTheme(darkMode: boolean): void {
+export function setTheme(darkMode: boolean, presetId: ThemePresetId = currentPresetId): void {
   currentDarkMode = darkMode
-  const theme = makeTheme(darkMode)
+  currentPresetId = presetId
+  const theme = makeTheme(darkMode, presetId)
   Object.assign(colorState, theme.color)
   applyCssVars(darkMode, theme)
   const root = document.documentElement
@@ -331,10 +598,12 @@ export function setTheme(darkMode: boolean): void {
 
 /**
  * 把指定主题平铺成 `--hh-*` CSS 变量（键名 kebab-case）。
- * 渲染入口挂载前调用一次（可传主题名）；组件 CSS 只准消费 var(--hh-*)。
- * 运行中切主题用 setTheme（它会顺带更新 CSS 变量）。
+ * 渲染入口挂载前调用一次（可传主题名）；运行中切主题用 setTheme（它会顺带更新 CSS 变量）。
  */
-export function applyCssVars(darkMode: boolean = currentDarkMode, theme: ReturnType<typeof makeTheme> = makeTheme(darkMode)): void {
+export function applyCssVars(
+  darkMode: boolean = currentDarkMode,
+  theme: ReturnType<typeof makeTheme> = makeTheme(darkMode),
+): void {
   const root = document.documentElement
   const set = (k: string, v: string | number): void => root.style.setProperty(k, String(v))
 

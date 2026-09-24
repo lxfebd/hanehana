@@ -49,6 +49,12 @@ const bridge = {
     ipcRenderer.invoke(Ipc.ActionAll, action),
   getSettings: (): Promise<Settings> => ipcRenderer.invoke(Ipc.SettingsGet),
   saveSettings: (s: Settings): Promise<SaveSettingsResult> => ipcRenderer.invoke(Ipc.SettingsSave, s),
+  pickBgImage: (): Promise<string> => ipcRenderer.invoke(Ipc.PickBgImage),
+  onThemeChanged: (cb: (e: { dark: boolean }) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, p: { dark: boolean }): void => cb(p)
+    ipcRenderer.on(Ipc.ThemeChanged, listener)
+    return () => ipcRenderer.removeListener(Ipc.ThemeChanged, listener)
+  },
   // 自动更新
   checkUpdate: (): Promise<ActionResult> => ipcRenderer.invoke(Ipc.UpdateCheck),
   installUpdate: (): Promise<ActionResult> => ipcRenderer.invoke(Ipc.UpdateInstall),

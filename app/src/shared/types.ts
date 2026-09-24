@@ -193,7 +193,20 @@ export interface Settings {
   user_agent: string
   max_concurrent: number
   confirm_delete: boolean
+  /**
+   * 深色模式（向后兼容：theme_mode 为 'system' 时由主进程按系统偏好强制
+   * 一致性；存盘值永远反映「当前生效的深浅」，渲染层只消费它做主题渲染）。
+   */
   dark: boolean
+  /**
+   * 主题模式三态：system=跟随系统 / dark=固定深色 / light=固定浅色。
+   * 老 settings.json 没有此字段时回落 'dark'（等于旧行为）。
+   */
+  theme_mode: ThemeMode
+  /** 主题套件（多主题：樱夜/星海/薄荷）。老文件回落 'sakura'。 */
+  theme_preset: ThemePresetId
+  /** 自定义背景图路径（绝对路径；空串 = 用动态封面底）。 */
+  bg_image: string
   /** 任务下完时弹系统通知（窗口藏在托盘时唯一的告知渠道） */
   notify_on_finish: boolean
   /** 任务失败时弹系统通知，正文带失败原因和下一步建议 */
@@ -217,6 +230,12 @@ export interface Settings {
   auto_update_check: boolean
 }
 
+export const THEME_MODES = ['system', 'dark', 'light'] as const
+export type ThemeMode = (typeof THEME_MODES)[number]
+
+export const THEME_PRESETS = ['sakura', 'starnight', 'mint'] as const
+export type ThemePresetId = (typeof THEME_PRESETS)[number]
+
 export const DEFAULT_SETTINGS: Settings = {
   threads: 8,
   download_dir: '',
@@ -225,6 +244,9 @@ export const DEFAULT_SETTINGS: Settings = {
   max_concurrent: 3,
   confirm_delete: true,
   dark: true,
+  theme_mode: 'dark',
+  theme_preset: 'sakura',
+  bg_image: '',
   notify_on_finish: true,
   notify_on_error: true,
   close_to_tray: true,

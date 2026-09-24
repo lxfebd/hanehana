@@ -87,7 +87,7 @@ export async function removeTask(id: string, deleteFiles: boolean): Promise<void
 
 export async function openSettings(): Promise<void> {
   downloads.settings = await window.hh.getSettings()
-  applyDarkFromSettings(downloads.settings.dark)
+  applyDarkFromSettings(downloads.settings.dark, downloads.settings.theme_preset)
   ui.settingsOpen = true
 }
 
@@ -136,7 +136,7 @@ export function wireTaskPushes(): Array<() => void> {
 export async function initTasks(): Promise<Array<() => void>> {
   if (!window.hh?.listTasks) return []
   downloads.settings = await window.hh.getSettings()
-  applyDarkFromSettings(downloads.settings.dark)
+  applyDarkFromSettings(downloads.settings.dark, downloads.settings.theme_preset)
   await refreshTasks()
   const unsubs = wireTaskPushes()
   // 游戏站下载推送挂在这里而不是 GameSites 组件里：浏览器下载的「完成」

@@ -24,8 +24,10 @@ let narrowMqFn: ((e: MediaQueryListEvent) => void) | null = null
 
 const filteredCount = computed(() => filteredGames.value.length)
 
-/** 整窗动态底：选中游戏的封面铺满后重度模糊，玻璃面板浮在其上（Steam 式）。无选中时透明，露出系统 Mica。 */
+/** 整窗动态底：自定义背景图 > 选中游戏封面（Steam 式）。无图时透明，露出系统 Mica。 */
 const appBgImage = computed(() => {
+  const custom = downloads.settings?.bg_image
+  if (custom) return `url("file://${custom.replace(/\\/g, '/')}")`
   const g = selectedGame.value
   if (!g) return ''
   if (g.thumbPath) return `url("${thumbUrl(g)}")`
@@ -76,8 +78,8 @@ async function saveSettings(s: unknown): Promise<void> {
       return
     }
     downloads.settings = r.settings
-    // 深浅主题设置落盘后的渲染层同步
-    applyDarkFromSettings(r.settings.dark)
+    // 深浅/套件主题设置落盘后的渲染层同步（system 模式主进程已按系统校正 dark）
+    applyDarkFromSettings(r.settings.dark, r.settings.theme_preset)
     ui.settingsOpen = false
   } catch (e) {
     reportRejection(e)
@@ -98,6 +100,15 @@ onMounted(async () => {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e ?? '')
     bootInfo.value = `连接主进程失败：${msg.trim() || '主进程未响应'}`
+  }
+
+  // 跟随系统：主进程在系统深浅切换时推送，渲染层实时换肤
+  if (window.hh?.onThemeChanged) {
+    unsubPushes.push(
+      window.hh.onThemeChanged(({ dark }) => {
+        applyDarkFromSettings(dark, ui.preset)
+      }),
+    )
   }
 
   // 窄窗口自动收起详情面板：360px 详情 + 208px 侧栏会把内容区挤没

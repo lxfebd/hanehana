@@ -159,6 +159,66 @@ async function main() {
   })()`)
   console.log('LIGHT_LAYOUT:', JSON.stringify(lightOv))
   if (lightOv?.bad) throw new Error('light horizontal overflow: ' + JSON.stringify(lightOv))
+  await wait(500)
+  await shot('05-sakura-light')
+  await evalJsT('nav-settings-light', `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('设置'))?.click()`); await wait(600)
+  await evalJsT('tab-appearance', `[...document.querySelectorAll('.ant-tabs-tab')].find(t => t.textContent.includes('外观'))?.click()`); await wait(400)
+  await shot('06-settings-appearance')
+
+  // 多主题验收（T7）：切到星海套件（深色），CSS 变量 accent 应变为星青、布局侧栏加宽
+  await evalJs(`window.hh.getSettings().then(async (s) => {
+    await window.hh.saveSettings({ ...s, theme_mode: 'dark', dark: true, theme_preset: 'starnight' })
+    return true
+  })`)
+  await send('Page.reload', { ignoreCache: true })
+  await wait(3000)
+  const starOv = await evalJs(`(() => {
+    const root = document.documentElement
+    const lib = [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('全部游戏'))
+    if (lib) lib.click()
+    const accent = getComputedStyle(root).getPropertyValue('--hh-color-accent').trim()
+    const sidebarW = getComputedStyle(root).getPropertyValue('--hh-layout-sidebar-w').trim()
+    return { theme: root.dataset.theme, accent, sidebarW, sw: root.scrollWidth, vw: root.clientWidth, bad: root.scrollWidth > root.clientWidth + 2 }
+  })()`)
+  console.log('STARNIGHT:', JSON.stringify(starOv))
+  if (starOv?.bad || starOv?.accent !== '#63D3FF' || starOv?.sidebarW !== '232px') {
+    throw new Error('starnight preset not applied: ' + JSON.stringify(starOv))
+  }
+  await wait(500)
+  await shot('07-starnight-dark')
+
+  // 薄荷浅色
+  await evalJs(`window.hh.getSettings().then(async (s) => {
+    await window.hh.saveSettings({ ...s, theme_mode: 'light', dark: false, theme_preset: 'mint' })
+    return true
+  })`)
+  await send('Page.reload', { ignoreCache: true })
+  await wait(3000)
+  const mintOv = await evalJs(`(() => {
+    const root = document.documentElement
+    const lib = [...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('全部游戏'))
+    if (lib) lib.click()
+    const accent = getComputedStyle(root).getPropertyValue('--hh-color-accent').trim()
+    const sidebarW = getComputedStyle(root).getPropertyValue('--hh-layout-sidebar-w').trim()
+    return { theme: root.dataset.theme, accent, sidebarW, bad: root.scrollWidth > root.clientWidth + 2 }
+  })()`)
+  console.log('MINT:', JSON.stringify(mintOv))
+  if (mintOv?.bad || mintOv?.accent !== '#0E8F5E' || mintOv?.sidebarW !== '192px') {
+    throw new Error('mint preset not applied: ' + JSON.stringify(mintOv))
+  }
+  await wait(500)
+  await shot('08-mint-light')
+
+  // 三态落盘验收：system 模式 + dark 跟系统实际值走（读回 settings 校验）
+  const sysSetting = await evalJs(`window.hh.getSettings().then(async (s) => {
+    await window.hh.saveSettings({ ...s, theme_mode: 'system' })
+    const reread = await window.hh.getSettings()
+    return { mode: reread.theme_mode, dark: reread.dark, preset: reread.theme_preset, bg: reread.bg_image }
+  })`)
+  console.log('SYSTEM_MODE:', JSON.stringify(sysSetting))
+  if (sysSetting?.mode !== 'system' || typeof sysSetting?.dark !== 'boolean' || sysSetting?.preset !== 'mint') {
+    throw new Error('system mode persist failed: ' + JSON.stringify(sysSetting))
+  }
   ws.close()
 }
 

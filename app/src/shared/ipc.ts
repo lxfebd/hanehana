@@ -36,6 +36,8 @@ export const Ipc = {
   ActionAll: 'hanehana:action:all',
   SettingsGet: 'hanehana:settings:get',
   SettingsSave: 'hanehana:settings:save',
+  /** 自定义背景图选择（原生文件对话框，限图片） */
+  PickBgImage: 'hanehana:pick-bg-image',
   // 自动更新
   UpdateCheck: 'hanehana:update:check',
   UpdateInstall: 'hanehana:update:install',
@@ -51,6 +53,8 @@ export const Ipc = {
   TaskFocus: 'hanehana:push:task-focus',
   UpdateStatus: 'hanehana:push:update-status',
   SiteDownload: 'hanehana:push:site-download',
+  /** 系统深浅切换（仅 theme_mode='system' 时推送） */
+  ThemeChanged: 'hanehana:push:theme-changed',
 } as const
 
 export type IpcChannel = (typeof Ipc)[keyof typeof Ipc]

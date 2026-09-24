@@ -6,16 +6,34 @@
  * 漏一个，主进程会把它回落到默认值，用户会发现「勾了没保存」。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { FolderOpen } from 'lucide-vue-next'
-import { Button, Checkbox, Form, Input, InputNumber, Switch, TabPane, Tabs } from 'ant-design-vue'
+import { FolderOpen, Image as ImageIcon, Trash2 } from 'lucide-vue-next'
+import { Button, Checkbox, Form, Input, InputNumber, Radio, TabPane, Tabs } from 'ant-design-vue'
 import type { Settings, UpdateStatus } from '../../shared/types'
 import { proxyFormatError } from '../../shared/proxy'
 import { fmtSpeed } from '../../shared/format'
+import { THEME_PRESET_IDS } from '../design/tokens'
+
+import { themePresets } from '../design/tokens'
 
 const props = defineProps<{ settings: Settings }>()
 const emit = defineEmits<{ save: [s: Settings] }>()
 
 const form = reactive<Settings>({ ...props.settings })
+
+function presetName(id: (typeof THEME_PRESET_IDS)[number]): string {
+  return themePresets[id].name
+}
+function presetDesc(id: (typeof THEME_PRESET_IDS)[number]): string {
+  return themePresets[id].desc
+}
+function presetSwatch(id: (typeof THEME_PRESET_IDS)[number]): string {
+  return themePresets[id].swatch
+}
+
+async function pickBg(): Promise<void> {
+  const p = await window.hh.pickBgImage()
+  if (p) form.bg_image = p
+}
 
 /**
  * 引擎自检结果（主进程 hello 顺带回来）。
@@ -97,6 +115,9 @@ function save(): void {
     user_agent: form.user_agent.trim(),
     confirm_delete: form.confirm_delete,
     dark: form.dark,
+    theme_mode: form.theme_mode,
+    theme_preset: form.theme_preset,
+    bg_image: form.bg_image,
     notify_on_finish: form.notify_on_finish,
     notify_on_error: form.notify_on_error,
     close_to_tray: form.close_to_tray,
@@ -214,13 +235,53 @@ function save(): void {
       </TabPane>
       <TabPane key="ui" tab="外观">
         <div class="card">
+          <div class="lbl" style="margin-bottom: 8px">主题模式</div>
+          <Radio.Group v-model:value="form.theme_mode">
+            <Radio.Button value="system">跟随系统</Radio.Button>
+            <Radio.Button value="dark">深色</Radio.Button>
+            <Radio.Button value="light">浅色</Radio.Button>
+          </Radio.Group>
+          <div class="hint" style="margin-top: 8px">
+            跟随系统 = 随 Windows 深浅色自动切换；固定深/浅 = 不随系统变化。
+            切换立即生效，无需保存。
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="lbl" style="margin-bottom: 8px">主题配色</div>
+          <div class="preset-row">
+            <button
+              v-for="id in THEME_PRESET_IDS"
+              :key="id"
+              class="preset-card"
+              :class="{ active: form.theme_preset === id }"
+              @click="form.theme_preset = id"
+            >
+              <span class="preset-swatch" :style="{ background: presetSwatch(id) }"></span>
+              <span class="preset-name">{{ presetName(id) }}</span>
+              <span class="preset-desc">{{ presetDesc(id) }}</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="card">
           <div class="row-between">
             <div>
-              <div class="lbl">深色模式</div>
-              <div class="hint">深色（纯黑单色）/ 浅色（纯白极简）双主题，保存后立即生效。</div>
+              <div class="lbl">自定义背景</div>
+              <div class="hint">选择一张图片铺满窗口背景（无选中游戏封面时也生效）。留空 = 默认动态封面底。</div>
             </div>
-            <Switch v-model:checked="form.dark" />
+            <div class="row">
+              <Button @click="pickBg">
+                <template #icon><ImageIcon :size="14" /></template>
+                {{ form.bg_image ? '更换' : '选择图片' }}
+              </Button>
+              <Button v-if="form.bg_image" danger @click="form.bg_image = ''">
+                <template #icon><Trash2 :size="14" /></template>
+                清除
+              </Button>
+            </div>
           </div>
+          <div v-if="form.bg_image" class="bg-path mono">{{ form.bg_image }}</div>
         </div>
       </TabPane>
       <TabPane key="about" tab="关于">
@@ -331,6 +392,56 @@ function save(): void {
 }
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
+}
+/* 主题卡片 */
+.preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.preset-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  width: 148px;
+  padding: 10px 12px;
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: 10px;
+  background: var(--hh-color-card);
+  color: var(--hh-color-text);
+  cursor: pointer;
+  transition: border-color var(--hh-motion-fast) var(--hh-motion-ease-move),
+    box-shadow var(--hh-motion-fast) var(--hh-motion-ease-move);
+}
+.preset-card:hover {
+  border-color: var(--hh-color-accent-focus-border);
+}
+.preset-card.active {
+  border-color: var(--hh-color-accent);
+  box-shadow: 0 0 0 2px var(--hh-color-accent-ring);
+}
+.preset-swatch {
+  width: 100%;
+  height: 28px;
+  border-radius: 6px;
+  display: block;
+}
+.preset-name {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--hh-color-text-glow);
+}
+.preset-desc {
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--hh-color-text-dim);
+}
+.bg-path {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--hh-color-text-secondary);
+  word-break: break-all;
 }
 /* 关于页 */
 .about-row {
