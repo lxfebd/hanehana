@@ -743,7 +743,7 @@ onBeforeUnmount(() => {
 .mirror-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--hh-color-shade-thumb);
   z-index: 1000;
   display: flex;
   align-items: center;
@@ -753,9 +753,10 @@ onBeforeUnmount(() => {
   width: 420px;
   max-width: 90vw;
   background: var(--hh-color-float);
+  border: 1px solid var(--hh-color-float-border);
   border-radius: 8px;
   padding: 16px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+  box-shadow: var(--hh-shadow-float);
 }
 .m-title {
   font-size: 14px;
