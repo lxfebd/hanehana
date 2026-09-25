@@ -39,6 +39,8 @@ export const library = reactive({
   editTargetId: '',
   /** 存档备份弹窗（G1）：对当前选中游戏 */
   backupOpen: false,
+  /** 搜索正则模式（G19）：true 时搜索词按正则编译匹配 */
+  searchRegex: false,
   runningIds: new Set<string>(),
 })
 
@@ -88,8 +90,11 @@ watch(
   },
 )
 
-/** 索引随 games 数组更新；只在 refreshGames/applyScrapeResult 之后重算一次。 */
-const searchIndex = shallowRef<{ title: string; raw: string; native: string; tags: string; extra: string }[]>([])
+/**
+ * 索引随 games 数组更新；只在 refreshGames/applyScrapeResult 之后重算一次。
+ * 去除首尾空白以便精确匹配；字段分开存，按字段搜索（G19）直接查对应项。
+ */
+const searchIndex = shallowRef<{ title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string }[]>([])
 
 function rebuildIndex(): void {
   searchIndex.value = library.games.map((g) => ({
@@ -97,8 +102,61 @@ function rebuildIndex(): void {
     raw: g.rawTitle.toLowerCase(),
     native: (g.titleNative ?? '').toLowerCase(),
     tags: g.tags.join(' ').toLowerCase(),
-    extra: [g.developer, ...(g.series ?? []), ...(g.aliases ?? [])].filter(Boolean).join(' ').toLowerCase(),
+    extra: [...(g.aliases ?? []), ...(g.series ?? [])].filter(Boolean).join(' ').toLowerCase(),
+    dev: (g.developer ?? '').toLowerCase(),
+    series: (g.series ?? []).join(' ').toLowerCase(),
   }))
+}
+
+/** 字段前缀 → 索引字段名。搜索式 `tag:汉化`、`dev:柚子`、`dev:` 等。 */
+const FIELD_PREFIXES: Record<string, keyof typeof fieldKeys> = {
+  tag: 'tags',
+  dev: 'dev',
+  dev_: 'dev',
+  series: 'series',
+  ser: 'series',
+  name: 'title',
+  title: 'title',
+  orig: 'native',
+  native: 'native',
+}
+const fieldKeys = {
+  title: 0,
+  raw: 1,
+  native: 2,
+  tags: 3,
+  extra: 4,
+  dev: 5,
+  series: 6,
+} as const
+
+/**
+ * G19 搜索匹配。支持：
+ *  - 普通模式：空格分词，词序无关（每词命中任一字段即算）；`tag:`/`dev:`/`series:`/`name:`/`orig:` 字段前缀限定字段
+ *  - 正则模式：整条输入当作正则编译，匹配任一字段；语法错误返回 false（UI 已提示）
+ */
+function matchSearch(s: { title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string }, kw: string): boolean {
+  const fields = [s.title, s.raw, s.native, s.tags, s.extra, s.dev, s.series]
+  // 正则模式：不加任何前缀包裹，直接编译
+  if (library.searchRegex) {
+    try {
+      const re = new RegExp(kw, 'i')
+      return fields.some((f) => re.test(f))
+    } catch {
+      return false
+    }
+  }
+  // 字段前缀：`tag:xxx` → 只在 tags 里找
+  const fm = /^(tag|dev|dev_|series|ser|name|title|orig|native):(.*)$/.exec(kw)
+  if (fm) {
+    const key = FIELD_PREFIXES[fm[1]]
+    const needle = fm[2].trim()
+    return needle ? s[key].includes(needle) : true
+  }
+  // 普通模式：空格分词，词序无关（「万华镜 汉化」也能搜到「汉化 万华镜」类条目）
+  const terms = kw.split(/\s+/).filter(Boolean)
+  if (!terms.length) return true
+  return terms.every((t) => fields.some((f) => f.includes(t)))
 }
 
 export const filteredGames = computed(() => {
@@ -120,7 +178,7 @@ export const filteredGames = computed(() => {
     if (!kw) return true
     const s = idx[i]
     if (!s) return false
-    return s.title.includes(kw) || s.raw.includes(kw) || s.native.includes(kw) || s.tags.includes(kw) || s.extra.includes(kw)
+    return matchSearch(s, kw)
   })
 })
 

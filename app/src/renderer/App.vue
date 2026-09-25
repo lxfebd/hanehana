@@ -241,8 +241,15 @@ onUnmounted(() => {
                   <input
                     v-model="library.keyword"
                     class="search-input"
-                    placeholder="搜索游戏 / 标签 / 原文名…"
+                    :placeholder="library.searchRegex ? '正则匹配（如 ^[千|千]恋.*＄）' : '搜索游戏 / 标签 / 原文名…（tag:汉化 dev:柚子 name:X 按字段）'"
                   />
+                  <button
+                    class="regex-toggle"
+                    :class="{ on: library.searchRegex }"
+                    title="正则搜索"
+                    :aria-pressed="library.searchRegex"
+                    @click="library.searchRegex = !library.searchRegex"
+                  >.*</button>
                 </div>
 
                 <div class="cat-chips">
@@ -541,7 +548,7 @@ onUnmounted(() => {
   width: 100%;
   height: 32px;
   border-radius: 10px;
-  padding: 0 12px 0 34px;
+  padding: 0 42px 0 34px;
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-bright);
   color: var(--hh-color-text-glow);
@@ -552,6 +559,30 @@ onUnmounted(() => {
 .search-input:focus {
   border-color: var(--hh-color-accent-focus-border);
   box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
+}
+/* G19 正则切换按钮：贴在输入框右侧（.* 符号） */
+.regex-toggle {
+  position: absolute;
+  right: 6px;
+  height: 22px;
+  min-width: 30px;
+  padding: 0 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hh-color-text-dim);
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 12px;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.regex-toggle:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-bright);
+}
+.regex-toggle.on {
+  background: var(--hh-color-accent-bg);
+  color: var(--hh-color-accent);
 }
 
 /* 分类 chip 行：横向滚动无滚动条 */
