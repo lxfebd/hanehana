@@ -14,11 +14,11 @@
  */
 import { spawn, type ChildProcess } from 'node:child_process'
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
-import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { EngineCommand, EngineEvent, ErrorParams, TaskSnapshot } from '../shared/types'
 import { engineProxyFor } from './netConfig'
+import { dataDir } from './store'
 
 const CHUNK = 64 * 1024
 
@@ -716,8 +716,5 @@ function logPath(): string {
   return join(dir, '.engine-stderr.log')
 }
 
-/** 数据目录，HaneHana 自己的 ~/.hanehana，与 FastDrop 的 ~/.fastdrop 互不干扰。 */
-export function dataDir(): string {
-  if (process.env.HANEHANA_DATA_DIR) return process.env.HANEHANA_DATA_DIR
-  return join(homedir(), '.hanehana')
-}
+/** 数据目录（G15 便携模式后与 store.ts 同源）：日志落盘位置与下载引擎无关，仅复用目录。 */
+export { dataDir } from './store'

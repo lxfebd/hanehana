@@ -21,6 +21,7 @@ Thumbs.db
 # 注意：app/build/ 不忽略——安装包图标 icon.ico 要入库
 app/.e2e-data/
 app/.*-data/
+app/.*-portable/
 app/.shots/
 app/.*-game/
 app/.*-game2/

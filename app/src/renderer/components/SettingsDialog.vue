@@ -58,6 +58,19 @@ const proxyError = computed(() => proxyFormatError(form.proxy))
 /** 关于页展示：默认保存目录（与数据目录同源可读） */
 const dataDirText = computed(() => form.download_dir || '（未设置）')
 
+/** G15 便携模式：主进程算好的真实数据目录 + 是否便携（exe 旁有 PORTABLE 标记） */
+const realDataDir = ref('')
+const portable = ref(false)
+onMounted(async () => {
+  try {
+    const info = await window.hh.hello()
+    realDataDir.value = info.data_dir ?? ''
+    portable.value = !!info.portable
+  } catch {
+    // hello 拿不到就不显示，不影响其他设置
+  }
+})
+
 /** 构建期注入的版本号（app/package.json） */
 const appVersion: string = __APP_VERSION__
 
@@ -398,6 +411,10 @@ function save(): void {
           <div class="about-row">
             <span class="about-key">数据目录</span>
             <span class="about-val mono">{{ dataDirText }}</span>
+          </div>
+          <div class="about-row" v-if="realDataDir">
+            <span class="about-key">{{ portable ? '便携数据目录' : '配置与存档' }}</span>
+            <span class="about-val mono" :title="realDataDir">{{ realDataDir }}</span>
           </div>
           <div class="about-row">
             <span class="about-key">引擎</span>

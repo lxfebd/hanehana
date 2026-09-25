@@ -31,7 +31,7 @@ import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
 import { Manager } from './manager'
-import { normalizeSettings, Store, dataDir } from './store'
+import { normalizeSettings, Store, dataDir, isPortable } from './store'
 import { computeOverview } from './stats'
 import { applyChromiumProxy } from './netConfig'
 import { proxyFormatError } from '../shared/proxy'
@@ -388,6 +388,9 @@ function wireIpc(): void {
       engine_ok: st.ok,
       engine_path: st.path,
       engine_hint: st.hint,
+      // G15 便携模式：让渲染层「关于」页直接显示真实数据目录，不用自己猜
+      data_dir: dataDir(),
+      portable: isPortable(),
     }
   })
 

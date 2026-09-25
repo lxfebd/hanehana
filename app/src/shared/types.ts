@@ -519,6 +519,10 @@ export interface HelloInfo {
   engine_path: string
   /** 引擎缺失时「怎么修」的人话；engine_ok=true 时为空串。 */
   engine_hint: string
+  /** 当前生效的数据目录（G15 便携模式时落在 exe 旁 data\，否则 ~/.hanehana） */
+  data_dir: string
+  /** 是否便携模式（exe 旁存在 PORTABLE/.portable 标记） */
+  portable: boolean
 }
 
 /**

@@ -8,9 +8,9 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from '
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
+import { app } from 'electron'
 import type { ErrorParams, PlaySession, Settings, TaskDef, TaskState, ThemeMode, ThemePresetId } from '../shared/types'
 import { DEFAULT_SETTINGS, THEME_MODES, THEME_PRESETS } from '../shared/types'
-
 const TASK_STATES: readonly string[] = [
   'queued',
   'idle',
@@ -41,10 +41,44 @@ function normalizeErrorParams(v: unknown): ErrorParams {
   return out
 }
 
+/**
+ * 便携模式（G15）：数据目录优先落在「可执行文件旁的 data\」。
+ *
+ * 判定规则：exe 同目录存在便携标记文件（PORTABLE 或 .portable）才算便携——
+ * 只有用户/打包脚本显式放了标记才启用，避免把常规安装目录误判成便携根。
+ * HANEHANA_DATA_DIR 永远优先（测试隔离通道），之后才是便携目录，最后才是 ~/.hanehana。
+ */
+function portableDataDir(): string | null {
+  try {
+    // 测试缝（同 HANEHANA_NO_OS_FULLSCREEN 风格）：验收脚本用它模拟「exe 在便携根」，
+    // 而不用真的往 node_modules/electron 里塞标记文件。生产环境从不设置。
+    const exeDir = process.env.HANEHANA_PORTABLE_EXEDIR
+      ? process.env.HANEHANA_PORTABLE_EXEDIR
+      : dirname(app.getPath('exe'))
+    if (existsSync(join(exeDir, 'PORTABLE')) || existsSync(join(exeDir, '.portable'))) {
+      return join(exeDir, 'data')
+    }
+  } catch {
+    // app.getPath 失败（罕见环境）就退回普通模式
+  }
+  return null
+}
+
+/** 是否处于便携模式：exe 旁存在 PORTABLE/.portable 标记。 */
+export function isPortable(): boolean {
+  return portableDataDir() !== null
+}
+
 /** 设置与任务记录所在目录。界面起不来时，兜底页要能把这个目录交到用户手里。 */
 export function dataDir(): string {
+  // 测试缝（仅验收脚本设置 HANEHANA_PORTABLE_EXEDIR）：模拟 exe 位于便携根时，
+  // 便携分支优先于 HANEHANA_DATA_DIR，否则便携分支永远测不到（真实环境 HANEHANA_DATA_DIR 不存在）。
+  if (process.env.HANEHANA_PORTABLE_EXEDIR) {
+    const p = portableDataDir()
+    if (p) return p
+  }
   if (process.env.HANEHANA_DATA_DIR) return process.env.HANEHANA_DATA_DIR
-  return join(homedir(), '.hanehana')
+  return portableDataDir() ?? join(homedir(), '.hanehana')
 }
 
 function taskFile(): string {
