@@ -90,7 +90,14 @@ async function save(): Promise<void> {
     variants: variants.value
       .map((v) => ({ label: v.label.trim(), exePath: v.exePath.trim(), preLaunchCmd: v.preLaunchCmd?.trim() || undefined }))
       .filter((v) => v.label && v.exePath),
-    activeVariant: Math.max(0, Math.min(activeVariant.value, variants.value.filter((v) => v.label && v.exePath).length)),
+    // 夹取谓词必须与上方过滤一致（先 trim 再判空），否则 label 全是空白的行会虚高计数，activeVariant 存盘后越界
+    activeVariant: Math.max(
+      0,
+      Math.min(
+        activeVariant.value,
+        variants.value.filter((v) => v.label.trim() && v.exePath.trim()).length,
+      ),
+    ),
   }
   const ok = await saveManualEdit(g.id, patch)
   if (ok) open.value = false

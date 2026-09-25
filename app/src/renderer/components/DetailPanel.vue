@@ -9,7 +9,8 @@
  */
 import { computed, ref } from 'vue'
 import { Activity, Archive, DatabaseBackup, Flower2, FolderOpen, Heart, PanelRightClose, Pencil, Play, Star, Wand2 } from 'lucide-vue-next'
-import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, thumbUrl, toggleFavorite, filterByMeta } from '../stores/library'
+import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, syncIndexToGames, thumbUrl, toggleFavorite, filterByMeta } from '../stores/library'
+import { t } from '../i18n'
 import { tokens } from '../design/tokens'
 
 const emit = defineEmits<{ collapse: [] }>()
@@ -76,7 +77,10 @@ async function toggleCategory(): Promise<void> {
   const fresh = await window.hh.updateGame(game.id, { categories: next })
   if (fresh) {
     const idx = library.games.findIndex((it) => it.id === game.id)
-    if (idx >= 0) library.games[idx] = fresh
+    if (idx >= 0) {
+      library.games[idx] = fresh
+      syncIndexToGames()
+    }
   } else {
     void refreshGames()
   }
@@ -105,7 +109,10 @@ async function setVariant(n: number): Promise<void> {
   const fresh = await window.hh.updateGame(g.value.id, { activeVariant: n })
   if (fresh) {
     const idx = library.games.findIndex((it) => it.id === g.value!.id)
-    if (idx >= 0) library.games[idx] = fresh
+    if (idx >= 0) {
+      library.games[idx] = fresh
+      syncIndexToGames()
+    }
   } else {
     void refreshGames()
   }
@@ -139,7 +146,7 @@ function openBackups(): void {
     <!-- 未选中空态 -->
     <div v-if="!g" class="empty-state">
       <Flower2 :size="36" :stroke-width="1.5" class="empty-icon" />
-      <div class="empty-text">点击封面查看详情</div>
+      <div class="empty-text">{{ t('detail_empty') }}</div>
     </div>
 
     <template v-else>
@@ -178,14 +185,14 @@ function openBackups(): void {
       <!-- 动作栏：主按钮满宽 + 双 ghost 次行 -->
       <div class="actions">
         <button class="primary-btn" @click="launchGame(g.id)">
-          <span v-if="library.runningIds.has(g.id)"><Activity :size="16" /> 运行中</span>
-          <span v-else><Play :size="16" :fill="'currentColor'" /> 启动游戏</span>
+          <span v-if="library.runningIds.has(g.id)"><Activity :size="16" /> {{ t('detail_running') }}</span>
+          <span v-else><Play :size="16" :fill="'currentColor'" /> {{ t('detail_launch') }}</span>
         </button>
       </div>
       <div class="actions-sub">
-        <button class="ghost-btn" @click="openScrape(g.id, g.rawTitle || g.title)"><Wand2 :size="14" /> 刮削</button>
-        <button class="ghost-btn" @click="openEdit(g.id)"><Pencil :size="14" /> 编辑</button>
-        <button class="ghost-btn" @click="openDir"><FolderOpen :size="14" /> 目录</button>
+        <button class="ghost-btn" @click="openScrape(g.id, g.rawTitle || g.title)"><Wand2 :size="14" /> {{ t('detail_scrape') }}</button>
+        <button class="ghost-btn" @click="openEdit(g.id)"><Pencil :size="14" /> {{ t('detail_edit') }}</button>
+        <button class="ghost-btn" @click="openDir"><FolderOpen :size="14" /> {{ t('detail_dir') }}</button>
       </div>
 
       <!-- G13+G17 版本/语言包切换：默认 exePath + 每个变体一个 chip -->
@@ -213,15 +220,15 @@ function openBackups(): void {
       <div class="fav-row">
         <button class="fav-btn" :class="{ on: g.favorite }" :aria-pressed="g.favorite" @click="toggleFavorite(g.id)">
           <Heart :size="13" :fill="g.favorite ? 'currentColor' : 'none'" />
-          {{ g.favorite ? '已收藏' : '收藏' }}
+          {{ g.favorite ? t('detail_faved') : t('detail_fav') }}
         </button>
         <button class="fav-btn" :class="{ on: g.backupEnabled }" :aria-pressed="!!g.backupEnabled" @click="toggleBackup">
           <Archive :size="13" />
-          {{ g.backupEnabled ? '备份已开' : '备份' }}
+          {{ g.backupEnabled ? t('detail_backup_on') : t('detail_backup') }}
         </button>
         <button class="fav-btn" :class="{ on: library.backupOpen }" :aria-pressed="library.backupOpen" @click="openBackups">
           <DatabaseBackup :size="13" />
-          备份记录
+          {{ t('detail_backup_records') }}
         </button>
       </div>
 

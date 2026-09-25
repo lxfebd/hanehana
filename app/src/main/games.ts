@@ -203,22 +203,43 @@ function activeExe(g: Game): { exe: string; variant: GameVariant | undefined } {
   return { exe: g.exePath, variant: undefined }
 }
 
-/** 启动挂接命令。wait=true 时等它退出（超时 30s 继续，不阻塞启动太久）；返回是否 spawn 成功。 */
-function runHook(argv: string[], cwd: string, wait: boolean): boolean {
-  if (!argv.length) return true
+/**
+ * 启动挂接命令。
+ * wait=true（前置命令）：真正等它退出再返回（超时 30s 强杀放行，不让用户干等）；
+ *   异步 spawn 失败（ENOENT/EACCES）如实返回 false——前置命令失败意味着环境没准备好，
+ *   调用方据此中断启动，而不是带着坏环境把游戏本体拉起来。
+ * wait=false（后置命令）：立即放行，异步错误吞掉（辅助工具失败不该影响已启动的游戏）。
+ */
+function runHook(argv: string[], cwd: string, wait: boolean): Promise<boolean> {
+  if (!argv.length) return Promise.resolve(true)
   try {
     const p = spawn(argv[0], argv.slice(1), { cwd, detached: true, stdio: 'ignore', windowsHide: false })
-    if (wait) {
-      const t = setTimeout(() => p.kill(), 30000)
-      p.on('exit', () => clearTimeout(t))
-      // 前置命令最多等 30s：galgame 汉化补丁/环境准备通常秒级完成，等太久用户以为卡死
+    if (!wait) {
+      // 后置命令：立即放行，异步错误吞掉（辅助工具失败不该影响已启动的游戏）
+      p.on('error', () => {})
+      return Promise.resolve(true)
     }
-    // 命令不存在/无权限走异步 error 事件：没有监听器就是 uncaughtException 直接带走主进程。
-    // 返回值保持 true（同步 spawn 已成功）；hook 失败不该让游戏本体启动链断开。
-    p.on('error', () => {})
-    return true
+    // 前置命令：真等退出。spawn 失败（ENOENT/EACCES）时 Node 只发 error、exit 可能不来，
+    // 所以 error 自己 resolve；exit 与 30s 超时是另两条放行路径。Promise resolve 幂等，先到者为准。
+    return new Promise((resolve) => {
+      let failed = false
+      p.on('error', (err: NodeJS.ErrnoException) => {
+        console.error('[hook] 挂接命令启动失败:', argv[0], 'code=', err.code)
+        failed = true
+        resolve(false)
+      })
+      const t = setTimeout(() => {
+        // 超时强杀放行：命令卡住不该让启动永远挂着
+        p.kill()
+        resolve(!failed)
+      }, 30000)
+      p.on('exit', () => {
+        clearTimeout(t)
+        resolve(!failed)
+      })
+    })
   } catch {
-    return false
+    return Promise.resolve(false)
   }
 }
 
@@ -230,7 +251,7 @@ function detectToolPath(candidates: string[]): string {
   return ''
 }
 
-export function handleLaunch(id: string): { ok: boolean; error?: string } {
+export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: string }> {
   const g = getGame(id)
   if (!g) return { ok: false, error: '游戏不在库中' }
   // G13+G17 变体解析：启动目标可能是 variants 里的另一个 exe
@@ -253,13 +274,13 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
   // 变体有专属命令时接在游戏级命令之后（同等待语义）。
   if (g.preLaunchCmd?.trim()) {
     const argv = splitCommand(applyPlaceholders(g.preLaunchCmd.trim(), g, exe))
-    if (!runHook(argv, g.dir, true)) {
+    if (!(await runHook(argv, g.dir, true))) {
       return { ok: false, error: '启动前命令执行失败：' + g.preLaunchCmd }
     }
   }
   if (variant?.preLaunchCmd?.trim()) {
     const argv = splitCommand(applyPlaceholders(variant.preLaunchCmd.trim(), g, exe))
-    if (!runHook(argv, g.dir, true)) {
+    if (!(await runHook(argv, g.dir, true))) {
       return { ok: false, error: '变体启动前命令执行失败：' + variant.preLaunchCmd }
     }
   }
@@ -354,7 +375,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     // 启动后挂接命令（G2）：不等待，并行拉起辅助工具（OCR/翻译/进度条）
     if (g.postLaunchCmd?.trim()) {
       const argv = splitCommand(applyPlaceholders(g.postLaunchCmd.trim(), g, exe))
-      runHook(argv, g.dir, false)
+      void runHook(argv, g.dir, false)
     }
 
     return { ok: true }

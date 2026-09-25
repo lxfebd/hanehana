@@ -196,6 +196,11 @@ export function filterByMeta(key: 'series' | 'developer', value: string): void {
   library.metaValue = value
 }
 
+/** 本地镜像变更后让搜索索引跟上：games 数组与 searchIndex 按下标对齐，任一侧改数组都必须重算。 */
+export function syncIndexToGames(): void {
+  rebuildIndex()
+}
+
 export async function refreshGames(): Promise<void> {
   library.loading = true
   try {
@@ -218,9 +223,11 @@ export async function toggleFavorite(id: string): Promise<void> {
   const next = !g.favorite
   // 乐观更新：先改本地镜像，服务端失败再回滚重拉
   g.favorite = next
+  syncIndexToGames()
   const fresh = await window.hh.updateGame(id, { favorite: next })
   if (!fresh) {
     g.favorite = !next
+    syncIndexToGames()
     void refreshGames()
   }
 }
@@ -273,10 +280,12 @@ export async function batchUpdate(patches: { id: string; patch: Partial<Game> }[
     }
     library.error = r.error ?? '批量更新失败'
   }
+  syncIndexToGames()
 }
 
 export async function batchRemove(ids: string[]): Promise<void> {
   library.games = library.games.filter((g) => !ids.includes(g.id))
+  syncIndexToGames()
   if (library.selection.length) library.selection = library.selection.filter((id) => !ids.includes(id))
   const r = await window.hh.batchRemoveGames(ids)
   if (!r.ok) {
@@ -299,7 +308,10 @@ export async function saveManualEdit(id: string, patch: Partial<Game>): Promise<
     return false
   }
   const idx = library.games.findIndex((it) => it.id === id)
-  if (idx >= 0) library.games[idx] = fresh
+  if (idx >= 0) {
+    library.games[idx] = fresh
+    syncIndexToGames()
+  }
   return true
 }
 

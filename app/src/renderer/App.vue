@@ -65,6 +65,16 @@ const addSubmitKey = ref(0)
 /** G14 导出菜单开关（工具栏箭头按钮下的小菜单：CSV / JSON） */
 const exportMenuOpen = ref(false)
 
+/** 点菜单外的任意处收起导出菜单（含切页/点工具栏其他按钮）。 */
+function closeExportMenu(e: MouseEvent): void {
+  if (!exportMenuOpen.value) return
+  const wrap = document.querySelector('.export-wrap')
+  if (wrap && wrap.contains(e.target as Node)) return
+  exportMenuOpen.value = false
+}
+onMounted(() => document.addEventListener('click', closeExportMenu))
+onUnmounted(() => document.removeEventListener('click', closeExportMenu))
+
 /** G14 游戏库导出：调主进程弹保存对话框，成功后通知落盘位置 */
 async function doExport(fmt: 'csv' | 'json'): Promise<void> {
   exportMenuOpen.value = false
@@ -238,15 +248,15 @@ onUnmounted(() => {
             <div class="nav-spacer"></div>
             <button class="nav-item" @click="enterFullscreen()">
               <Maximize2 :size="16" class="nav-ic" />
-              <span>全屏模式</span>
+              <span>{{ t('nav_fullscreen') }}</span>
             </button>
             <button class="nav-item" @click="library.scanOpen = true">
               <ScanSearch :size="16" class="nav-ic" />
-              <span>扫描导入</span>
+              <span>{{ t('lib_scan') }}</span>
             </button>
             <button class="nav-item" @click="ui.steamImportOpen = true">
               <Gamepad2 :size="16" class="nav-ic" />
-              <span>Steam 导入</span>
+              <span>{{ t('nav_steam_import') }}</span>
             </button>
             <button class="nav-item" @click="openSettings()">
               <Settings :size="16" class="nav-ic" />
@@ -264,12 +274,12 @@ onUnmounted(() => {
                   <input
                     v-model="library.keyword"
                     class="search-input"
-                    :placeholder="library.searchRegex ? '正则匹配（如 ^[千|千]恋.*＄）' : '搜索游戏 / 标签 / 原文名…（tag:汉化 dev:柚子 name:X 按字段）'"
+                    :placeholder="library.searchRegex ? t('toolbar_search_regex_placeholder') : t('toolbar_search_placeholder')"
                   />
                   <button
                     class="regex-toggle"
                     :class="{ on: library.searchRegex }"
-                    title="正则搜索"
+                    :title="t('toolbar_regex')"
                     :aria-pressed="library.searchRegex"
                     @click="library.searchRegex = !library.searchRegex"
                   >.*</button>
@@ -280,7 +290,7 @@ onUnmounted(() => {
                     class="cat-chip"
                     :class="{ active: library.categoryFilter === '' }"
                     @click="library.categoryFilter = ''"
-                  >全部</button>
+                  >{{ t('toolbar_all') }}</button>
                   <button
                     v-for="c in categories"
                     :key="c"
@@ -291,14 +301,14 @@ onUnmounted(() => {
                 </div>
 
                 <!-- 智能列表（动态筛选，Playnite 式） -->
-                <select v-model="library.smartList" class="smart-select" title="智能列表">
+                <select v-model="library.smartList" class="smart-select" :title="t('toolbar_smart')">
                   <option v-for="l in SMART_LISTS" :key="l.id" :value="l.id">{{ l.label }}</option>
                 </select>
 
                 <button
                   class="tool-btn"
                   :class="{ active: library.favOnly }"
-                  title="只看收藏"
+                  :title="t('toolbar_fav')"
                   :aria-pressed="library.favOnly"
                   @click="library.favOnly = !library.favOnly"
                 ><Heart :size="15" /></button>
@@ -306,28 +316,28 @@ onUnmounted(() => {
                 <button
                   class="tool-btn"
                   :class="{ active: library.selectMode }"
-                  title="多选模式"
+                  :title="t('toolbar_select')"
                   :aria-pressed="library.selectMode"
                   @click="enterSelectMode(!library.selectMode)"
                 ><CheckSquare :size="15" /></button>
 
-                <div class="toolbar-count">{{ filteredCount }} 款</div>
+                <div class="toolbar-count">{{ filteredCount }} {{ t('count_suffix') }}</div>
 
                 <!-- G14 导出：箭头按钮 + 小菜单（CSV / JSON） -->
                 <div class="export-wrap">
                   <button
                     class="tool-btn"
                     :class="{ active: exportMenuOpen }"
-                    title="导出游戏库"
+                    :title="t('toolbar_export')"
                     :aria-pressed="exportMenuOpen"
                     @click="exportMenuOpen = !exportMenuOpen"
                   ><ArrowUpFromLine :size="15" /></button>
                   <div v-if="exportMenuOpen" class="export-menu glass" @click.stop>
-                    <button class="export-item" @click="doExport('csv')">导出 CSV</button>
-                    <button class="export-item" @click="doExport('json')">导出 JSON</button>
+                    <button class="export-item" @click="doExport('csv')">{{ t('toolbar_export_csv') }}</button>
+                    <button class="export-item" @click="doExport('json')">{{ t('toolbar_export_json') }}</button>
                   </div>
                 </div>
-                <button v-if="library.metaKey" class="meta-chip" @click="library.metaKey = ''; library.metaValue = ''" :title="'清除筛选'">
+                <button v-if="library.metaKey" class="meta-chip" @click="library.metaKey = ''; library.metaValue = ''" :title="t('lib_clear')">
                   <X :size="12" /> {{ library.metaKey === 'series' ? '系列：' : '开发商：' }}{{ library.metaValue }}
                 </button>
 
@@ -335,13 +345,13 @@ onUnmounted(() => {
                   <button
                     class="seg-btn"
                     :class="{ active: library.view === 'grid' }"
-                    title="网格视图"
+                    :title="t('toolbar_grid')"
                     @click="library.view = 'grid'"
                   ><LayoutGrid :size="16" /></button>
                   <button
                     class="seg-btn"
                     :class="{ active: library.view === 'list' }"
-                    title="列表视图"
+                    :title="t('toolbar_list')"
                     @click="library.view = 'list'"
                   ><List :size="16" /></button>
                 </div>

@@ -15,7 +15,7 @@
  *     渲染层用 app-region: drag 画自定义标题栏。
  */
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
-import { existsSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Ipc } from '../shared/ipc'
@@ -537,7 +537,7 @@ function wireIpc(): void {
     if (!list.length) return { ok: true as const, ...handleBatchRemove([]) }
     return { ok: true as const, ...handleBatchRemove(list) }
   })
-  ipcMain.handle(Ipc.GameLaunch, (_e, id: unknown) => {
+  ipcMain.handle(Ipc.GameLaunch, async (_e, id: unknown) => {
     if (!isId(id)) return { ok: false as const, error: '游戏不存在' }
     return handleLaunch(id)
   })

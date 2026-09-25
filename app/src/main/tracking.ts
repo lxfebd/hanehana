@@ -155,19 +155,32 @@ function isoDate(ts: number): string {
   return `${d.getFullYear()}-${mm}-${dd}`
 }
 
+/** 单次检查进行中标记：防连点「立即检查」并发交错读写 tracking.json（重复通知）。 */
+let checkInFlight = false
+
 /**
- * 检查所有订阅：每个订阅词查一遍 VNDB，识别「新」作（id 不在 seenIds 里、且非
- * 用户此前手动标记过已见的），更新 lastCheck/seenIds，返回命中与新作清单。
+ * 检查所有订阅：每个订阅词查一遍 VNDB（并行，订阅多时不串行卡死），识别
+ * 「新」作（id 不在 seenIds 里），更新 lastCheck/seenIds，返回命中与新作清单。
  */
 export async function checkTracks(): Promise<TrackCheckResult> {
+  if (checkInFlight) return { ok: true, hits: [], fresh: [] }
+  checkInFlight = true
   const all = loadTracking()
-  if (!all.length) return { ok: true, hits: [], fresh: [] }
+  if (!all.length) {
+    checkInFlight = false
+    return { ok: true, hits: [], fresh: [] }
+  }
   const hits: TrackHit[] = []
   const fresh: TrackHit[] = []
   try {
-    for (const e of all) {
-      const since = isoDate(e.lastCheck + 1)
-      const found = await queryKeyword(e.keyword, since)
+    const results = await Promise.all(
+      all.map(async (e) => {
+        const since = isoDate(e.lastCheck + 1)
+        const found = await queryKeyword(e.keyword, since)
+        return { e, found }
+      }),
+    )
+    for (const { e, found } of results) {
       for (const v of found) {
         const hit: TrackHit = { vnId: v.id, title: v.title, released: v.released ?? '', keyword: e.keyword }
         hits.push(hit)
@@ -182,5 +195,7 @@ export async function checkTracks(): Promise<TrackCheckResult> {
     return { ok: true, hits, fresh }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  } finally {
+    checkInFlight = false
   }
 }

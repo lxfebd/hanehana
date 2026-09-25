@@ -24,6 +24,7 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Check, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { library, selectGame, thumbUrl, toggleSelect, debouncedKeyword } from '../stores/library'
+import { t } from '../i18n'
 import { tokens } from '../design/tokens'
 
 const props = defineProps<{
@@ -171,16 +172,16 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
     <!-- 空态：库里确实没有游戏 -->
     <div v-else-if="games.length === 0 && filteredEmpty" class="empty glass">
       <Flower2 class="empty-icon" :size="40" :stroke-width="1.5" />
-      <div class="empty-title">游戏库还是空的</div>
-      <div class="empty-hint">点「扫描导入」选择游戏目录，自动识别 exe 入库</div>
-      <button class="empty-cta" @click="library.scanOpen = true">扫描导入</button>
+      <div class="empty-title">{{ t('lib_empty') }}</div>
+      <div class="empty-hint">{{ t('lib_empty_hint') }}</div>
+      <button class="empty-cta" @click="library.scanOpen = true">{{ t('lib_scan') }}</button>
     </div>
 
     <!-- 空态：有游戏但被搜索/分类过滤光了 -->
     <div v-else-if="games.length === 0" class="empty glass">
-      <div class="empty-title">没有匹配的游戏</div>
+      <div class="empty-title">{{ t('lib_no_match') }}</div>
       <div class="empty-hint">换换关键词或分类试试</div>
-      <button class="empty-cta ghost" @click="library.keyword = ''; library.categoryFilter = ''">清除筛选</button>
+      <button class="empty-cta ghost" @click="library.keyword = ''; library.categoryFilter = ''">{{ t('lib_clear') }}</button>
     </div>
 
     <!-- 网格视图：行级窗口化 + 每行 flex 自己排列（grid 位置由 CSS 响应式驱动，
@@ -214,9 +215,9 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <span v-else class="cover-letter">{{ g.title.slice(0, 2) }}</span>
 
               <div v-if="library.runningIds.has(g.id)" class="cover-running">
-                <Activity :size="10" :stroke-width="2.5" /> 运行中
+                <Activity :size="10" :stroke-width="2.5" /> {{ t('detail_running') }}
               </div>
-              <div v-if="g.favorite" class="cover-fav" title="已收藏">
+              <div v-if="g.favorite" class="cover-fav" :title="t('detail_faved')">
                 <Heart :size="10" :fill="'currentColor'" :stroke-width="0" />
               </div>
               <div v-if="library.selectMode && library.selection.includes(g.id)" class="cover-check">
@@ -264,7 +265,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
             <div v-if="library.runningIds.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
             </div>
-            <div v-if="item.favorite" class="list-fav" title="已收藏">
+            <div v-if="item.favorite" class="list-fav" :title="t('detail_faved')">
               <Heart :size="9" :fill="'currentColor'" :stroke-width="0" />
             </div>
             <div v-if="library.selectMode && library.selection.includes(item.id)" class="list-check">

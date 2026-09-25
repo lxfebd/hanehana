@@ -21,6 +21,7 @@ import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { Heart, Search, X } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { categories, filteredGames, library, selectGame, thumbUrl, toggleFavorite } from '../stores/library'
+import { t } from '../i18n'
 
 const emit = defineEmits<{ exit: [] }>()
 
@@ -215,7 +216,7 @@ function imgErr(e: Event): void {
 
     <!-- 空态 -->
     <div v-if="games.length === 0" class="fs-empty">
-      <div class="fs-empty-title">{{ library.games.length ? '没有匹配的游戏' : '游戏库还是空的' }}</div>
+      <div class="fs-empty-title">{{ library.games.length ? t('lib_no_match') : t('lib_empty') }}</div>
       <div class="fs-empty-hint">Esc 退出全屏，先到普通视图扫描导入游戏</div>
     </div>
 
