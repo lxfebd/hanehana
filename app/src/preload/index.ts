@@ -39,6 +39,15 @@ const bridge = {
   openDir: (dir: string) => ipcRenderer.invoke(Ipc.OpenDir, dir),
   pickDir: (): Promise<string> => ipcRenderer.invoke(Ipc.PickDir),
 
+  // ---- 全屏模式（G11）----
+  fullscreenSet: (on: boolean): Promise<boolean> => ipcRenderer.invoke(Ipc.FullscreenSet, on),
+  fullscreenToggle: (): Promise<boolean> => ipcRenderer.invoke(Ipc.FullscreenToggle),
+  onFullscreenChanged: (cb: (on: boolean) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, on: boolean): void => cb(on)
+    ipcRenderer.on(Ipc.FullscreenChanged, listener)
+    return () => ipcRenderer.removeListener(Ipc.FullscreenChanged, listener)
+  },
+
   // ---- 下载引擎 ----
   listTasks: (): Promise<TaskRow[]> => ipcRenderer.invoke(Ipc.TasksList),
   addTask: (input: { url: string; dest: string; threads: number; note?: string; checksum?: string }): Promise<AddResult> =>

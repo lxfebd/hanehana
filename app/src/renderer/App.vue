@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2 } from 'lucide-vue-next'
+import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2 } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -19,9 +19,23 @@ import BatchEditOverlay from './components/BatchEditOverlay.vue'
 import EditDialog from './components/EditDialog.vue'
 import StatsView from './components/StatsView.vue'
 import SteamImportDialog from './components/SteamImportDialog.vue'
+import FullscreenView from './components/FullscreenView.vue'
 
 const bootInfo = ref('')
 let unsubPushes: Array<() => void> = []
+
+/** 全屏模式（G11）：进入用主进程切真全屏，Esc/系统手势退出同步回渲染层 */
+async function enterFullscreen(): Promise<void> {
+  ui.page = 'library'
+  ui.detailCollapsed = true
+  const on = await window.hh.fullscreenSet(true).catch(() => false)
+  // 主进程 win.isFullScreen() 立即生效；推送兜底（某些平台 enter 延迟）
+  ui.fullscreen = on || true
+}
+async function exitFullscreen(): Promise<void> {
+  await window.hh.fullscreenSet(false).catch(() => {})
+  ui.fullscreen = false
+}
 /** 窄窗口（<1100px）时详情面板宽度会把内容区挤没，自动收起 */
 let narrowMq: MediaQueryList | null = null
 let narrowMqFn: ((e: MediaQueryListEvent) => void) | null = null
@@ -115,6 +129,16 @@ onMounted(async () => {
     )
   }
 
+  // 全屏状态同步：主进程 enter/leave 时校正渲染层状态
+  if (window.hh?.onFullscreenChanged) {
+    unsubPushes.push(
+      window.hh.onFullscreenChanged((on) => {
+        ui.fullscreen = on
+        if (on) ui.detailCollapsed = true
+      }),
+    )
+  }
+
   // 窄窗口自动收起详情面板：360px 详情 + 208px 侧栏会把内容区挤没
   if ('matchMedia' in window) {
     narrowMq = window.matchMedia('(max-width: 1100px)')
@@ -188,6 +212,10 @@ onUnmounted(() => {
             </button>
 
             <div class="nav-spacer"></div>
+            <button class="nav-item" @click="enterFullscreen()">
+              <Maximize2 :size="16" class="nav-ic" />
+              <span>全屏模式</span>
+            </button>
             <button class="nav-item" @click="library.scanOpen = true">
               <ScanSearch :size="16" class="nav-ic" />
               <span>扫描导入</span>
@@ -315,6 +343,9 @@ onUnmounted(() => {
         <ScrapeDialog v-model:open="library.scrapeOpen" />
         <EditDialog v-model:open="library.editOpen" />
         <SteamImportDialog v-model:open="ui.steamImportOpen" />
+
+        <!-- 全屏模式：覆盖整个窗口，独立于普通布局 -->
+        <FullscreenView v-if="ui.fullscreen" @exit="exitFullscreen" />
 
         <Modal
           v-model:open="downloads.addDialogOpen"

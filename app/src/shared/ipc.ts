@@ -30,6 +30,9 @@ export const Ipc = {
   PickDir: 'hanehana:pickDir',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
+  // 全屏模式（G11）
+  FullscreenSet: 'hanehana:window:fullscreen-set',
+  FullscreenToggle: 'hanehana:window:fullscreen-toggle',
 
   // ---- 下载引擎（Rust fastdrop-engine 迁移）----
   TasksList: 'hanehana:tasks:list',
@@ -55,6 +58,7 @@ export const Ipc = {
   SitesAddTask: 'hanehana:sites:add-task',
   WebviewOpenExternal: 'hanehana:webview:open-external',
   // 主进程 → 渲染进程（推送）
+  FullscreenChanged: 'hanehana:push:fullscreen-changed',
   TaskProgress: 'hanehana:push:task-progress',
   TaskFocus: 'hanehana:push:task-focus',
   UpdateStatus: 'hanehana:push:update-status',

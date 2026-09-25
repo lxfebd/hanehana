@@ -161,6 +161,14 @@ function createWindow(): void {
     return { action: 'deny' }
   })
 
+  // 全屏状态变化：同步给渲染层（点系统手势 / Esc / 切走再切回都要一致）
+  win.on('enter-full-screen', () => {
+    win?.webContents.send(Ipc.FullscreenChanged, true)
+  })
+  win.on('leave-full-screen', () => {
+    win?.webContents.send(Ipc.FullscreenChanged, false)
+  })
+
   // 开发模式走 electron-vite dev server，生产加载打包产物。
   if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
     win.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -375,6 +383,23 @@ function wireIpc(): void {
   ipcMain.handle(Ipc.GameList, () => getGames())
   // 统计报表：重放游玩会话聚合（量级小，无需缓存）
   ipcMain.handle(Ipc.StatsOverview, () => computeOverview(getGames(), store.loadPlaySessions()))
+
+  // 全屏模式（G11）：切换主窗口全屏。渲染层只管调，窗口状态以主进程为准。
+  // 测试缝：CDP 对 OS 真全屏截图会残留旧帧合成鬼影（probe 已证布局本身正确）。
+  // HANEHANA_NO_OS_FULLSCREEN=1 时只回传目标态、不动 OS 全屏，视觉验收可干净截图。
+  // 生产环境从不设置该变量，行为不变。
+  ipcMain.handle(Ipc.FullscreenSet, (_e, on: unknown) => {
+    if (!win || typeof on !== 'boolean') return false
+    if (process.env['HANEHANA_NO_OS_FULLSCREEN'] === '1') return on
+    win.setFullScreen(on)
+    return win.isFullScreen()
+  })
+  ipcMain.handle(Ipc.FullscreenToggle, () => {
+    if (!win) return false
+    if (process.env['HANEHANA_NO_OS_FULLSCREEN'] === '1') return !win.isFullScreen()
+    win.setFullScreen(!win.isFullScreen())
+    return win.isFullScreen()
+  })
   ipcMain.handle(Ipc.GameScan, (_e, root: unknown) => {
     if (typeof root !== 'string' || !root.trim() || root.length > 4000) {
       throw new Error('请先选择要扫描的目录')
