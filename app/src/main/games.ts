@@ -11,7 +11,7 @@ import { basename } from 'node:path'
 import { shell } from 'electron'
 import { addGames, getGame, getGames, removeGame, updateGame } from './gameStore'
 import { scanDir, isValidDir } from './scanner'
-import type { Game, PlaySession, SteamImportResult } from '../shared/types'
+import type { Game, GameVariant, PlaySession, SteamImportResult } from '../shared/types'
 
 export interface ScanResult {
   added: Game[]
@@ -188,9 +188,19 @@ function splitCommand(cmd: string): string[] {
   return out
 }
 
-/** 占位符替换：{exe} = 游戏 exe，{dir} = 游戏目录 */
-function applyPlaceholders(cmd: string, game: Game): string {
-  return cmd.replaceAll('{exe}', game.exePath).replaceAll('{dir}', game.dir)
+/** 占位符替换：{exe} = 实际启动目标 exe（含变体），{dir} = 游戏目录 */
+function applyPlaceholders(cmd: string, game: Game, exe: string): string {
+  return cmd.replaceAll('{exe}', exe).replaceAll('{dir}', game.dir)
+}
+
+/** G13+G17：解析当前启动目标。activeVariant=0/缺省 → 默认 exePath；n≥1 → variants[n-1]。越界回退默认。 */
+function activeExe(g: Game): { exe: string; variant: GameVariant | undefined } {
+  const n = g.activeVariant ?? 0
+  if (n >= 1 && Array.isArray(g.variants) && n <= g.variants.length) {
+    const v = g.variants[n - 1]
+    if (v && v.exePath) return { exe: v.exePath, variant: v }
+  }
+  return { exe: g.exePath, variant: undefined }
 }
 
 /** 启动挂接命令。wait=true 时等它退出（超时 30s 继续，不阻塞启动太久）；返回是否 spawn 成功。 */
@@ -203,6 +213,9 @@ function runHook(argv: string[], cwd: string, wait: boolean): boolean {
       p.on('exit', () => clearTimeout(t))
       // 前置命令最多等 30s：galgame 汉化补丁/环境准备通常秒级完成，等太久用户以为卡死
     }
+    // 命令不存在/无权限走异步 error 事件：没有监听器就是 uncaughtException 直接带走主进程。
+    // 返回值保持 true（同步 spawn 已成功）；hook 失败不该让游戏本体启动链断开。
+    p.on('error', () => {})
     return true
   } catch {
     return false
@@ -220,7 +233,9 @@ function detectToolPath(candidates: string[]): string {
 export function handleLaunch(id: string): { ok: boolean; error?: string } {
   const g = getGame(id)
   if (!g) return { ok: false, error: '游戏不在库中' }
-  if (!existsSync(g.exePath)) return { ok: false, error: '启动文件不存在：' + g.exePath }
+  // G13+G17 变体解析：启动目标可能是 variants 里的另一个 exe
+  const { exe, variant } = activeExe(g)
+  if (!existsSync(exe)) return { ok: false, error: '启动文件不存在：' + exe }
   // 重复启动防护（G10）：同一游戏已在运行时明确拒绝，并说明原因
   if (runningProc.has(id)) {
     return { ok: false, error: `${g.title} 已在运行中（想再开一份请先关掉当前窗口，或用「打开目录」手动启动）` }
@@ -228,23 +243,30 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
 
   // .lnk 不是可执行映像，CreateProcess 会以异步 error 事件炸出来；
   // 快捷方式交给系统壳打开（代价：这条不计游玩时长）
-  if (/\.lnk$/i.test(g.exePath)) {
-    void shell.openPath(g.exePath)
+  if (/\.lnk$/i.test(exe)) {
+    void shell.openPath(exe)
     updateGame(id, { lastPlayed: Date.now() })
     return { ok: true }
   }
 
-  // 启动前挂接命令（G2）：占位符替换后先跑，等待完成再启动游戏本体
+  // 启动前挂接命令（G2）：占位符替换后先跑，等待完成再启动游戏本体。
+  // 变体有专属命令时接在游戏级命令之后（同等待语义）。
   if (g.preLaunchCmd?.trim()) {
-    const argv = splitCommand(applyPlaceholders(g.preLaunchCmd.trim(), g))
+    const argv = splitCommand(applyPlaceholders(g.preLaunchCmd.trim(), g, exe))
     if (!runHook(argv, g.dir, true)) {
       return { ok: false, error: '启动前命令执行失败：' + g.preLaunchCmd }
+    }
+  }
+  if (variant?.preLaunchCmd?.trim()) {
+    const argv = splitCommand(applyPlaceholders(variant.preLaunchCmd.trim(), g, exe))
+    if (!runHook(argv, g.dir, true)) {
+      return { ok: false, error: '变体启动前命令执行失败：' + variant.preLaunchCmd }
     }
   }
 
   try {
     // LE 转区：优先用设置里的执行器路径，回退环境变量（G2 从「开关」到「实际集成」）
-    let cmd = g.exePath
+    let cmd = exe
     let args: string[] = []
     if (g.useLE) {
       // 设置里显式配置的路径优先；没配才回退环境变量与常见安装位置
@@ -263,7 +285,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
           ])
       if (le) {
         cmd = le
-        args = [g.exePath]
+        args = [exe]
       } else {
         return { ok: false, error: '游戏启用了 LE 转区，但找不到 Locale Emulator（请到设置→工具里指定 LEProc.exe 路径）' }
       }
@@ -321,7 +343,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
         // 等 1s 让游戏窗口出现，再让 Magpie 接管（太早会抓不到目标窗口）
         setTimeout(() => {
           try {
-            spawn(magpie, ['--launch', g.exePath], { detached: true, stdio: 'ignore', windowsHide: false })
+            spawn(magpie, ['--launch', exe], { detached: true, stdio: 'ignore', windowsHide: false })
           } catch {
             // Magpie 拉起失败不阻塞游戏本体；用户仍可手动开
           }
@@ -331,7 +353,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
 
     // 启动后挂接命令（G2）：不等待，并行拉起辅助工具（OCR/翻译/进度条）
     if (g.postLaunchCmd?.trim()) {
-      const argv = splitCommand(applyPlaceholders(g.postLaunchCmd.trim(), g))
+      const argv = splitCommand(applyPlaceholders(g.postLaunchCmd.trim(), g, exe))
       runHook(argv, g.dir, false)
     }
 

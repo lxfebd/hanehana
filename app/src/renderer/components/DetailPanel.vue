@@ -99,6 +99,27 @@ async function toggleBackup(): Promise<void> {
   await refreshGames()
 }
 
+/** G13+G17 变体切换：n=0 默认 exePath，n≥1 = variants[n-1]，改完静默更新本地镜像 */
+async function setVariant(n: number): Promise<void> {
+  if (!g.value) return
+  const fresh = await window.hh.updateGame(g.value.id, { activeVariant: n })
+  if (fresh) {
+    const idx = library.games.findIndex((it) => it.id === g.value!.id)
+    if (idx >= 0) library.games[idx] = fresh
+  } else {
+    void refreshGames()
+  }
+}
+
+/** 当前启动目标的可读名（变体 chips 里的选中态与 meta） */
+const variantName = computed(() => {
+  const game = g.value
+  if (!game) return ''
+  const n = game.activeVariant ?? 0
+  if (n >= 1 && game.variants && n <= game.variants.length) return game.variants[n - 1]?.label ?? game.title
+  return game.title
+})
+
 /** 打开该游戏的备份/恢复对话框 */
 function openBackups(): void {
   library.backupOpen = true
@@ -167,6 +188,27 @@ function openBackups(): void {
         <button class="ghost-btn" @click="openDir"><FolderOpen :size="14" /> 目录</button>
       </div>
 
+      <!-- G13+G17 版本/语言包切换：默认 exePath + 每个变体一个 chip -->
+      <div v-if="g.variants?.length" class="variants">
+        <span class="meta-key variants-key">版本</span>
+        <div class="variants-chips">
+          <button
+            class="variant-chip"
+            :class="{ on: (g.activeVariant ?? 0) === 0 }"
+            :title="g.exePath"
+            @click="setVariant(0)"
+          >默认</button>
+          <button
+            v-for="(v, i) in g.variants"
+            :key="i"
+            class="variant-chip"
+            :class="{ on: (g.activeVariant ?? 0) === i + 1 }"
+            :title="v.exePath"
+            @click="setVariant(i + 1)"
+          >{{ v.label }}</button>
+        </div>
+      </div>
+
       <!-- 收藏行 -->
       <div class="fav-row">
         <button class="fav-btn" :class="{ on: g.favorite }" :aria-pressed="g.favorite" @click="toggleFavorite(g.id)">
@@ -188,6 +230,10 @@ function openBackups(): void {
         <div class="meta-row"><span class="meta-key">游玩时长</span><span class="meta-val">{{ fmtPlay(g.playMs) }}</span></div>
         <div class="meta-row" v-if="lengthText"><span class="meta-key">通关时长</span><span class="meta-val">{{ lengthText }}</span></div>
         <div class="meta-row"><span class="meta-key">上次游玩</span><span class="meta-val">{{ fmtDate(g.lastPlayed) }}</span></div>
+        <div class="meta-row" v-if="g.variants?.length">
+          <span class="meta-key">启动目标</span>
+          <span class="meta-val">{{ variantName }}</span>
+        </div>
         <div class="meta-row" v-if="g.developer">
           <span class="meta-key">开发商</span>
           <a class="meta-val link" :title="'看同开发商'" @click="filterByMeta('developer', g.developer as string)">{{ g.developer }}</a>
@@ -433,6 +479,32 @@ function openBackups(): void {
 .meta-val { color: var(--hh-color-text-strong); text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .link { color: var(--hh-color-link); cursor: pointer; text-decoration: none; }
 .link:hover { text-decoration: underline; }
+
+/* ============ 版本/语言包切换（G13+G17） ============ */
+.variants { display: flex; align-items: center; gap: 8px; }
+.variants-key { flex-shrink: 0; }
+.variants-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.variant-chip {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--hh-color-surface-hover);
+  background: transparent;
+  color: var(--hh-color-text-mid-high);
+  cursor: pointer;
+  transition: all 0.12s;
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.variant-chip:hover { background: var(--hh-color-surface-mid); }
+.variant-chip.on {
+  background: var(--hh-color-select-bg);
+  border-color: var(--hh-color-accent-ring);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
+}
 
 /* ============ 标签 ============ */
 .tags { display: flex; flex-wrap: wrap; gap: 6px; }

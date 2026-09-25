@@ -172,6 +172,23 @@ export interface Game {
   preLaunchCmd?: string
   /** 启动游戏后挂接命令（G2，如拉起 OCR/翻译工具；可用 {exe} {dir} 占位） */
   postLaunchCmd?: string
+  /**
+   * 多版本/语言包变体（G13+G17）：同一游戏的另一个启动目标（汉化整合版、补丁版等）。
+   * 启动时若 activeVariant 指向非 0 下标，就用 variants[i-1] 的 exePath 代替 exePath。
+   */
+  variants?: GameVariant[]
+  /** 当前选中的启动目标（G13+G17）：0/缺省 = 默认 exePath，n≥1 = variants[n-1] */
+  activeVariant?: number
+}
+
+/** 多版本/语言包变体（G13+G17）：标签 + 启动 exe + 可选挂接命令。 */
+export interface GameVariant {
+  /** 显示名，如「汉化整合版」「日文原版 v1.01」 */
+  label: string
+  /** 该变体的启动 exe 绝对路径 */
+  exePath: string
+  /** 该变体专属启动前命令（占位符同主命令） */
+  preLaunchCmd?: string
 }
 
 export interface ScrapeResult {

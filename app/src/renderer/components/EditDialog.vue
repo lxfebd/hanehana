@@ -8,7 +8,7 @@
 import { ref, watch } from 'vue'
 import { Input, InputNumber, Modal, Select } from 'ant-design-vue'
 import { library, saveManualEdit } from '../stores/library'
-import type { Game } from '../../shared/types'
+import type { Game, GameVariant } from '../../shared/types'
 
 const open = defineModel<boolean>('open')
 
@@ -25,6 +25,9 @@ const aliases = ref<string[]>([])
 const lengthMinutes = ref<number | undefined>(undefined)
 const preLaunchCmd = ref('')
 const postLaunchCmd = ref('')
+/** G13+G17 版本/语言包变体：标签 + exe + 可选专属启动前命令 */
+const variants = ref<GameVariant[]>([])
+const activeVariant = ref(0)
 
 const target = ref<Game | null>(null)
 
@@ -45,7 +48,27 @@ watch(open, (v) => {
   lengthMinutes.value = target.value.lengthMinutes ?? undefined
   preLaunchCmd.value = target.value.preLaunchCmd ?? ''
   postLaunchCmd.value = target.value.postLaunchCmd ?? ''
+  variants.value = (target.value.variants ?? []).map((v) => ({ ...v }))
+  activeVariant.value = target.value.activeVariant ?? 0
 })
+
+/** G13+G17：添加一个空变体行（等待用户填 label/exe） */
+function addVariant(): void {
+  variants.value.push({ label: '', exePath: '', preLaunchCmd: '' })
+}
+
+/** G13+G17：移除某下标变体；若被移除的是当前激活项则回落到默认 */
+function removeVariant(i: number): void {
+  variants.value.splice(i, 1)
+  if (activeVariant.value === i + 1) activeVariant.value = 0
+  else if (activeVariant.value > i + 1) activeVariant.value--
+}
+
+/** G13+G17：原生对话框选变体 exe */
+async function pickVariantExe(v: GameVariant): Promise<void> {
+  const p = await window.hh.pickExe()
+  if (p) v.exePath = p
+}
 
 async function save(): Promise<void> {
   const g = target.value
@@ -64,6 +87,10 @@ async function save(): Promise<void> {
     lengthMinutes: lengthMinutes.value ?? undefined,
     preLaunchCmd: preLaunchCmd.value.trim(),
     postLaunchCmd: postLaunchCmd.value.trim(),
+    variants: variants.value
+      .map((v) => ({ label: v.label.trim(), exePath: v.exePath.trim(), preLaunchCmd: v.preLaunchCmd?.trim() || undefined }))
+      .filter((v) => v.label && v.exePath),
+    activeVariant: Math.max(0, Math.min(activeVariant.value, variants.value.filter((v) => v.label && v.exePath).length)),
   }
   const ok = await saveManualEdit(g.id, patch)
   if (ok) open.value = false
@@ -126,6 +153,27 @@ async function save(): Promise<void> {
       <div class="field-row">
         <span class="label hint">占位符：{exe} = 游戏 exe 路径，{dir} = 游戏目录；命令按空格拆分，含空格路径用双引号包裹</span>
       </div>
+
+      <!-- G13+G17 多版本/语言包：同一游戏的另一个启动目标 + 点播切换 -->
+      <div class="variants-section">
+        <div class="variants-head">
+          <span class="label">版本 / 语言包</span>
+          <button class="mini-btn" @click="addVariant">+ 添加变体</button>
+        </div>
+        <div v-for="(v, i) in variants" :key="i" class="variant-row">
+          <div class="variant-fields">
+            <Input v-model:value="v.label" placeholder="标签（如 汉化整合版）" class="variant-label" />
+            <Input v-model:value="v.exePath" placeholder="启动 exe 绝对路径" class="variant-exe" />
+            <button class="mini-btn" @click="pickVariantExe(v)">浏览</button>
+            <button class="mini-btn danger" @click="removeVariant(i)">×</button>
+          </div>
+          <Input v-model:value="v.preLaunchCmd" placeholder="该变体专属启动前命令（可选，如先打补丁）" />
+        </div>
+        <div class="field-row">
+          <span class="label hint">启动时若选中变体，将使用变体 exe 启动；变体专属命令在游戏级启动前命令之后执行</span>
+        </div>
+      </div>
+
       <label class="field">
         <span class="label">简介</span>
         <Input.TextArea v-model:value="description" :rows="4" placeholder="游戏简介（可选）" />
@@ -161,6 +209,49 @@ async function save(): Promise<void> {
   font-size: 12.5px;
   color: var(--hh-color-text-dim-strong);
 }
+/* G13+G17 变体编辑区 */
+.variants-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.variants-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.variant-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 8px;
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: 10px;
+  background: var(--hh-color-surface-soft);
+}
+.variant-fields {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.variant-label { width: 150px; flex-shrink: 0; }
+.variant-exe { flex: 1; min-width: 0; }
+.mini-btn {
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: 8px;
+  background: var(--hh-color-surface-bright);
+  color: var(--hh-color-text-mid-high);
+  font-size: 12.5px;
+  cursor: pointer;
+  white-space: nowrap;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+.mini-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
+.mini-btn.danger { color: var(--hh-color-danger-text); }
+.hint { font-size: 11.5px; color: var(--hh-color-text-dim); line-height: 1.5; }
 .actions {
   display: flex;
   justify-content: flex-end;

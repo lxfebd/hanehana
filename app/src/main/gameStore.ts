@@ -11,7 +11,7 @@
 import { app } from 'electron'
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
-import type { Game } from '../shared/types'
+import type { Game, GameVariant } from '../shared/types'
 import { dataDir as storeDataDir } from './store'
 
 /**
@@ -156,6 +156,8 @@ const PATCHABLE: readonly (keyof Game)[] = [
   'series',
   'aliases',
   'lengthMinutes',
+  'variants',
+  'activeVariant',
 ]
 
 /**
@@ -194,6 +196,28 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
       }
       case 'lengthMinutes':
         if (typeof v === 'number' && Number.isFinite(v)) out.lengthMinutes = Math.min(100000, Math.max(0, Math.floor(v)))
+        break
+      case 'variants': {
+        // G13+G17 多版本/语言包：数组，每项 {label, exePath, preLaunchCmd?}，exePath 必须存在
+        if (!Array.isArray(v)) break
+        const list: GameVariant[] = []
+        for (const item of v) {
+          if (!item || typeof item !== 'object') continue
+          const it = item as Record<string, unknown>
+          if (typeof it.label !== 'string' || !it.label.trim()) continue
+          if (typeof it.exePath !== 'string' || !it.exePath.trim() || !existsSync(it.exePath)) continue
+          list.push({
+            label: it.label.trim().slice(0, 64),
+            exePath: resolve(it.exePath),
+            preLaunchCmd: typeof it.preLaunchCmd === 'string' ? it.preLaunchCmd.slice(0, 4000) : undefined,
+          })
+        }
+        out.variants = list.slice(0, 20)
+        break
+      }
+      case 'activeVariant':
+        // G13+G17：0/缺省 = 默认 exePath，n≥1 = variants[n-1]；越界由启动侧兜底
+        if (typeof v === 'number' && Number.isFinite(v)) out.activeVariant = Math.max(0, Math.floor(v))
         break
       case 'coverPath':
       case 'thumbPath':
