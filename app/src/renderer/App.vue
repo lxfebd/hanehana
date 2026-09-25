@@ -7,6 +7,7 @@ import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
 import { ui, applyDarkFromSettings } from './stores/ui'
+import { setLanguage, t } from './i18n'
 import CoverGrid from './components/CoverGrid.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
@@ -135,6 +136,9 @@ onMounted(async () => {
     await refreshGames()
     unsubPushes = await initTasks()
     library.error = ''
+    // G18 i18n：从设置应用界面语言（骨架：zh/en）
+    const s = await window.hh.getSettings()
+    if (s?.language === 'en' || s?.language === 'zh') setLanguage(s.language)
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e ?? '')
     bootInfo.value = `连接主进程失败：${msg.trim() || '主进程未响应'}`
@@ -199,7 +203,7 @@ onUnmounted(() => {
               @click="page = 'library'"
             >
               <LibraryBig :size="16" class="nav-ic" />
-              <span>全部游戏</span>
+              <span>{{ t('nav_library') }}</span>
               <span class="count">{{ library.games.length }}</span>
             </button>
             <button
@@ -209,7 +213,7 @@ onUnmounted(() => {
               @click="page = 'downloads'"
             >
               <Download :size="16" class="nav-ic" />
-              <span>下载任务</span>
+              <span>{{ t('nav_downloads') }}</span>
               <span class="count">{{ runningCount }}</span>
             </button>
             <button
@@ -219,7 +223,7 @@ onUnmounted(() => {
               @click="page = 'games'"
             >
               <Compass :size="16" class="nav-ic" />
-              <span>游戏站</span>
+              <span>{{ t('nav_games') }}</span>
             </button>
             <button
               class="nav-item"
@@ -228,7 +232,7 @@ onUnmounted(() => {
               @click="page = 'stats'"
             >
               <BarChart3 :size="16" class="nav-ic" />
-              <span>统计</span>
+              <span>{{ t('nav_stats') }}</span>
             </button>
 
             <div class="nav-spacer"></div>
@@ -246,7 +250,7 @@ onUnmounted(() => {
             </button>
             <button class="nav-item" @click="openSettings()">
               <Settings :size="16" class="nav-ic" />
-              <span>设置</span>
+              <span>{{ t('nav_settings') }}</span>
             </button>
           </nav>
 

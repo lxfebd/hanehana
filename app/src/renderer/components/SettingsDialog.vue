@@ -230,6 +230,8 @@ function save(): void {
     // 工具集成（G2）
     le_path: form.le_path.trim(),
     magpie_path: form.magpie_path.trim(),
+    // 界面语言（G18）
+    language: form.language === 'en' ? 'en' : 'zh',
   })
 }
 </script>
@@ -336,6 +338,17 @@ function save(): void {
         </div>
       </TabPane>
       <TabPane key="ui" tab="外观">
+        <div class="card">
+          <div class="lbl" style="margin-bottom: 8px">界面语言 / Language</div>
+          <Radio.Group v-model:value="form.language">
+            <Radio.Button value="zh">中文</Radio.Button>
+            <Radio.Button value="en">English</Radio.Button>
+          </Radio.Group>
+          <div class="hint" style="margin-top: 8px">
+            界面语言（骨架：导航与核心按钮已接入，设置页长文案仍为中文）。
+          </div>
+        </div>
+
         <div class="card">
           <div class="lbl" style="margin-bottom: 8px">主题模式</div>
           <Radio.Group v-model:value="form.theme_mode">

@@ -394,6 +394,8 @@ export interface Settings {
   le_path: string
   /** Magpie 缩放工具路径（空 = 自动探测；游戏 useMagpie 时生效） */
   magpie_path: string
+  /** 界面语言（G18 i18n 骨架）：'zh' 中文 / 'en' English；未配置回落 'zh' */
+  language: 'zh' | 'en'
 }
 
 export const THEME_MODES = ['system', 'dark', 'light'] as const
@@ -401,6 +403,9 @@ export type ThemeMode = (typeof THEME_MODES)[number]
 
 export const THEME_PRESETS = ['sakura', 'starnight', 'mint'] as const
 export type ThemePresetId = (typeof THEME_PRESETS)[number]
+
+export const LANGUAGES = ['zh', 'en'] as const
+export type UILanguage = (typeof LANGUAGES)[number]
 
 export const DEFAULT_SETTINGS: Settings = {
   threads: 8,
@@ -427,6 +432,7 @@ export const DEFAULT_SETTINGS: Settings = {
   webdav_pass: '',
   le_path: '',
   magpie_path: '',
+  language: 'zh',
 }
 
 /** 持久化的任务定义（含最后一次已知进度）。字段与 idm.models.TaskDef 一致。 */

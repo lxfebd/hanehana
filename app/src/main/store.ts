@@ -167,6 +167,8 @@ export function normalizeSettings(raw: unknown): Settings {
     // 工具路径（G2）：只收存在的文件或空串；不存在则丢弃（用户手改坏值不落盘）
     if (typeof d.le_path === 'string' && d.le_path && existsSync(d.le_path)) s.le_path = d.le_path
     if (typeof d.magpie_path === 'string' && d.magpie_path && existsSync(d.magpie_path)) s.magpie_path = d.magpie_path
+    // 界面语言（G18）：只认 zh/en，别的（含手改）回落中文
+    if (d.language === 'zh' || d.language === 'en') s.language = d.language
   }
   // 空目录补默认值，避免 dest 落成空串
   if (!s.download_dir) s.download_dir = defaultDownloadDir()
