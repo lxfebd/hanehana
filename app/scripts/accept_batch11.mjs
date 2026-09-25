@@ -30,7 +30,14 @@ writeFileSync(
 const exe = join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
 const proc = spawn(exe, ['--disable-gpu', '.'], {
   cwd: APP_ROOT,
-  env: { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR, HANEHANA_VNDB_MOCK_FILE: MOCK_FILE },
+  env: {
+    ...process.env,
+    HANEHANA_DEBUG_PORT: String(PORT),
+    HANEHANA_DATA_DIR: DATA_DIR,
+    HANEHANA_VNDB_MOCK_FILE: MOCK_FILE,
+    // 主流程不设短间隔：保持默认 1h 定时，避免定时器与手动检查并发造成断言竞态。
+    // 定时自动检查单独用一个独立进程验证（见末尾 timedAutoCheck）。
+  },
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: true,
 })
@@ -144,6 +151,83 @@ async function main() {
 
   console.log('===== ' + passed + ' passed, ' + failed + ' failed =====')
   proc.kill()
+
+  // ---- 6. 定时自动检查（独立进程）：默认 1h 定时太慢，用 HANEHANA_TRACK_INTERVAL_MS=1500
+  // 起一个新进程 + 独立数据目录，订阅后不手动检查，等 2 个周期看 seenIds 是否自动纳入新作。
+  // 这验证「定时器独立触发 checkTracks」，与手动检查解耦，无竞态。
+  const TIMED_DIR = join(APP_ROOT, '.batch11-timed-data')
+  const TIMED_MOCK = join(APP_ROOT, '.batch11-timed-mock.json')
+  rmSync(TIMED_DIR, { recursive: true, force: true })
+  mkdirSync(TIMED_DIR, { recursive: true })
+  writeFileSync(
+    TIMED_MOCK,
+    JSON.stringify([
+      { id: 't1', title: '柚子社 定时新作', released: '2026-04-01', developers: [{ developer: { name: '柚子社 (Yuzusoft)' } }] },
+    ]),
+    'utf8',
+  )
+  const timedProc = spawn(exe, ['--disable-gpu', '.'], {
+    cwd: APP_ROOT,
+    env: {
+      ...process.env,
+      HANEHANA_DEBUG_PORT: '9269',
+      HANEHANA_DATA_DIR: TIMED_DIR,
+      HANEHANA_VNDB_MOCK_FILE: TIMED_MOCK,
+      HANEHANA_TRACK_INTERVAL_MS: '1500',
+    },
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  })
+  let timedStderr = ''
+  timedProc.stderr.on('data', (d) => { timedStderr += d.toString() })
+  async function timedWs() {
+    for (let i = 0; i < 60; i++) {
+      const m = timedStderr.match(/DevTools listening on (ws:\/\/[^\s]+)/)
+      if (m) return m[1]
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    throw new Error('no DevTools line (timed)')
+  }
+  try {
+    const tws = await connectWs(await timedWs())
+    let tmsgId = 0
+    const tpend = new Map()
+    let tsess = null
+    tws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && tpend.has(m.id)) { tpend.get(m.id)(m); tpend.delete(m.id) } }
+    const tsend = (method, params = {}) => new Promise((res, rej) => {
+      const mid = ++tmsgId
+      tpend.set(mid, res)
+      const msg = { id: mid, method, params }
+      if (tsess) msg.sessionId = tsess
+      tws.send(JSON.stringify(msg))
+      setTimeout(() => { if (tpend.has(mid)) { tpend.delete(mid); rej(new Error('cdp timeout: ' + method)) } }, 15000)
+    })
+    const tt = await tsend('Target.getTargets')
+    const tpage = (tt.result?.targetInfos || []).find((x) => x.type === 'page')
+    const tatt = await tsend('Target.attachToTarget', { targetId: tpage.targetId, flatten: true })
+    tsess = tatt.result?.sessionId
+    const teval = async (expr) => {
+      const r = await tsend('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
+      if (r.result?.exceptionDetails) return { __err: 'eval failed' }
+      return r.result?.result?.value
+    }
+    // 订阅（写 tracking.json）→ 不手动检查 → 等 2 个定时周期（1.5s×2 + 余量）
+    const tadd = await teval(`(async () => await window.hh.trackAdd('柚子社'))()`)
+    assert('定时进程订阅成功', tadd?.ok === true, JSON.stringify(tadd))
+    await new Promise((r) => setTimeout(r, 5000))
+    const tjson = existsSync(join(TIMED_DIR, 'tracking.json'))
+      ? JSON.parse(readFileSync(join(TIMED_DIR, 'tracking.json'), 'utf8'))
+      : null
+    const tseen = Array.isArray(tjson) && tjson[0]?.seenIds || []
+    console.log('DEBUG timedSeen', JSON.stringify(tseen))
+    assert('定时自动检查自动纳入新作（定时器独立跑过）', tseen.includes('t1'), 'seen=' + JSON.stringify(tseen))
+    tws.close()
+  } catch (e) {
+    console.error('ERROR timed', e)
+  } finally {
+    timedProc.kill()
+  }
+
   process.exit(failed ? 1 : 0)
 }
 try {

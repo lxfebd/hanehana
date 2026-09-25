@@ -25,3 +25,5 @@ app/.*-portable/
 app/.shots/
 app/.*-game/
 app/.*-game2/
+app/.batch*-mock.json
+app/.batch*-export/

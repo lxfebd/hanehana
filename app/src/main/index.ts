@@ -88,6 +88,18 @@ function showWindow(): void {
   win.focus()
 }
 
+/** 新作追踪命中通知（手动检查与定时检查共用）：有新作才弹，点击回到窗口。 */
+function notifyTrackFresh(r: TrackCheckResult): void {
+  if (!r.ok || !r.fresh.length || !Notification.isSupported()) return
+  const names = r.fresh.slice(0, 3).map((h) => h.title).join('、')
+  const n = new Notification({
+    title: 'HaneHana 新作追踪',
+    body: `发现 ${r.fresh.length} 部新作：${names}${r.fresh.length > 3 ? '…' : ''}`,
+  })
+  n.on('click', showWindow)
+  n.show()
+}
+
 function winBackground(dark: boolean): string {
   // 窗口必须不透明：实测 #00000000 + Mica 在真机是"穿透"的——
   // Mica 只采样壁纸、不模糊其后其它窗口，内容区无封面底时直接漏出桌面，
@@ -410,16 +422,7 @@ function wireIpc(): void {
   })
   ipcMain.handle(Ipc.TrackCheck, async (): Promise<TrackCheckResult> => {
     const r = await checkTracks()
-    // 有新作 → 系统通知（点击回到窗口）；无新作静默
-    if (r.ok && r.fresh.length && Notification.isSupported()) {
-      const names = r.fresh.slice(0, 3).map((h) => h.title).join('、')
-      const n = new Notification({
-        title: 'HaneHana 新作追踪',
-        body: `发现 ${r.fresh.length} 部新作：${names}${r.fresh.length > 3 ? '…' : ''}`,
-      })
-      n.on('click', showWindow)
-      n.show()
-    }
+    notifyTrackFresh(r)
     return r
   })
 
@@ -869,6 +872,17 @@ if (gotSingleInstanceLock) {
     wireIpc()
     createWindow()
     createTray()
+    // 新作追踪定时检查（G16）：每 TRACK_INTERVAL 自动查一次 VNDB，有新作弹通知。
+    // 有订阅才真的发起请求；无订阅只是空转，开销可忽略。checkInFlight 在
+    // tracking.ts 内部做互斥，手动「立即检查」与定时检查并发时自动合并。
+    // 测试缝 HANEHANA_TRACK_INTERVAL_MS：验收脚本设短间隔驱动定时触发（生产不设）。
+    const trackIntervalMs = Number(process.env.HANEHANA_TRACK_INTERVAL_MS)
+    setInterval(() => {
+      void (async () => {
+        const r = await checkTracks()
+        notifyTrackFresh(r)
+      })()
+    }, Number.isFinite(trackIntervalMs) && trackIntervalMs > 0 ? trackIntervalMs : 3600000)
     // 跟随系统：系统深浅切换时实时同步窗口 + 渲染层（theme_mode='system' 才有效，
     // 固定深浅时 themeSource 已锁定，'updated' 不会因设置而触发）。
     nativeTheme.on('updated', () => {
