@@ -532,6 +532,28 @@ export interface HelloInfo {
  */
 export type ActionResult = { ok: true } | { ok: false; error: string }
 
+/** 新作追踪订阅（G16）：盯一个开发商/系列/关键词，VNDB 有新品就通知。 */
+export interface TrackEntry {
+  id: string
+  /** 订阅关键词（开发商名/系列名/作品名片段） */
+  keyword: string
+  /** 上次检查时间（epoch ms）；首次订阅 = 订阅时刻，只追之后的新作 */
+  lastCheck: number
+  /** 最近一次检查发现的新作 id（去重，防止同一部反复通知） */
+  seenIds: string[]
+}
+
+/** 一次「检查新作」的结果：命中的新作清单（供渲染层展示/通知）。 */
+export interface TrackHit {
+  vnId: string
+  title: string
+  released: string
+  keyword: string
+}
+
+/** 检查请求结果：命中列表 + 是否有新作（新 = 不在上次 seen 里）。 */
+export type TrackCheckResult = { ok: true; hits: TrackHit[]; fresh: TrackHit[] } | { ok: false; error: string }
+
 /**
  * 保存设置的结果。必须带成功/失败两种形状：代理地址填错时，主进程既写了盘又
  * 没能下发到 Chromium，返回「保存成功」等于让用户在一个半生效状态里排查。

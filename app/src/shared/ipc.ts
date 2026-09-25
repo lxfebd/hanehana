@@ -32,6 +32,11 @@ export const Ipc = {
   PickExe: 'hanehana:pickExe',
   // 游戏库导出（G14）：弹保存对话框写 CSV/JSON
   ExportGames: 'hanehana:games:export',
+  // 新作追踪（G16）：订阅 VNDB 关键词，检查新作 + 系统通知
+  TrackList: 'hanehana:track:list',
+  TrackAdd: 'hanehana:track:add',
+  TrackRemove: 'hanehana:track:remove',
+  TrackCheck: 'hanehana:track:check',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
   // 存档备份（G1）

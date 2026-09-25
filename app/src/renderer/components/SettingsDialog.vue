@@ -6,9 +6,9 @@
  * 漏一个，主进程会把它回落到默认值，用户会发现「勾了没保存」。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
-import { FolderOpen, Image as ImageIcon, Trash2 } from 'lucide-vue-next'
+import { FolderOpen, Image as ImageIcon, Plus, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { Button, Checkbox, Form, Input, InputNumber, Radio, TabPane, Tabs } from 'ant-design-vue'
-import type { Settings, UpdateStatus } from '../../shared/types'
+import type { Settings, TrackEntry, UpdateStatus } from '../../shared/types'
 import { proxyFormatError } from '../../shared/proxy'
 import { fmtSpeed } from '../../shared/format'
 import { THEME_PRESET_IDS } from '../design/tokens'
@@ -133,6 +133,70 @@ async function pickExe(which: 'le' | 'magpie'): Promise<void> {
     else form.magpie_path = p
   }
 }
+
+// ---------------------------------------------------------------- 新作追踪（G16）
+/** 订阅列表（VNDB 关键词）；设置页用独立页签管理，不走 Settings 落盘 */
+const trackList = ref<TrackEntry[]>([])
+const trackKeyword = ref('')
+const trackBusy = ref(false)
+const trackMsg = ref('')
+
+/** 加载订阅（进设置页时拉一次最新） */
+async function loadTracks(): Promise<void> {
+  try {
+    trackList.value = await window.hh.trackList()
+  } catch {
+    trackList.value = []
+  }
+}
+
+/** 添加订阅词 */
+async function addTrack(): Promise<void> {
+  const kw = trackKeyword.value.trim()
+  if (!kw) {
+    trackMsg.value = '请输入要追踪的关键词（开发商 / 系列名）'
+    return
+  }
+  trackMsg.value = ''
+  const r = await window.hh.trackAdd(kw)
+  if (r?.ok && r.entry) {
+    trackKeyword.value = ''
+    await loadTracks()
+    trackMsg.value = `已订阅「${r.entry.keyword}」`
+  } else {
+    trackMsg.value = r?.error ?? '订阅失败'
+  }
+}
+
+/** 删除订阅 */
+async function removeTrack(id: string): Promise<void> {
+  await window.hh.trackRemove(id)
+  await loadTracks()
+}
+
+/** 手动触发一次检查（结果即时反馈） */
+async function checkNow(): Promise<void> {
+  trackBusy.value = true
+  trackMsg.value = ''
+  try {
+    const r = await window.hh.trackCheck()
+    if (!r?.ok) {
+      trackMsg.value = r?.error ?? '检查失败'
+    } else if (r.fresh.length) {
+      trackMsg.value = `发现 ${r.fresh.length} 部新作，已通知`
+    } else {
+      trackMsg.value = '暂无新作'
+    }
+  } catch (e) {
+    trackMsg.value = e instanceof Error ? e.message : String(e)
+  } finally {
+    trackBusy.value = false
+  }
+}
+
+onMounted(() => {
+  void loadTracks()
+})
 
 function save(): void {
   emit('save', {
@@ -402,6 +466,25 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
+      <TabPane key="track" tab="新作">
+        <div class="card">
+          <div class="track-add">
+            <Input v-model:value="trackKeyword" placeholder="开发商 / 系列名（如 柚子社、Yuzusoft）" @press-enter="addTrack" />
+            <Button type="primary" :loading="trackBusy" @click="addTrack"><template #icon><Plus :size="14" /></template>订阅</Button>
+            <Button :loading="trackBusy" @click="checkNow"><template #icon><RefreshCw :size="14" /></template>立即检查</Button>
+          </div>
+          <div v-if="trackMsg" class="track-msg">{{ trackMsg }}</div>
+          <div class="track-list">
+            <div v-for="t in trackList" :key="t.id" class="track-item">
+              <span class="track-kw" :title="t.keyword">{{ t.keyword }}</span>
+              <span class="track-meta">上次检查 {{ new Date(t.lastCheck).toLocaleDateString('zh-CN') }}</span>
+              <Button type="text" danger size="small" @click="removeTrack(t.id)"><template #icon><Trash2 :size="13" /></template></Button>
+            </div>
+            <div v-if="!trackList.length" class="track-empty">还没有订阅。加一个开发商或系列名，VNDB 有新品时会收到系统通知。</div>
+          </div>
+          <div class="hint track-hint">检查基于 VNDB 发行日期（released ≥ 上次检查时间）；每款游戏只通知一次。数据存本地 tracking.json。</div>
+        </div>
+      </TabPane>
       <TabPane key="about" tab="关于">
         <div class="card">
           <div class="about-row">
@@ -599,5 +682,58 @@ function save(): void {
   display: flex;
   justify-content: flex-end;
   gap: 8px;
+}
+/* 新作追踪（G16） */
+.track-add {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.track-add .ant-input {
+  flex: 1;
+}
+.track-msg {
+  font-size: 12.5px;
+  color: var(--hh-color-text-mid-high);
+  margin-bottom: 10px;
+}
+.track-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.track-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: 8px;
+  background: var(--hh-color-surface-soft);
+}
+.track-kw {
+  font-size: 13px;
+  color: var(--hh-color-text-glow);
+  font-weight: 600;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.track-meta {
+  font-size: 11.5px;
+  color: var(--hh-color-text-dim);
+  white-space: nowrap;
+}
+.track-empty {
+  font-size: 12.5px;
+  color: var(--hh-color-text-tertiary);
+  padding: 14px 0;
+  text-align: center;
+}
+.track-hint {
+  display: block;
+  font-size: 12px;
 }
 </style>

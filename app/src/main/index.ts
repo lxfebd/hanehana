@@ -38,6 +38,8 @@ import { proxyFormatError } from '../shared/proxy'
 import { TRAY_ICON_DATA_URL } from './trayIcon'
 import { checkUpdate, initAutoUpdater, installUpdate, setUpdatePush, updateEnabled } from './updater'
 import { wireSites } from './sites/bridge'
+import { addTrack, checkTracks, loadTracking, removeTrack } from './tracking'
+import type { TrackCheckResult } from '../shared/types'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const preloadPath = join(here, '../preload/index.cjs')
@@ -392,6 +394,33 @@ function wireIpc(): void {
       data_dir: dataDir(),
       portable: isPortable(),
     }
+  })
+
+  // 新作追踪（G16）：订阅/取消/检查 VNDB 新作，命中弹系统通知（带激活窗口）
+  ipcMain.handle(Ipc.TrackList, () => loadTracking())
+  ipcMain.handle(Ipc.TrackAdd, (_e, keyword: unknown) => {
+    if (typeof keyword !== 'string' || !keyword.trim() || keyword.trim().length > 200) {
+      return { ok: false as const, error: '订阅词不能为空且不超过 200 字' }
+    }
+    return { ok: true as const, entry: addTrack(keyword) }
+  })
+  ipcMain.handle(Ipc.TrackRemove, (_e, id: unknown) => {
+    if (typeof id !== 'string' || !id) return { ok: false as const, error: '订阅不存在' }
+    return { ok: removeTrack(id) }
+  })
+  ipcMain.handle(Ipc.TrackCheck, async (): Promise<TrackCheckResult> => {
+    const r = await checkTracks()
+    // 有新作 → 系统通知（点击回到窗口）；无新作静默
+    if (r.ok && r.fresh.length && Notification.isSupported()) {
+      const names = r.fresh.slice(0, 3).map((h) => h.title).join('、')
+      const n = new Notification({
+        title: 'HaneHana 新作追踪',
+        body: `发现 ${r.fresh.length} 部新作：${names}${r.fresh.length > 3 ? '…' : ''}`,
+      })
+      n.on('click', showWindow)
+      n.show()
+    }
+    return r
   })
 
   // 游戏库

@@ -1,16 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { Ipc } from '../shared/ipc'
 import type { BackupStats, CloudSyncResult, Game, ScrapeResult, SnapshotInfo } from '../shared/types'
-import type {
-  ActionResult,
-  AddResult,
-  HelloInfo,
-  SaveSettingsResult,
-  Settings,
-  TaskProgressPush,
-  TaskRow,
-  UpdateStatus,
-} from '../shared/types'
+import type { ActionResult, AddResult, HelloInfo, SaveSettingsResult, Settings, TaskProgressPush, TaskRow, TrackEntry, TrackCheckResult, UpdateStatus } from '../shared/types'
 import type { Mirror, ResolveOutcome, SiteDownloadPush, SiteInfo, SiteMirrorOutcome, SiteSearchOutcome } from '../shared/ipc'
 
 const bridge = {
@@ -36,6 +27,13 @@ const bridge = {
   // G14 游戏库导出（弹保存对话框写 CSV/JSON，返回落盘路径）
   exportGames: (fmt: 'csv' | 'json') =>
     ipcRenderer.invoke(Ipc.ExportGames, fmt) as Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>,
+
+  // 新作追踪（G16）
+  trackList: (): Promise<TrackEntry[]> => ipcRenderer.invoke(Ipc.TrackList),
+  trackAdd: (keyword: string): Promise<{ ok: boolean; entry?: TrackEntry; error?: string }> =>
+    ipcRenderer.invoke(Ipc.TrackAdd, keyword),
+  trackRemove: (id: string): Promise<{ ok: boolean }> => ipcRenderer.invoke(Ipc.TrackRemove, id),
+  trackCheck: (): Promise<TrackCheckResult> => ipcRenderer.invoke(Ipc.TrackCheck),
 
   // 启动与目录
   launchGame: (id: string) => ipcRenderer.invoke(Ipc.GameLaunch, id),
