@@ -25,7 +25,7 @@ import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, getGame, ensureCoversDir, sanitizeGamePatch } from './gameStore'
 import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup, setToolPaths } from './games'
-import { createSnapshot, deleteSnapshot, listAllBackups, restoreSnapshot, rotateSnapshots, syncToCloud } from './saves'
+import { createSnapshot, deleteSnapshot, gameBackupDir, listAllBackups, restoreSnapshot, rotateSnapshots, syncToCloud } from './saves'
 import { scanSteamLibrary } from './steam'
 import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
@@ -492,23 +492,33 @@ function wireIpc(): void {
     rotateSnapshots(g.id, s.loadSettings().backup_keep)
     return snap
   })
+  /** 快照路径必须在该游戏的备份目录内（IPC 输入不可信：防任意路径恢复/删除） */
+  function validSnapshotDir(id: string, snapshotDir: unknown): snapshotDir is string {
+    if (typeof snapshotDir !== 'string' || !snapshotDir) return false
+    const root = gameBackupDir(id)
+    const full = resolve(snapshotDir)
+    const base = resolve(root)
+    // 必须在备份根之下（含根本身），且不能是根——快照必是根下的子目录
+    return full.startsWith(base + sep) && existsSync(full)
+  }
+
   ipcMain.handle(Ipc.BackupRestore, (_e, id: unknown, snapshotDir: unknown) => {
     if (!isId(id)) return err('游戏不存在')
     const g = getGame(id)
     if (!g) return err('游戏不在库中')
-    if (typeof snapshotDir !== 'string' || !snapshotDir) return err('快照路径无效')
+    if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
     return restoreSnapshot(g, snapshotDir)
   })
   ipcMain.handle(Ipc.BackupDelete, (_e, id: unknown, snapshotDir: unknown) => {
     if (!isId(id)) return false
-    if (typeof snapshotDir !== 'string' || !snapshotDir) return false
+    if (!validSnapshotDir(id, snapshotDir)) return false
     return deleteSnapshot(id, snapshotDir)
   })
   ipcMain.handle(Ipc.BackupSync, async (_e, id: unknown, snapshotDir: unknown) => {
     if (!isId(id)) return err('游戏不存在')
     const g = getGame(id)
     if (!g) return err('游戏不在库中')
-    if (typeof snapshotDir !== 'string' || !snapshotDir) return err('快照路径无效')
+    if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
     const st = s.loadSettings()
     if (!st.webdav_url) return err('未配置 WebDAV 同步地址')
     return await syncToCloud(g, { url: st.webdav_url, user: st.webdav_user, pass: st.webdav_pass }, snapshotDir)
@@ -759,7 +769,15 @@ function wireIpc(): void {
     // 防休眠开关改了要立刻生效，不能等下一秒的定时器——用户可能正把最后一个
     // 任务勾上，然后就走开了。
     syncKeepAwake()
-    return { ok: true as const, settings: saved }
+    // 用户填了路径但 normalizeSettings 没留下（不存在）的字段列出来，
+    // 渲染层提示「这个路径没生效」，避免保存成功但值还是旧的那个哑坑。
+    const discarded: string[] = []
+    for (const key of ['backup_dir', 'le_path', 'magpie_path'] as const) {
+      const input = (raw as Record<string, unknown>)[key]
+      const kept = saved[key]
+      if (typeof input === 'string' && input.trim() && !kept) discarded.push(key)
+    }
+    return { ok: true as const, settings: saved, ...(discarded.length ? { discarded } : {}) }
   })
 
   // 自动更新：检查与安装都由用户界面发起（“关于”页按钮），不在后台擅自下载。

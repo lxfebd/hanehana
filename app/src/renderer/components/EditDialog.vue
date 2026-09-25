@@ -73,11 +73,36 @@ async function pickVariantExe(v: GameVariant): Promise<void> {
 async function save(): Promise<void> {
   const g = target.value
   if (!g) return
+  if (!title.value.trim()) {
+    library.error = '标题不能为空'
+    return
+  }
+  if (rating.value !== undefined && rating.value !== null && (Number.isNaN(rating.value) || rating.value < 0 || rating.value > 10)) {
+    library.error = '评分需在 0 – 10 之间'
+    return
+  }
+  const rd = releaseDate.value.trim()
+  if (rd && !/^\d{4}-\d{2}-\d{2}$/.test(rd)) {
+    library.error = '发行日期格式应为 yyyy-mm-dd'
+    return
+  }
+  // 先算「存盘后实际生效」的变体列表（与主进程 variants 的过滤一致：
+  // label 空 / exe 空 都会被丢），并记住每项在原始数组里的下标。
+  // activeVariant 必须按这份新列表重定位，不能拿原始数组下标硬塞——
+  // 原下标在过滤后会错位，指向错的行。
+  const keptVariants = variants.value
+    .map((v, i) => ({
+      origIndex: i,
+      label: v.label.trim(),
+      exePath: v.exePath.trim(),
+      preLaunchCmd: v.preLaunchCmd?.trim() || undefined,
+    }))
+    .filter((v) => v.label && v.exePath)
   const patch: Partial<Game> = {
-    title: title.value.trim() || g.title,
+    title: title.value.trim(),
     titleNative: titleNative.value.trim(),
     description: description.value.trim(),
-    releaseDate: releaseDate.value.trim(),
+    releaseDate: rd,
     rating: rating.value ?? undefined,
     tags: tags.value.map((t) => t.trim()).filter(Boolean),
     categories: categories.value.map((c) => c.trim()).filter(Boolean),
@@ -87,17 +112,13 @@ async function save(): Promise<void> {
     lengthMinutes: lengthMinutes.value ?? undefined,
     preLaunchCmd: preLaunchCmd.value.trim(),
     postLaunchCmd: postLaunchCmd.value.trim(),
-    variants: variants.value
-      .map((v) => ({ label: v.label.trim(), exePath: v.exePath.trim(), preLaunchCmd: v.preLaunchCmd?.trim() || undefined }))
-      .filter((v) => v.label && v.exePath),
-    // 夹取谓词必须与上方过滤一致（先 trim 再判空），否则 label 全是空白的行会虚高计数，activeVariant 存盘后越界
-    activeVariant: Math.max(
-      0,
-      Math.min(
-        activeVariant.value,
-        variants.value.filter((v) => v.label.trim() && v.exePath.trim()).length,
-      ),
-    ),
+    variants: keptVariants.map(({ label, exePath, preLaunchCmd }) => ({ label, exePath, preLaunchCmd })),
+    // activeVariant 存盘语义：0 = 默认，n≥1 = 变体列表[n-1]。
+    // 用户选中的原始变体若被过滤掉了，回退到 0（默认）而不是留一个错位的下标。
+    activeVariant:
+      activeVariant.value >= 1 && activeVariant.value <= variants.value.length
+        ? keptVariants.findIndex((k) => k.origIndex === activeVariant.value - 1) + 1
+        : 0,
   }
   const ok = await saveManualEdit(g.id, patch)
   if (ok) open.value = false

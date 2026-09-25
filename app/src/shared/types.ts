@@ -563,8 +563,14 @@ export type TrackCheckResult = { ok: true; hits: TrackHit[]; fresh: TrackHit[] }
 /**
  * 保存设置的结果。必须带成功/失败两种形状：代理地址填错时，主进程既写了盘又
  * 没能下发到 Chromium，返回「保存成功」等于让用户在一个半生效状态里排查。
+ *
+ * discarded 列出被主进程丢弃的路径字段（不存在则回落到默认值）——这些字段
+ * 「保存成功但没生效」，拖着不说等于下一个哑坑（用户填错 LE 路径后重启，
+ * 发现还是老样子）。
  */
-export type SaveSettingsResult = { ok: true; settings: Settings } | { ok: false; error: string }
+export type SaveSettingsResult =
+  | { ok: true; settings: Settings; discarded?: string[] }
+  | { ok: false; error: string }
 
 /** 新建任务的结果。duplicate=true 表示该链接已在列表里，没有重复建任务。 */
 export type AddResult =

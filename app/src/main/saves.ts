@@ -145,7 +145,9 @@ function collectSaveFiles(root: string): string[] {
   return [...new Set(out)]
 }
 
-/** 递归收集整棵目录树（命中存档目录名后进入） */
+/** 递归收集整棵目录树（命中存档目录名后进入）。仍要按扩展名过滤：
+ *  存档目录可能就建在游戏本体旁（save\ 隔壁就是 .exe），整棵收走会把
+ *  几百 MB 的本体文件塞进快照，备份目录瞬间爆炸。 */
 function collectTree(dir: string, relStart: string, out: string[]): void {
   let entries
   try {
@@ -157,7 +159,7 @@ function collectTree(dir: string, relStart: string, out: string[]): void {
     const abs = join(dir, e.name)
     const rel = join(relStart, e.name)
     if (e.isDirectory()) collectTree(abs, rel, out)
-    else if (e.isFile()) out.push(rel)
+    else if (e.isFile() && !BIG_BODY_RE.test(e.name)) out.push(rel)
   }
 }
 

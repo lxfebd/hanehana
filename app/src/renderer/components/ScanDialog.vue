@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, watch } from 'vue'
 import { Modal } from 'ant-design-vue'
 import { refreshGames } from '../stores/library'
 
@@ -9,6 +9,15 @@ const scanning = ref(false)
 const result = ref('')
 const scanError = ref(false)
 const picked = ref<{ dir: string; exePath: string; rawTitle: string }[]>([])
+
+// 重开时清空上次结果，避免旧命列表/旧提示残留
+watch(open, (on) => {
+  if (on) {
+    result.value = ''
+    scanError.value = false
+    picked.value = []
+  }
+})
 
 async function runScan(): Promise<void> {
   if (!dir.value) return

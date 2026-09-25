@@ -32,8 +32,8 @@ async function toggleQuickCat(): Promise<void> {
       patch: { categories: has ? g.categories.filter((c) => c !== '已通关') : [...g.categories, '已通关'] },
     }
   }).filter((p): p is { id: string; patch: { categories: string[] } } => !!p)
-  await batchUpdate(patches)
-  message.success(`已更新 ${patches.length} 款的「已通关」标记`)
+  const ok = await batchUpdate(patches)
+  message[ok ? 'success' : 'error'](ok ? `已更新 ${patches.length} 款的「已通关」标记` : library.error || '批量更新失败')
   emit('done')
 }
 
@@ -41,22 +41,22 @@ async function toggleQuickCat(): Promise<void> {
 async function toggleFav(): Promise<void> {
   if (!count.value) return
   const anyUnfav = sel.value.some((id) => !gameOf(id)?.favorite)
-  await batchUpdate(sel.value.map((id) => ({ id, patch: { favorite: anyUnfav } })))
-  message.success(anyUnfav ? `已收藏 ${count.value} 款` : `已取消收藏 ${count.value} 款`)
+  const ok = await batchUpdate(sel.value.map((id) => ({ id, patch: { favorite: anyUnfav } })))
+  message[ok ? 'success' : 'error'](ok ? (anyUnfav ? `已收藏 ${count.value} 款` : `已取消收藏 ${count.value} 款`) : library.error || '批量更新失败')
   emit('done')
 }
 
 async function setRating(r: number): Promise<void> {
   if (!count.value) return
-  await batchUpdate(sel.value.map((id) => ({ id, patch: { rating: r } })))
-  message.success(`已为 ${count.value} 款设置评分 ${r.toFixed(1)}`)
+  const ok = await batchUpdate(sel.value.map((id) => ({ id, patch: { rating: r } })))
+  message[ok ? 'success' : 'error'](ok ? `已为 ${count.value} 款设置评分 ${r.toFixed(1)}` : library.error || '批量更新失败')
   emit('done')
 }
 
 async function removeSel(): Promise<void> {
   if (!count.value) return
-  await batchRemove(sel.value)
-  message.success(`已移除 ${count.value} 款`)
+  const ok = await batchRemove(sel.value)
+  message[ok ? 'success' : 'error'](ok ? `已移除 ${count.value} 款` : library.error || '批量移除失败')
   emit('done')
 }
 

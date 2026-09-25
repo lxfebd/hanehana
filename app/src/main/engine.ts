@@ -25,6 +25,8 @@ const CHUNK = 64 * 1024
 /** 暂停/停止命令的确认等待上限。超时按「引擎没听见」处理，见 pause()/discard()。 */
 const PAUSE_ACK_MS = 1500
 const STOP_ACK_MS = 1000
+/** probe/run 阶段的心跳超时。正常 probe 是毫秒级，60s 只拦「引擎进程整个挂死」这一种情形。 */
+const PROBE_TIMEOUT_MS = 60_000
 
 /** 定位 fastdrop-engine 可执行文件。 */
 export function enginePath(): string {
@@ -122,6 +124,10 @@ export class EngineTask {
   private writeBuf: Buffer[] = []
   private draining = false
   private stdoutBuf = ''
+  /** probe 发出后的心跳看门狗，见 sendStartCommands()。 */
+  private probeWatchdog: ReturnType<typeof setTimeout> | null = null
+  /** 挂在 stdin 上的 drain 回调（flush 里 once 注册的）。terminate 时摘掉，避免泄漏。 */
+  private drainCb: (() => void) | null = null
 
   constructor(
     public readonly url: string,
@@ -231,6 +237,13 @@ export class EngineTask {
       if (this.proc !== proc) return
       this.alive = false
       this.proc = null
+      this.clearProbeWatchdog()
+      // 管道死了，drain 事件永远不会再来；不清掉的话下个进程的第一次写
+      // 会卡在 draining=true 上，命令永远进不了管道。
+      this.draining = false
+      if (this.drainCb) {
+        this.drainCb = null
+      }
       // 子进程意外退出（非 stop 触发）视为失败
       if (this.state !== 'done' && this.state !== 'cancelled') {
         this.setState('error')
@@ -242,6 +255,7 @@ export class EngineTask {
   run(): void {
     if (this.state === 'downloading' || this.state === 'done') return
     this.clearPauseWatchdog()
+    this.clearProbeWatchdog()
     this.clearError()
     this.spawnProc()
     // 「引擎到底起没起来」只能看子进程，不能看状态。失败任务的状态本来就是 error，
@@ -300,6 +314,10 @@ export class EngineTask {
         // 引擎收到 run 干的第一件事就是把 .part 预分配成 total 那么大，
         // 等进度事件出来再拦，磁盘上已经躺着一个巨无霸了。
         this.pendingRun = true
+        // 心跳看门狗：probe/run 的正常路程是毫秒级，超时只可能是引擎进程
+        // 挂死（不退出、不报事件）。挂死的任务永远占着并发槽，排队任务整队
+        // 卡死——超时就按失败处理，断点保留，用户点「继续」重新拉起进程。
+        this.armProbeWatchdog()
         this.send({
           cmd: 'probe',
           url: this.url,
@@ -378,6 +396,32 @@ export class EngineTask {
     if (!this.pauseWatchdog) return
     clearTimeout(this.pauseWatchdog)
     this.pauseWatchdog = null
+  }
+
+  /**
+   * 上 probe 心跳看门狗，见 sendStartCommands()。
+   * 进程被 terminate 时同步清掉：挂着的定时器会在新进程的头上炸，
+   * 把刚恢复的任务误判成「引擎挂死」。
+   */
+  private armProbeWatchdog(): void {
+    this.clearProbeWatchdog()
+    this.probeWatchdog = setTimeout(() => {
+      this.probeWatchdog = null
+      // 只有还停在准备中才判死：这段时间用户可能已经点了暂停/取消，
+      // 那些路径都自带了状态迁移，不该被这里覆盖。
+      if (this.state !== 'preparing') return
+      this.fail(
+        'engine process hung during probe/run; try resume',
+        'engine_hang',
+        {},
+      )
+    }, PROBE_TIMEOUT_MS)
+  }
+
+  private clearProbeWatchdog(): void {
+    if (!this.probeWatchdog) return
+    clearTimeout(this.probeWatchdog)
+    this.probeWatchdog = null
   }
 
   resume(): void {
@@ -470,7 +514,15 @@ export class EngineTask {
   private terminate(): void {
     this.alive = false
     this.writeBuf = []
+    this.draining = false
+    if (this.drainCb) {
+      // 旧进程的 stdin 已经死了，drain 事件永远不会再来；不摘掉这个 once
+      // 监听就会泄漏一个闭包，还会让下个进程的第一次写卡在 draining=true。
+      this.proc?.stdin?.off('drain', this.drainCb)
+      this.drainCb = null
+    }
     this.clearPauseWatchdog()
+    this.clearProbeWatchdog()
     if (this.proc) {
       this.proc.kill()
       this.proc = null
@@ -500,6 +552,7 @@ export class EngineTask {
     if (!stdin || !stdin.writable) {
       // 进程没了，残留在缓冲里的命令也没有接收方了
       this.writeBuf = []
+      this.draining = false
       return
     }
     while (this.writeBuf.length) {
@@ -507,10 +560,12 @@ export class EngineTask {
         // 管道满：等 'drain' 再续写。没有 drain 监听就会一直漏写或重复挂监听。
         if (!this.draining) {
           this.draining = true
-          stdin.once('drain', () => {
+          this.drainCb = () => {
             this.draining = false
+            this.drainCb = null
             this.flush()
-          })
+          }
+          stdin.once('drain', this.drainCb)
         }
         return
       }
@@ -577,12 +632,25 @@ export class EngineTask {
           // probe 回来的快照状态是 idle。但这一瞬我们其实正卡在「等主进程放行 run」
           // 上：状态要是退成排队中，用户在这毫秒级窗口点暂停会被 pause() 直接 return
           // 掉，命令却照样发出去——所以这一段对外一律显示准备中。
-          const ns: TaskSnapshot['state'] =
+          let ns: TaskSnapshot['state'] =
             this.pendingRun && data.state === 'idle' ? 'preparing' : data.state
+          // 迟到的暂停确认不算数：pause() 先置 paused 再发命令，用户紧接着点
+          // 「继续」会连带发 run；引擎处理完 pause 才回的 {"state":"paused"} 到达
+          // 时任务已经在恢复途中，拿它改状态会把「正在跑」打回「已暂停」，
+          // UI 上看到的就是「我按了继续它还是停着」。看门狗还挂着 = 仍在等这条
+          // 确认，这时才认；恢复路径已经把看门狗清了，迟到的这条直接忽略——
+          // 保持当前状态（preparing/downloading 都如实），等下一条真正的
+          // 带 state 的 progress 再纠正。
+          if (ns === 'paused' && !this.pauseWatchdog) {
+            ns = this.state
+          }
           cur.state = ns
           this.setState(ns)
           // 引擎自己报「已暂停」= 它听见了 pause 命令，看门狗可以撤了
           if (ns === 'paused') this.clearPauseWatchdog()
+          // 走出准备中就撤心跳看门狗：probe/run 已经走通，剩下的进度事件
+          // 源源不断，它没用了。留着只会等 60s 后白跑一趟。
+          if (ns !== 'preparing' && ns !== 'idle') this.clearProbeWatchdog()
           if (this.state !== 'downloading') this.speed = 0
         } else {
           this.speed = Number(data.speed ?? 0) || 0

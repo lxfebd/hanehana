@@ -136,6 +136,7 @@ const codeRules: Record<string, { title: string; advice: string }> = {
   engine_missing: { title: '下载引擎不可用', advice: '' },
   engine_spawn_failed: { title: '下载引擎没能启动', advice: '重启 HaneHana；反复出现请把日志 ~/.hanehana/.engine-stderr.log 发给开发者。' },
   engine_unavailable: { title: '下载引擎进程不可用', advice: '这个任务的引擎进程已经退出。点「重试」会重新拉起它，断点保留。' },
+  engine_hang: { title: '下载引擎没有响应', advice: '引擎进程在准备阶段卡住了，已自动停止。点「继续下载」会重新拉起它，断点保留。' },
   proxy_resolve_failed: { title: '代理设置没能生效', advice: '打开设置 → 网络，检查代理地址（例：http://127.0.0.1:7890）。清空则跟随系统代理。' },
 }
 

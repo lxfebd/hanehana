@@ -255,9 +255,9 @@ export function clearSelection(): void {
   library.selection = []
 }
 
-/** 批量更新：每款游戏携带自己的 patch，乐观更新 + 失败回滚 */
-export async function batchUpdate(patches: { id: string; patch: Partial<Game> }[]): Promise<void> {
-  if (!patches.length) return
+/** 批量更新：每款游戏携带自己的 patch，乐观更新 + 失败回滚。返回是否全部成功。 */
+export async function batchUpdate(patches: { id: string; patch: Partial<Game> }[]): Promise<boolean> {
+  if (!patches.length) return true
   const before = new Map(library.games.map((g) => [g.id, { ...g }]))
   for (const { id, patch } of patches) {
     const g = library.games.find((it) => it.id === id)
@@ -279,11 +279,14 @@ export async function batchUpdate(patches: { id: string; patch: Partial<Game> }[
       if (old) Object.assign(g, old)
     }
     library.error = r.error ?? '批量更新失败'
+    syncIndexToGames()
+    return false
   }
   syncIndexToGames()
+  return true
 }
 
-export async function batchRemove(ids: string[]): Promise<void> {
+export async function batchRemove(ids: string[]): Promise<boolean> {
   library.games = library.games.filter((g) => !ids.includes(g.id))
   syncIndexToGames()
   if (library.selection.length) library.selection = library.selection.filter((id) => !ids.includes(id))
@@ -291,7 +294,9 @@ export async function batchRemove(ids: string[]): Promise<void> {
   if (!r.ok) {
     library.error = r.error ?? '批量移除失败'
     void refreshGames()
+    return false
   }
+  return true
 }
 
 // ---------------------------------------------------------------- 手动编辑
@@ -321,6 +326,37 @@ export async function launchGame(id: string): Promise<void> {
     library.runningIds.add(id)
   } else if (r && r.error) {
     library.error = r.error
+  }
+}
+
+/**
+ * 运行中状态同步：渲染层 runningIds 只有 add 没有 remove（游戏退出后 UI 永远「运行中」）。
+ * 主进程 handleRunning 会清理僵尸条目，这里定时拉取对齐——启动/退出都靠它收敛。
+ * 挂载点在 App.vue onMounted；组件不该自己起轮询（重复起多个）。
+ */
+let runningTimer: ReturnType<typeof setInterval> | null = null
+export function startRunningSync(intervalMs = 5000): void {
+  if (runningTimer) return
+  runningTimer = setInterval(async () => {
+    try {
+      const list = await window.hh.runningGames()
+      const next = new Set(list)
+      // 只清不存在的；保留集合引用避免 v-for :key 抖动
+      for (const id of library.runningIds) {
+        if (!next.has(id)) library.runningIds.delete(id)
+      }
+      for (const id of list) {
+        if (!library.runningIds.has(id)) library.runningIds.add(id)
+      }
+    } catch {
+      // 主进程暂时不可达时静默，下轮再试
+    }
+  }, intervalMs)
+}
+export function stopRunningSync(): void {
+  if (runningTimer) {
+    clearInterval(runningTimer)
+    runningTimer = null
   }
 }
 

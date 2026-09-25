@@ -7,7 +7,7 @@
  *   - 元数据两栏：时长、上次、目录（link 色）、来源
  *   - 标签 chips（accentBg 底）；分类 toggle chips；简介 6 行 clamp + 展开/收起
  */
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Activity, Archive, DatabaseBackup, Flower2, FolderOpen, Heart, PanelRightClose, Pencil, Play, Star, Wand2 } from 'lucide-vue-next'
 import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, syncIndexToGames, thumbUrl, toggleFavorite, filterByMeta } from '../stores/library'
 import { t } from '../i18n'
@@ -20,10 +20,16 @@ const descExpanded = ref(false)
 const starColor = computed(() => tokens.color.star)
 
 /** 横幅/封面图加载失败：隐藏破图，露出占位字母与主色渐变底 */
+const bannerFailed = ref(false)
 function imgErr(e: Event): void {
   const img = e.target as HTMLImageElement
   img.style.display = 'none'
+  bannerFailed.value = true
 }
+// 切到别的游戏时重来：banner-letter 的兜底状态不能带过去
+watch(g, () => {
+  bannerFailed.value = false
+})
 
 function fmtPlay(ms: number): string {
   if (ms <= 0) return '—'
@@ -167,7 +173,7 @@ function openBackups(): void {
 
         <div class="banner-cover">
           <img v-if="bannerImg()" :src="bannerImg()" class="banner-img" @error="imgErr" />
-          <div v-else class="banner-letter">{{ g.title.slice(0, 1) }}</div>
+          <div v-show="!bannerImg() || bannerFailed" class="banner-letter">{{ g.title.slice(0, 1) }}</div>
         </div>
 
         <div class="banner-meta">

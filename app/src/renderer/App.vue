@@ -1,10 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
+import { App as AntApp, ConfigProvider, Modal, message } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2 } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
-import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
+import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, startRunningSync, stopRunningSync, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
 import { ui, applyDarkFromSettings } from './stores/ui'
 import { setLanguage, t } from './i18n'
@@ -127,6 +127,17 @@ async function saveSettings(s: unknown): Promise<void> {
       return
     }
     downloads.settings = r.settings
+    // 填了但没生效的路径：主进程按「不存在」丢弃回落到旧值，这里点名让用户知道
+    if (r.discarded?.length) {
+      const names: Record<string, string> = {
+        backup_dir: '备份目录',
+        le_path: 'Locale Emulator 路径',
+        magpie_path: 'Magpie 路径',
+      }
+      message.warning(
+        `${r.discarded.map((k) => names[k] ?? k).join('、')} 不存在，未保存。请检查路径后重试。`,
+      )
+    }
     // 深浅/套件主题设置落盘后的渲染层同步（system 模式主进程已按系统校正 dark）
     applyDarkFromSettings(r.settings.dark, r.settings.theme_preset)
     ui.settingsOpen = false
@@ -136,6 +147,8 @@ async function saveSettings(s: unknown): Promise<void> {
 }
 
 onMounted(async () => {
+  // 运行中状态轮询：游戏退出后 runningIds 收敛（主进程 handleRunning 清僵尸）
+  startRunningSync()
   try {
     if (!window.hh?.hello) {
       bootInfo.value = '主进程桥未就绪（浏览器预览模式）'
@@ -185,6 +198,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  stopRunningSync()
   narrowMq?.removeEventListener('change', narrowMqFn as EventListener)
   narrowMq = null
   narrowMqFn = null
