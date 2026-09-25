@@ -15,7 +15,7 @@
  *     渲染层用 app-region: drag 画自定义标题栏。
  */
 import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
-import { existsSync, statSync } from 'node:fs'
+import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Ipc } from '../shared/ipc'
@@ -342,6 +342,17 @@ function err(error: string): { ok: false; error: string } {
   return { ok: false, error }
 }
 
+/** G14：把导出行数组转成 CSV（值里带逗号/引号/换行时按 RFC4180 引号包裹）。 */
+function gamesToCsv(rows: Record<string, unknown>[]): string {
+  if (!rows.length) return ''
+  const keys = Object.keys(rows[0])
+  const esc = (v: unknown): string => {
+    const s = String(v ?? '')
+    return /[",\n\r]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s
+  }
+  return [keys.join(','), ...rows.map((r) => keys.map((k) => esc(r[k])).join(','))].join('\r\n')
+}
+
 /**
  * 用户在原生「选择目录」对话框里亲自选过的目录（小写绝对路径）。
  *
@@ -531,6 +542,51 @@ function wireIpc(): void {
     }
     const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
     return r.canceled ? '' : r.filePaths[0] ?? ''
+  })
+
+  // G14 游戏库导出：弹保存对话框选 .csv / .json，把库里每个游戏的关键字段写出去。
+  // 返回值 { ok, path } 让渲染层能提示落盘位置；用户取消返回 { ok: true, canceled: true }。
+  ipcMain.handle(Ipc.ExportGames, async (_e, fmt: unknown) => {
+    const format = fmt === 'csv' || fmt === 'json' ? fmt : 'json'
+    const opts: Electron.SaveDialogOptions = {
+      title: '导出游戏库',
+      defaultPath: `hanehana-library.${format}`,
+      filters: format === 'csv' ? [{ name: 'CSV 表格', extensions: ['csv'] }] : [{ name: 'JSON', extensions: ['json'] }],
+    }
+    // 测试缝：HANEHANA_EXPORT_DEST 存在时跳过保存对话框直接写该路径（验收脚本用，生产不设）。
+    let filePath: string | undefined
+    if (process.env['HANEHANA_EXPORT_DEST']) {
+      filePath = process.env['HANEHANA_EXPORT_DEST']
+    } else {
+      const r = win && !win.isDestroyed() ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (r.canceled || !r.filePath) return { ok: true as const, canceled: true as const }
+      filePath = r.filePath
+    }
+    try {
+      const games = getGames().map((g) => ({
+        title: g.title,
+        titleNative: g.titleNative ?? '',
+        rawTitle: g.rawTitle,
+        developer: g.developer ?? '',
+        series: (g.series ?? []).join('; '),
+        releaseDate: g.releaseDate ?? '',
+        rating: g.rating ?? '',
+        tags: g.tags.join('; '),
+        categories: g.categories.join('; '),
+        dir: g.dir,
+        exePath: g.exePath,
+        playMs: g.playMs,
+        playHours: +(g.playMs / 3600000).toFixed(2),
+        lastPlayed: g.lastPlayed ? new Date(g.lastPlayed).toISOString() : '',
+        lengthMinutes: g.lengthMinutes ?? '',
+        favorite: g.favorite,
+      }))
+      const out = format === 'csv' ? gamesToCsv(games) : JSON.stringify(games, null, 2)
+      writeFileSync(filePath, out, 'utf8')
+      return { ok: true as const, canceled: false as const, path: filePath }
+    } catch (e) {
+      return err('导出失败：' + (e instanceof Error ? e.message : String(e)))
+    }
   })
 
   // 自定义背景图：原生文件对话框返回路径（渲染层存进 settings.bg_image）。

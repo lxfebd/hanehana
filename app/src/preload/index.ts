@@ -33,6 +33,10 @@ const bridge = {
   scrapeSearch: (title: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title),
   scrapeApply: (gameId: string, result: ScrapeResult) => ipcRenderer.invoke(Ipc.ScrapeApply, gameId, result),
 
+  // G14 游戏库导出（弹保存对话框写 CSV/JSON，返回落盘路径）
+  exportGames: (fmt: 'csv' | 'json') =>
+    ipcRenderer.invoke(Ipc.ExportGames, fmt) as Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>,
+
   // 启动与目录
   launchGame: (id: string) => ipcRenderer.invoke(Ipc.GameLaunch, id),
   runningGames: (): Promise<string[]> => ipcRenderer.invoke(Ipc.GameRunning),

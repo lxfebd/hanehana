@@ -30,6 +30,8 @@ export const Ipc = {
   PickDir: 'hanehana:pickDir',
   // 原生 exe 文件选择对话框（G2：LE/Magpie 路径选择）
   PickExe: 'hanehana:pickExe',
+  // 游戏库导出（G14）：弹保存对话框写 CSV/JSON
+  ExportGames: 'hanehana:games:export',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
   // 存档备份（G1）

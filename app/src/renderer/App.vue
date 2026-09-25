@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2 } from 'lucide-vue-next'
+import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2 } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -60,6 +60,25 @@ const page = computed({
   set: (v: 'library' | 'downloads' | 'games') => (ui.page = v),
 })
 const addSubmitKey = ref(0)
+
+/** G14 导出菜单开关（工具栏箭头按钮下的小菜单：CSV / JSON） */
+const exportMenuOpen = ref(false)
+
+/** G14 游戏库导出：调主进程弹保存对话框，成功后通知落盘位置 */
+async function doExport(fmt: 'csv' | 'json'): Promise<void> {
+  exportMenuOpen.value = false
+  try {
+    const r = await window.hh.exportGames(fmt)
+    if (!r.ok) {
+      library.error = r.error ?? '导出失败'
+      return
+    }
+    if (r.canceled) return
+    library.error = `已导出 ${fmt.toUpperCase()} 到：${r.path ?? ''}`
+  } catch (e) {
+    library.error = '导出失败：' + (e instanceof Error ? e.message : String(e))
+  }
+}
 
 /**
  * 游戏站视图挂载过一次就留着（webview 的 src 一挂载就去加载站点首页，
@@ -289,6 +308,21 @@ onUnmounted(() => {
                 ><CheckSquare :size="15" /></button>
 
                 <div class="toolbar-count">{{ filteredCount }} 款</div>
+
+                <!-- G14 导出：箭头按钮 + 小菜单（CSV / JSON） -->
+                <div class="export-wrap">
+                  <button
+                    class="tool-btn"
+                    :class="{ active: exportMenuOpen }"
+                    title="导出游戏库"
+                    :aria-pressed="exportMenuOpen"
+                    @click="exportMenuOpen = !exportMenuOpen"
+                  ><ArrowUpFromLine :size="15" /></button>
+                  <div v-if="exportMenuOpen" class="export-menu glass" @click.stop>
+                    <button class="export-item" @click="doExport('csv')">导出 CSV</button>
+                    <button class="export-item" @click="doExport('json')">导出 JSON</button>
+                  </div>
+                </div>
                 <button v-if="library.metaKey" class="meta-chip" @click="library.metaKey = ''; library.metaValue = ''" :title="'清除筛选'">
                   <X :size="12" /> {{ library.metaKey === 'series' ? '系列：' : '开发商：' }}{{ library.metaValue }}
                 </button>
@@ -652,6 +686,40 @@ onUnmounted(() => {
   background: var(--hh-color-select-bg);
   color: var(--hh-color-select-text);
 }
+
+/* G14 导出：小菜单浮在按钮正下方（玻璃材质复用全局 .glass） */
+.export-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.export-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 30;
+  min-width: 132px;
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.export-item {
+  display: flex;
+  align-items: center;
+  height: 30px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hh-color-text-bright);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  text-align: left;
+}
+.export-item:hover { background: var(--hh-color-surface-mid); }
 
 /* 元数据聚合筛选提示条（G12）：激活时显示，一键清除 */
 .meta-chip {
