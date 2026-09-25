@@ -24,7 +24,7 @@ import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, getGame, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup } from './games'
+import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup, setToolPaths } from './games'
 import { createSnapshot, deleteSnapshot, listAllBackups, restoreSnapshot, rotateSnapshots, syncToCloud } from './saves'
 import { scanSteamLibrary } from './steam'
 import { engineStatus } from './engine'
@@ -519,6 +519,20 @@ function wireIpc(): void {
     return picked
   })
 
+  // G2 工具路径选择：原生文件对话框选 exe（LEProc/Magpie）。返回绝对路径或空串（取消）。
+  ipcMain.handle(Ipc.PickExe, async () => {
+    const opts: Electron.OpenDialogOptions = {
+      properties: ['openFile'],
+      title: '选择可执行文件',
+      filters: [
+        { name: '程序', extensions: ['exe'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    }
+    const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    return r.canceled ? '' : r.filePaths[0] ?? ''
+  })
+
   // 自定义背景图：原生文件对话框返回路径（渲染层存进 settings.bg_image）。
   // 只放行图片格式；路径交给 normalizeSettings 的 existsSync 兜底。
   ipcMain.handle(Ipc.PickBgImage, async () => {
@@ -741,6 +755,11 @@ if (gotSingleInstanceLock) {
       } catch (e) {
         console.error('[saves] 自动备份失败:', game.title, e)
       }
+    })
+    // 工具路径读取器（G2）：设置里的 LE/Magpie 路径在启动时实时读取（保存后立刻生效）
+    setToolPaths(() => {
+      const st = store.loadSettings()
+      return { le: st.le_path, magpie: st.magpie_path }
     })
     // 代理必须在任何网络动作之前下发到 Chromium 侧（站点抓取层）。
     // 失败退回跟随系统代理：引擎侧会拿着同一份配置去下载，那时它会明确报错，

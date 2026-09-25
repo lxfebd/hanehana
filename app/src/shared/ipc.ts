@@ -28,6 +28,8 @@ export const Ipc = {
   OpenDir: 'hanehana:games:openDir',
   // 原生目录选择对话框
   PickDir: 'hanehana:pickDir',
+  // 原生 exe 文件选择对话框（G2：LE/Magpie 路径选择）
+  PickExe: 'hanehana:pickExe',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
   // 存档备份（G1）

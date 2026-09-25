@@ -130,6 +130,9 @@ export function normalizeSettings(raw: unknown): Settings {
     if (typeof d.webdav_url === 'string') s.webdav_url = d.webdav_url
     if (typeof d.webdav_user === 'string') s.webdav_user = d.webdav_user
     if (typeof d.webdav_pass === 'string') s.webdav_pass = d.webdav_pass
+    // 工具路径（G2）：只收存在的文件或空串；不存在则丢弃（用户手改坏值不落盘）
+    if (typeof d.le_path === 'string' && d.le_path && existsSync(d.le_path)) s.le_path = d.le_path
+    if (typeof d.magpie_path === 'string' && d.magpie_path && existsSync(d.magpie_path)) s.magpie_path = d.magpie_path
   }
   // 空目录补默认值，避免 dest 落成空串
   if (!s.download_dir) s.download_dir = defaultDownloadDir()

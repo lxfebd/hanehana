@@ -23,6 +23,8 @@ const developer = ref('')
 const series = ref<string[]>([])
 const aliases = ref<string[]>([])
 const lengthMinutes = ref<number | undefined>(undefined)
+const preLaunchCmd = ref('')
+const postLaunchCmd = ref('')
 
 const target = ref<Game | null>(null)
 
@@ -41,6 +43,8 @@ watch(open, (v) => {
   series.value = [...(target.value.series ?? [])]
   aliases.value = [...(target.value.aliases ?? [])]
   lengthMinutes.value = target.value.lengthMinutes ?? undefined
+  preLaunchCmd.value = target.value.preLaunchCmd ?? ''
+  postLaunchCmd.value = target.value.postLaunchCmd ?? ''
 })
 
 async function save(): Promise<void> {
@@ -58,6 +62,8 @@ async function save(): Promise<void> {
     series: series.value.map((t) => t.trim()).filter(Boolean),
     aliases: aliases.value.map((t) => t.trim()).filter(Boolean),
     lengthMinutes: lengthMinutes.value ?? undefined,
+    preLaunchCmd: preLaunchCmd.value.trim(),
+    postLaunchCmd: postLaunchCmd.value.trim(),
   }
   const ok = await saveManualEdit(g.id, patch)
   if (ok) open.value = false
@@ -109,6 +115,17 @@ async function save(): Promise<void> {
         <span class="label">分类</span>
         <Select v-model:value="categories" mode="tags" placeholder="回车添加分类" :open="false" />
       </label>
+      <label class="field">
+        <span class="label">启动前命令</span>
+        <Input v-model:value="preLaunchCmd" placeholder="留空＝直接启动。如: D:\tools\enable_patch.cmd {dir}" />
+      </label>
+      <label class="field">
+        <span class="label">启动后命令</span>
+        <Input v-model:value="postLaunchCmd" placeholder="留空＝不挂接。如: D:\tools\LunaTranslator.exe" />
+      </label>
+      <div class="field-row">
+        <span class="label hint">占位符：{exe} = 游戏 exe 路径，{dir} = 游戏目录；命令按空格拆分，含空格路径用双引号包裹</span>
+      </div>
       <label class="field">
         <span class="label">简介</span>
         <Input.TextArea v-model:value="description" :rows="4" placeholder="游戏简介（可选）" />

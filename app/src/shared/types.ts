@@ -168,6 +168,10 @@ export interface Game {
   manualEdit?: boolean
   /** 该游戏是否启用存档备份（G1；全局 backup_on_exit 关着时此开关不生效） */
   backupEnabled?: boolean
+  /** 启动游戏前挂接命令（G2，如先跑汉化补丁/设环境变量；可用 {exe} {dir} 占位） */
+  preLaunchCmd?: string
+  /** 启动游戏后挂接命令（G2，如拉起 OCR/翻译工具；可用 {exe} {dir} 占位） */
+  postLaunchCmd?: string
 }
 
 export interface ScrapeResult {
@@ -369,6 +373,10 @@ export interface Settings {
   webdav_url: string
   webdav_user: string
   webdav_pass: string
+  /** Locale Emulator 执行器路径（空 = 自动探测常见位置；游戏 useLE 时生效） */
+  le_path: string
+  /** Magpie 缩放工具路径（空 = 自动探测；游戏 useMagpie 时生效） */
+  magpie_path: string
 }
 
 export const THEME_MODES = ['system', 'dark', 'light'] as const
@@ -400,6 +408,8 @@ export const DEFAULT_SETTINGS: Settings = {
   webdav_url: '',
   webdav_user: '',
   webdav_pass: '',
+  le_path: '',
+  magpie_path: '',
 }
 
 /** 持久化的任务定义（含最后一次已知进度）。字段与 idm.models.TaskDef 一致。 */

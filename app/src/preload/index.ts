@@ -38,6 +38,7 @@ const bridge = {
   runningGames: (): Promise<string[]> => ipcRenderer.invoke(Ipc.GameRunning),
   openDir: (dir: string) => ipcRenderer.invoke(Ipc.OpenDir, dir),
   pickDir: (): Promise<string> => ipcRenderer.invoke(Ipc.PickDir),
+  pickExe: (): Promise<string> => ipcRenderer.invoke(Ipc.PickExe),
 
   // ---- 全屏模式（G11）----
   fullscreenSet: (on: boolean): Promise<boolean> => ipcRenderer.invoke(Ipc.FullscreenSet, on),

@@ -112,6 +112,15 @@ async function browseBackupDir(): Promise<void> {
   if (p) form.backup_dir = p
 }
 
+/** 工具路径（G2）：原生对话框选 exe */
+async function pickExe(which: 'le' | 'magpie'): Promise<void> {
+  const p = await window.hh.pickExe()
+  if (p) {
+    if (which === 'le') form.le_path = p
+    else form.magpie_path = p
+  }
+}
+
 function save(): void {
   emit('save', {
     threads: form.threads,
@@ -141,6 +150,9 @@ function save(): void {
     webdav_url: form.webdav_url.trim(),
     webdav_user: form.webdav_user.trim(),
     webdav_pass: form.webdav_pass,
+    // 工具集成（G2）
+    le_path: form.le_path.trim(),
+    magpie_path: form.magpie_path.trim(),
   })
 }
 </script>
@@ -337,6 +349,41 @@ function save(): void {
               <span class="hint">
                 配置后快照可一键同步到云端（新者胜，同刻冲突保留两端），换电脑时可拉回。
                 协议用原生 fetch 实现，无需额外依赖。
+              </span>
+            </Form.Item>
+          </Form>
+        </div>
+      </TabPane>
+            <TabPane key="tools" tab="工具">
+        <div class="card">
+          <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
+            <Form.Item label="LE 执行器">
+              <div class="row">
+                <Input v-model:value="form.le_path" placeholder="留空＝自动探测常见安装位置" class="mono" />
+                <Button @click="pickExe('le')">
+                  <template #icon><FolderOpen :size="14" /></template>
+                  浏览
+                </Button>
+              </div>
+            </Form.Item>
+            <Form.Item label=" " :colon="false">
+              <span class="hint">
+                Locale Emulator（LEProc.exe）用于日文游戏转区启动。勾了「LE 转区」的游戏启动时
+                会经它包装；找不到会明确报错，而不是静默用本机区域运行。
+              </span>
+            </Form.Item>
+            <Form.Item label="Magpie">
+              <div class="row">
+                <Input v-model:value="form.magpie_path" placeholder="留空＝自动探测常见安装位置" class="mono" />
+                <Button @click="pickExe('magpie')">
+                  <template #icon><FolderOpen :size="14" /></template>
+                  浏览
+                </Button>
+              </div>
+            </Form.Item>
+            <Form.Item label=" " :colon="false">
+              <span class="hint">
+                Magpie 负责老游戏窗口放大/缩放渲染。勾了「Magpie」的游戏启动后会自动拉起它接管窗口。
               </span>
             </Form.Item>
           </Form>

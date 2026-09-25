@@ -150,6 +150,8 @@ const PATCHABLE: readonly (keyof Game)[] = [
   'favorite',
   'manualEdit',
   'backupEnabled',
+  'preLaunchCmd',
+  'postLaunchCmd',
   'developer',
   'series',
   'aliases',

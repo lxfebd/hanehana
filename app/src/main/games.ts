@@ -123,6 +123,12 @@ export function setAutoBackup(fn: (game: Game) => void): void {
   autoBackupFn = fn
 }
 
+/** 工具路径读取器（G2，由 index.ts 注入）：返回设置里的 LE/Magpie 路径，空串 = 未配置 */
+let toolPathsFn: (() => { le: string; magpie: string }) | null = null
+export function setToolPaths(fn: () => { le: string; magpie: string }): void {
+  toolPathsFn = fn
+}
+
 /** 游戏退出时落一条会话记录（供统计报表聚合）。 */
 function recordSession(id: string, title: string, start: number, end: number): void {
   const ms = end - start
@@ -155,6 +161,62 @@ export function consumeRecentCrash(): CrashRecord | null {
   return rec
 }
 
+/**
+ * 把挂接命令拆成 argv：用户填「exe 路径 + 参数」，支持双引号包裹含空格的路径。
+ * 不做 shell 语义（不经过 cmd），避免衍生进程把 exit 事件绑错。
+ */
+function splitCommand(cmd: string): string[] {
+  const out: string[] = []
+  let cur = ''
+  let inQ = false
+  for (let i = 0; i < cmd.length; i++) {
+    const ch = cmd[i]
+    if (ch === '"') {
+      inQ = !inQ
+      continue
+    }
+    if (ch === ' ' && !inQ) {
+      if (cur) {
+        out.push(cur)
+        cur = ''
+      }
+      continue
+    }
+    cur += ch
+  }
+  if (cur) out.push(cur)
+  return out
+}
+
+/** 占位符替换：{exe} = 游戏 exe，{dir} = 游戏目录 */
+function applyPlaceholders(cmd: string, game: Game): string {
+  return cmd.replaceAll('{exe}', game.exePath).replaceAll('{dir}', game.dir)
+}
+
+/** 启动挂接命令。wait=true 时等它退出（超时 30s 继续，不阻塞启动太久）；返回是否 spawn 成功。 */
+function runHook(argv: string[], cwd: string, wait: boolean): boolean {
+  if (!argv.length) return true
+  try {
+    const p = spawn(argv[0], argv.slice(1), { cwd, detached: true, stdio: 'ignore', windowsHide: false })
+    if (wait) {
+      const t = setTimeout(() => p.kill(), 30000)
+      p.on('exit', () => clearTimeout(t))
+      // 前置命令最多等 30s：galgame 汉化补丁/环境准备通常秒级完成，等太久用户以为卡死
+    }
+    return true
+  } catch {
+    return false
+  }
+}
+
+/** 探测常见安装路径（设置未填时兜底）。 */
+function detectToolPath(candidates: string[]): string {
+  for (const c of candidates) {
+    if (existsSync(c)) return c
+  }
+  return ''
+}
+
 export function handleLaunch(id: string): { ok: boolean; error?: string } {
   const g = getGame(id)
   if (!g) return { ok: false, error: '游戏不在库中' }
@@ -172,13 +234,39 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     return { ok: true }
   }
 
+  // 启动前挂接命令（G2）：占位符替换后先跑，等待完成再启动游戏本体
+  if (g.preLaunchCmd?.trim()) {
+    const argv = splitCommand(applyPlaceholders(g.preLaunchCmd.trim(), g))
+    if (!runHook(argv, g.dir, true)) {
+      return { ok: false, error: '启动前命令执行失败：' + g.preLaunchCmd }
+    }
+  }
+
   try {
-    // LE 转区：优先用 Locale Emulator 的执行器（可配置，默认不启用）
+    // LE 转区：优先用设置里的执行器路径，回退环境变量（G2 从「开关」到「实际集成」）
     let cmd = g.exePath
     let args: string[] = []
-    if (g.useLE && process.env.HANEHANA_LE_PATH) {
-      cmd = process.env.HANEHANA_LE_PATH
-      args = [g.exePath]
+    if (g.useLE) {
+      // 设置里显式配置的路径优先；没配才回退环境变量与常见安装位置
+      const cfgLe = toolPathsFn?.().le.trim() ?? ''
+      const le = cfgLe && existsSync(cfgLe)
+        ? cfgLe
+        : process.env.HANEHANA_LE_PATH && existsSync(process.env.HANEHANA_LE_PATH)
+          ? process.env.HANEHANA_LE_PATH
+          : detectToolPath([
+            // 常见安装位置：安装版默认目录 + 绿色版常见根
+            'C:\\Program Files\\Locale Emulator\\LEProc.exe',
+            'C:\\Program Files (x86)\\Locale Emulator\\LEProc.exe',
+            'D:\\Tools\\LocaleEmulator\\LEProc.exe',
+            'D:\\Tools\\Locale Emulator\\LEProc.exe',
+            'C:\\LocaleEmulator\\LEProc.exe',
+          ])
+      if (le) {
+        cmd = le
+        args = [g.exePath]
+      } else {
+        return { ok: false, error: '游戏启用了 LE 转区，但找不到 Locale Emulator（请到设置→工具里指定 LEProc.exe 路径）' }
+      }
     }
     const proc = spawn(cmd, args, {
       cwd: g.dir,
@@ -193,7 +281,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     // spawn 的失败（ENOENT/EACCES/cwd 无效）走异步 error 事件；
     // 没有监听器就是 uncaughtException 直接带走主进程
     proc.on('error', (err) => {
-      console.error('[launch] 启动失败:', id, err.message, 'path=', g.exePath, 'cwd=', g.dir, 'code=', (err as NodeJS.ErrnoException).code)
+      console.error('[launch] 启动失败:', id, err.message, 'path=', cmd, 'cwd=', g.dir, 'code=', (err as NodeJS.ErrnoException).code)
       runningProc.delete(id)
       runningSince.delete(id)
     })
@@ -214,6 +302,39 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
       runningProc.delete(id)
       runningSince.delete(id)
     })
+
+    // Magpie 缩放（G2）：游戏起来后拉起 Magpie，置前台接管渲染缩放。
+    // Magpie 用命令行动态缩放模式：Magpie.exe --launch <exePath>（<1.0 同义）。
+    if (g.useMagpie) {
+      const cfgMg = toolPathsFn?.().magpie.trim() ?? ''
+      const magpie = cfgMg && existsSync(cfgMg)
+        ? cfgMg
+        : process.env.HANEHANA_MAGPIE_PATH && existsSync(process.env.HANEHANA_MAGPIE_PATH)
+          ? process.env.HANEHANA_MAGPIE_PATH
+          : detectToolPath([
+            'C:\\Program Files\\Magpie\\Magpie.exe',
+            'C:\\Program Files (x86)\\Magpie\\Magpie.exe',
+            'D:\\Tools\\Magpie\\Magpie.exe',
+            'C:\\Magpie\\Magpie.exe',
+          ])
+      if (magpie) {
+        // 等 1s 让游戏窗口出现，再让 Magpie 接管（太早会抓不到目标窗口）
+        setTimeout(() => {
+          try {
+            spawn(magpie, ['--launch', g.exePath], { detached: true, stdio: 'ignore', windowsHide: false })
+          } catch {
+            // Magpie 拉起失败不阻塞游戏本体；用户仍可手动开
+          }
+        }, 1000)
+      }
+    }
+
+    // 启动后挂接命令（G2）：不等待，并行拉起辅助工具（OCR/翻译/进度条）
+    if (g.postLaunchCmd?.trim()) {
+      const argv = splitCommand(applyPlaceholders(g.postLaunchCmd.trim(), g))
+      runHook(argv, g.dir, false)
+    }
+
     return { ok: true }
   } catch (e) {
     runningProc.delete(id)
