@@ -106,6 +106,12 @@ async function browseDir(): Promise<void> {
   if (p) form.download_dir = p
 }
 
+/** 备份根目录（G1）：选一个目录放所有游戏的快照 */
+async function browseBackupDir(): Promise<void> {
+  const p = await window.hh.pickDir()
+  if (p) form.backup_dir = p
+}
+
 function save(): void {
   emit('save', {
     threads: form.threads,
@@ -128,6 +134,13 @@ function save(): void {
         ? Math.floor(form.rate_limit_kbps)
         : 0,
     auto_update_check: form.auto_update_check,
+    // 存档备份（G1）
+    backup_dir: form.backup_dir.trim(),
+    backup_on_exit: form.backup_on_exit,
+    backup_keep: Math.max(1, Math.floor(form.backup_keep) || 5),
+    webdav_url: form.webdav_url.trim(),
+    webdav_user: form.webdav_user.trim(),
+    webdav_pass: form.webdav_pass,
   })
 }
 </script>
@@ -282,6 +295,51 @@ function save(): void {
             </div>
           </div>
           <div v-if="form.bg_image" class="bg-path mono">{{ form.bg_image }}</div>
+        </div>
+      </TabPane>
+      <TabPane key="backup" tab="备份">
+        <div class="card">
+          <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
+            <Form.Item label=" " :colon="false">
+              <Checkbox v-model:checked="form.backup_on_exit">游戏退出时自动备份存档</Checkbox>
+            </Form.Item>
+            <Form.Item label="本地保留">
+              <div class="row">
+                <InputNumber v-model:value="form.backup_keep" :min="1" :max="100" style="width: 110px" />
+                <span class="lbl">份</span>
+              </div>
+            </Form.Item>
+            <Form.Item label="自定义目录">
+              <div class="row">
+                <Input v-model:value="form.backup_dir" placeholder="留空＝数据目录 backups\ 下" class="mono" />
+                <Button @click="browseBackupDir">
+                  <template #icon><FolderOpen :size="14" /></template>
+                  浏览
+                </Button>
+              </div>
+            </Form.Item>
+            <Form.Item label=" " :colon="false">
+              <span class="hint">
+                每款游戏独立子目录存放快照，保留最近 N 份，超出自动轮转删除。
+                详情面板里可对单款游戏手动备份 / 恢复。
+              </span>
+            </Form.Item>
+            <Form.Item label="WebDAV 地址">
+              <Input v-model:value="form.webdav_url" class="mono" placeholder="https://dav.example.com/hanehana（留空＝仅本地备份）" />
+            </Form.Item>
+            <Form.Item label="WebDAV 账号">
+              <Input v-model:value="form.webdav_user" class="mono" placeholder="用户名（可选）" />
+            </Form.Item>
+            <Form.Item label="WebDAV 密码">
+              <Input.Password v-model:value="form.webdav_pass" placeholder="密码（可选）" />
+            </Form.Item>
+            <Form.Item label=" " :colon="false">
+              <span class="hint">
+                配置后快照可一键同步到云端（新者胜，同刻冲突保留两端），换电脑时可拉回。
+                协议用原生 fetch 实现，无需额外依赖。
+              </span>
+            </Form.Item>
+          </Form>
         </div>
       </TabPane>
       <TabPane key="about" tab="关于">

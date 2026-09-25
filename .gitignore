@@ -22,3 +22,5 @@ Thumbs.db
 app/.e2e-data/
 app/.*-data/
 app/.shots/
+app/.*-game/
+app/.*-game2/

@@ -37,6 +37,8 @@ export const library = reactive({
   /** 手动编辑弹窗（单个游戏信息编辑） */
   editOpen: false,
   editTargetId: '',
+  /** 存档备份弹窗（G1）：对当前选中游戏 */
+  backupOpen: false,
   runningIds: new Set<string>(),
 })
 

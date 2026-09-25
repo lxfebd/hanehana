@@ -30,6 +30,12 @@ export const Ipc = {
   PickDir: 'hanehana:pickDir',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
+  // 存档备份（G1）
+  BackupsList: 'hanehana:backups:list',
+  BackupCreate: 'hanehana:backups:create',
+  BackupRestore: 'hanehana:backups:restore',
+  BackupDelete: 'hanehana:backups:delete',
+  BackupSync: 'hanehana:backups:sync',
   // 全屏模式（G11）
   FullscreenSet: 'hanehana:window:fullscreen-set',
   FullscreenToggle: 'hanehana:window:fullscreen-toggle',

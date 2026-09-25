@@ -122,6 +122,14 @@ export function normalizeSettings(raw: unknown): Settings {
       s.rate_limit_kbps = clampInt(d.rate_limit_kbps, 0, 104_857_600)
     }
     if (typeof d.auto_update_check === 'boolean') s.auto_update_check = d.auto_update_check
+    // 存档备份（G1）。backup_dir 只收存在的目录（空 = 数据目录下的 backups/）；
+    // webdav 凭据读盘后保留原样，校验只在保存时由主进程做（见 Ipc.SettingsSave）。
+    if (typeof d.backup_dir === 'string' && d.backup_dir && existsSync(d.backup_dir)) s.backup_dir = d.backup_dir
+    if (typeof d.backup_on_exit === 'boolean') s.backup_on_exit = d.backup_on_exit
+    if (typeof d.backup_keep === 'number') s.backup_keep = clampInt(d.backup_keep, 1, 100)
+    if (typeof d.webdav_url === 'string') s.webdav_url = d.webdav_url
+    if (typeof d.webdav_user === 'string') s.webdav_user = d.webdav_user
+    if (typeof d.webdav_pass === 'string') s.webdav_pass = d.webdav_pass
   }
   // 空目录补默认值，避免 dest 落成空串
   if (!s.download_dir) s.download_dir = defaultDownloadDir()

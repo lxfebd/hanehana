@@ -37,6 +37,45 @@ export interface PlaySession {
   ms: number
 }
 
+// ---------------------------------------------------------------- 存档备份（G1）
+
+/** 一份存档快照的元信息（本地 + WebDAV 共通） */
+export interface SnapshotInfo {
+  gameId: string
+  title: string
+  dir: string
+  createdAt: number
+  files: number
+  totalBytes: number
+  /** 快照目录的绝对路径（本地才有） */
+  dirPath?: string
+}
+
+/** 快照 meta.json 的落盘形状（恢复时按清单回拷） */
+export interface SnapshotMeta {
+  gameId: string
+  title: string
+  dir: string
+  createdAt: number
+  files: { rel: string; size: number; sha1: string }[]
+}
+
+/** 某游戏的备份总览（备份开关 + 快照列表） */
+export interface BackupStats {
+  gameId: string
+  title: string
+  dir: string
+  enabled: boolean
+  snapshots: SnapshotInfo[]
+}
+
+/** WebDAV 云同步结果 */
+export interface CloudSyncResult {
+  uploaded: number
+  downloaded: number
+  errors: string[]
+}
+
 // ---------------------------------------------------------------- 统计报表（G5）
 
 export interface DayStat {
@@ -127,6 +166,8 @@ export interface Game {
   favorite: boolean
   /** 手动编辑过的标记（刮削不再覆盖用户手填字段） */
   manualEdit?: boolean
+  /** 该游戏是否启用存档备份（G1；全局 backup_on_exit 关着时此开关不生效） */
+  backupEnabled?: boolean
 }
 
 export interface ScrapeResult {
@@ -318,6 +359,16 @@ export interface Settings {
    * GitHub Release 里，界面里不主动提就没人看得到。
    */
   auto_update_check: boolean
+  /** 存档备份根目录（空 = 数据目录下 backups/）。G1：本地快照 + WebDAV 云同步 */
+  backup_dir: string
+  /** 游戏退出时自动备份该游戏的存档（全局总开关；单游戏另有关 backupEnabled） */
+  backup_on_exit: boolean
+  /** 每个游戏本地保留的快照份数（超出自动轮转删旧） */
+  backup_keep: number
+  /** WebDAV 云同步端点（空 = 仅本地备份）。协议用原生 fetch 实现，不引依赖 */
+  webdav_url: string
+  webdav_user: string
+  webdav_pass: string
 }
 
 export const THEME_MODES = ['system', 'dark', 'light'] as const
@@ -343,6 +394,12 @@ export const DEFAULT_SETTINGS: Settings = {
   keep_awake: false,
   rate_limit_kbps: 0,
   auto_update_check: true,
+  backup_dir: '',
+  backup_on_exit: false,
+  backup_keep: 5,
+  webdav_url: '',
+  webdav_user: '',
+  webdav_pass: '',
 }
 
 /** 持久化的任务定义（含最后一次已知进度）。字段与 idm.models.TaskDef 一致。 */

@@ -23,8 +23,9 @@ import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
-import { loadGames, getGames, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport } from './games'
+import { loadGames, getGames, getGame, ensureCoversDir, sanitizeGamePatch } from './gameStore'
+import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup } from './games'
+import { createSnapshot, deleteSnapshot, listAllBackups, restoreSnapshot, rotateSnapshots, syncToCloud } from './saves'
 import { scanSteamLibrary } from './steam'
 import { engineStatus } from './engine'
 import { searchScrape, applyScrape } from './scraper'
@@ -434,6 +435,39 @@ function wireIpc(): void {
     const added = handleSteamImport(list)
     return { ok: true as const, ...added }
   })
+  // 存档备份（G1）：快照创建/列出/恢复/删除 + WebDAV 云同步
+  ipcMain.handle(Ipc.BackupsList, () => listAllBackups(getGames()))
+  ipcMain.handle(Ipc.BackupCreate, (_e, id: unknown) => {
+    if (!isId(id)) return err('游戏不存在')
+    const g = getGame(id)
+    if (!g) return err('游戏不在库中')
+    const snap = createSnapshot(g)
+    if (!snap) return err('游戏目录不存在，无法备份')
+    rotateSnapshots(g.id, s.loadSettings().backup_keep)
+    return snap
+  })
+  ipcMain.handle(Ipc.BackupRestore, (_e, id: unknown, snapshotDir: unknown) => {
+    if (!isId(id)) return err('游戏不存在')
+    const g = getGame(id)
+    if (!g) return err('游戏不在库中')
+    if (typeof snapshotDir !== 'string' || !snapshotDir) return err('快照路径无效')
+    return restoreSnapshot(g, snapshotDir)
+  })
+  ipcMain.handle(Ipc.BackupDelete, (_e, id: unknown, snapshotDir: unknown) => {
+    if (!isId(id)) return false
+    if (typeof snapshotDir !== 'string' || !snapshotDir) return false
+    return deleteSnapshot(id, snapshotDir)
+  })
+  ipcMain.handle(Ipc.BackupSync, async (_e, id: unknown, snapshotDir: unknown) => {
+    if (!isId(id)) return err('游戏不存在')
+    const g = getGame(id)
+    if (!g) return err('游戏不在库中')
+    if (typeof snapshotDir !== 'string' || !snapshotDir) return err('快照路径无效')
+    const st = s.loadSettings()
+    if (!st.webdav_url) return err('未配置 WebDAV 同步地址')
+    return await syncToCloud(g, { url: st.webdav_url, user: st.webdav_user, pass: st.webdav_pass }, snapshotDir)
+  })
+
   ipcMain.handle(Ipc.GameRemove, (_e, id: unknown) => {
     if (!isId(id)) return err('游戏不存在')
     handleRemove(id)
@@ -696,6 +730,17 @@ if (gotSingleInstanceLock) {
     // 异常退出（崩溃/被杀）：弹系统通知，玩家第一时间知道「刚才那游戏不是正常关的」
     setCrashNotifier(({ title }) => {
       notify(false, `${title} 可能异常退出`, '游戏进程非正常结束（崩溃或被杀）。如果频繁发生，试试用 LE 转区或以管理员身份运行。', 'crash')
+    })
+    // 存档自动备份（G1）：游戏正常退出后台跑快照（仅备份开了开关的游戏）。
+    // 快照会读盘+算哈希，几 MB 存档毫秒级，直接 await 不阻塞主循环。
+    setAutoBackup((game) => {
+      try {
+        if (!store.loadSettings().backup_on_exit) return
+        const snap = createSnapshot(game)
+        if (snap) rotateSnapshots(game.id, store.loadSettings().backup_keep)
+      } catch (e) {
+        console.error('[saves] 自动备份失败:', game.title, e)
+      }
     })
     // 代理必须在任何网络动作之前下发到 Chromium 侧（站点抓取层）。
     // 失败退回跟随系统代理：引擎侧会拿着同一份配置去下载，那时它会明确报错，

@@ -19,6 +19,7 @@ import BatchEditOverlay from './components/BatchEditOverlay.vue'
 import EditDialog from './components/EditDialog.vue'
 import StatsView from './components/StatsView.vue'
 import SteamImportDialog from './components/SteamImportDialog.vue'
+import BackupDialog from './components/BackupDialog.vue'
 import FullscreenView from './components/FullscreenView.vue'
 
 const bootInfo = ref('')
@@ -343,6 +344,7 @@ onUnmounted(() => {
         <ScrapeDialog v-model:open="library.scrapeOpen" />
         <EditDialog v-model:open="library.editOpen" />
         <SteamImportDialog v-model:open="ui.steamImportOpen" />
+        <BackupDialog v-model:open="library.backupOpen" />
 
         <!-- 全屏模式：覆盖整个窗口，独立于普通布局 -->
         <FullscreenView v-if="ui.fullscreen" @exit="exitFullscreen" />

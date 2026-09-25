@@ -117,6 +117,12 @@ export function setCrashNotifier(fn: (payload: { title: string; dir: string }) =
   crashNotifier = fn
 }
 
+/** 自动备份钩子（G1，由 index.ts 注入）：游戏正常退出且该游戏开了备份时后台跑快照 */
+let autoBackupFn: ((game: Game) => void) | null = null
+export function setAutoBackup(fn: (game: Game) => void): void {
+  autoBackupFn = fn
+}
+
 /** 游戏退出时落一条会话记录（供统计报表聚合）。 */
 function recordSession(id: string, title: string, start: number, end: number): void {
   const ms = end - start
@@ -187,7 +193,7 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
     // spawn 的失败（ENOENT/EACCES/cwd 无效）走异步 error 事件；
     // 没有监听器就是 uncaughtException 直接带走主进程
     proc.on('error', (err) => {
-      console.error('[launch] 启动失败:', id, err.message)
+      console.error('[launch] 启动失败:', id, err.message, 'path=', g.exePath, 'cwd=', g.dir, 'code=', (err as NodeJS.ErrnoException).code)
       runningProc.delete(id)
       runningSince.delete(id)
     })
@@ -196,8 +202,13 @@ export function handleLaunch(id: string): { ok: boolean; error?: string } {
       if (since !== undefined) {
         const now = Date.now()
         const ms = now - since
-        updateGame(id, { playMs: g.playMs + ms })
+        updateGame(id, { playMs: g.playMs + ms, lastPlayed: now })
         recordSession(id, g.title, since, now)
+        // 正常退出（非 0 不算崩）：自动备份已开启 → 后台快照
+        if (autoBackupFn && (code === 0 || code === null)) {
+          const fresh = getGame(id)
+          if (fresh?.backupEnabled) autoBackupFn({ ...fresh, playMs: fresh.playMs })
+        }
       }
       recordExit(id, g.title, g.dir, code, signal)
       runningProc.delete(id)

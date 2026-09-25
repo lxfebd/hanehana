@@ -1,6 +1,6 @@
 import { contextBridge, ipcRenderer } from 'electron'
 import { Ipc } from '../shared/ipc'
-import type { Game, ScrapeResult } from '../shared/types'
+import type { BackupStats, CloudSyncResult, Game, ScrapeResult, SnapshotInfo } from '../shared/types'
 import type {
   ActionResult,
   AddResult,
@@ -47,6 +47,15 @@ const bridge = {
     ipcRenderer.on(Ipc.FullscreenChanged, listener)
     return () => ipcRenderer.removeListener(Ipc.FullscreenChanged, listener)
   },
+
+  // ---- 存档备份（G1）----
+  backupsList: (): Promise<BackupStats[]> => ipcRenderer.invoke(Ipc.BackupsList),
+  backupCreate: (gameId: string): Promise<SnapshotInfo | null> => ipcRenderer.invoke(Ipc.BackupCreate, gameId),
+  backupRestore: (gameId: string, snapshotDir: string) => ipcRenderer.invoke(Ipc.BackupRestore, gameId, snapshotDir),
+  backupDelete: (gameId: string, snapshotDir: string): Promise<boolean> =>
+    ipcRenderer.invoke(Ipc.BackupDelete, gameId, snapshotDir),
+  backupSync: (gameId: string, snapshotDir: string): Promise<CloudSyncResult | ActionResult> =>
+    ipcRenderer.invoke(Ipc.BackupSync, gameId, snapshotDir),
 
   // ---- 下载引擎 ----
   listTasks: (): Promise<TaskRow[]> => ipcRenderer.invoke(Ipc.TasksList),

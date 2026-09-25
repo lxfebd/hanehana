@@ -149,6 +149,7 @@ const PATCHABLE: readonly (keyof Game)[] = [
   'thumbSrc',
   'favorite',
   'manualEdit',
+  'backupEnabled',
   'developer',
   'series',
   'aliases',
@@ -174,6 +175,7 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
       case 'useMagpie':
       case 'favorite':
       case 'manualEdit':
+      case 'backupEnabled':
         if (typeof v === 'boolean') out[key] = v
         break
       case 'rating':

@@ -8,7 +8,7 @@
  *   - 标签 chips（accentBg 底）；分类 toggle chips；简介 6 行 clamp + 展开/收起
  */
 import { computed, ref } from 'vue'
-import { Activity, Flower2, FolderOpen, Heart, PanelRightClose, Pencil, Play, Star, Wand2 } from 'lucide-vue-next'
+import { Activity, Archive, DatabaseBackup, Flower2, FolderOpen, Heart, PanelRightClose, Pencil, Play, Star, Wand2 } from 'lucide-vue-next'
 import { launchGame, library, openEdit, openScrape, refreshGames, selectedGame, thumbUrl, toggleFavorite, filterByMeta } from '../stores/library'
 import { tokens } from '../design/tokens'
 
@@ -91,6 +91,18 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
   await window.hh.updateGame(g.value.id, { [flag]: !g.value[flag] })
   await refreshGames()
 }
+
+/** 备份开关（G1）：单游戏 backupEnabled，需设置页全局 backup_on_exit 配合 */
+async function toggleBackup(): Promise<void> {
+  if (!g.value) return
+  await window.hh.updateGame(g.value.id, { backupEnabled: !g.value.backupEnabled })
+  await refreshGames()
+}
+
+/** 打开该游戏的备份/恢复对话框 */
+function openBackups(): void {
+  library.backupOpen = true
+}
 </script>
 
 <template>
@@ -160,6 +172,14 @@ async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
         <button class="fav-btn" :class="{ on: g.favorite }" :aria-pressed="g.favorite" @click="toggleFavorite(g.id)">
           <Heart :size="13" :fill="g.favorite ? 'currentColor' : 'none'" />
           {{ g.favorite ? '已收藏' : '收藏' }}
+        </button>
+        <button class="fav-btn" :class="{ on: g.backupEnabled }" :aria-pressed="!!g.backupEnabled" @click="toggleBackup">
+          <Archive :size="13" />
+          {{ g.backupEnabled ? '备份已开' : '备份' }}
+        </button>
+        <button class="fav-btn" :class="{ on: library.backupOpen }" :aria-pressed="library.backupOpen" @click="openBackups">
+          <DatabaseBackup :size="13" />
+          备份记录
         </button>
       </div>
 
