@@ -3,6 +3,7 @@
  */
 import { dialog, ipcMain } from 'electron'
 import { existsSync, writeFileSync } from 'node:fs'
+import { resolve as resolvePath } from 'node:path'
 import { Ipc } from '../../shared/ipc'
 import { getGames, getGame, sanitizeGamePatch } from '../gameStore'
 import {
@@ -16,6 +17,15 @@ import {
   handleAddOne,
 } from '../games'
 import { isId, err, type IpcCtx } from './shared'
+
+/** 路径归一后比较（分隔符/大小写不敏感），避免「同一路径写法不同」误报非法。 */
+function samePath(a: string, b: string): boolean {
+  try {
+    return resolvePath(a.trim()).toLowerCase().replace(/\\/g, '/') === resolvePath(b.trim()).toLowerCase().replace(/\\/g, '/')
+  } catch {
+    return a.trim().toLowerCase() === b.trim().toLowerCase()
+  }
+}
 
 /** G14：把导出行数组转成 CSV（值里带逗号/引号/换行时按 RFC4180 引号包裹）。 */
 export function gamesToCsv(rows: Record<string, unknown>[]): string {
@@ -43,7 +53,7 @@ export function registerGamesHandlers(ctx: IpcCtx): void {
     const raw = patch && typeof patch === 'object' ? (patch as Record<string, unknown>).exePath : undefined
     if (typeof raw === 'string' && raw.trim() && !clean.exePath) {
       const cur = getGame(id)
-      if (!cur || cur.exePath !== raw.trim()) return err('启动路径无效：文件不存在或格式不合法')
+      if (!cur || !samePath(raw, cur.exePath)) return err('启动路径无效：文件不存在或不是可执行文件')
     }
     return handleUpdate(id, clean)
   })

@@ -540,7 +540,12 @@ export async function startBatchScrape(ids: string[]): Promise<{ applied: number
 }
 
 export function cancelBatchScrape(): void {
-  if (batchScrape.running) batchScrape.cancel = true
+  if (batchScrape.running) {
+    batchScrape.cancel = true
+    return
+  }
+  // 未在跑：关浮层时清掉残留「待确认」，避免重进多选弹出陈旧 pending
+  batchScrape.pending = []
 }
 
 /** 待确认项：打开单刮对话框（与 DetailPanel「元数据刮削」同路径）。 */

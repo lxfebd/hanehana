@@ -26,7 +26,7 @@ import {
 } from 'lucide-vue-next'
 import type { TaskDef, TaskSnapshot, TaskState } from '../../shared/types'
 import { dirName, fileName, fmtEta, fmtRange, fmtSize, fmtSpeed, fmtTime } from '../../shared/format'
-import { errorLine } from '../../shared/errors'
+import { errorLine, explainError } from '../../shared/errors'
 import { percentText, progressRatio, statusBadge, totalBytes } from '../status'
 
 const props = defineProps<{
@@ -84,12 +84,23 @@ const err = computed(() => {
   return { raw: props.def.error, code: props.def.error_code ?? '', params: props.def.error_params ?? null }
 })
 
+/** 悬停全文：title + 完整 advice（副标题 errorLine 只截 40 字）。 */
+const errFull = computed(() => {
+  const e = explainError(err.value.raw, err.value.code, err.value.params)
+  if (!e) return ''
+  return e.advice.trim() ? `${e.title}\n${e.advice}` : e.title
+})
+
 const sub = computed(() => {
   const got = fmtSize(downloaded.value)
   const range = sizeKnown.value ? fmtRange(downloaded.value, total.value) : `已下 ${got}`
   if (state.value === 'done') {
     const size = sizeKnown.value ? fmtSize(total.value) : got
-    return finishedAt.value ? `${size} · 完成于 ${fmtTime(finishedAt.value)}` : `${size} · ${segN.value} 线程`
+    // zip 完成不进系统通知前台 toast（mute 语义保留）——任务行自带「解压后扫描」指引
+    const zipHint = /\.zip$/i.test(props.def.dest) ? ' · 解压后用「扫描」导入游戏库' : ''
+    return finishedAt.value
+      ? `${size} · 完成于 ${fmtTime(finishedAt.value)}${zipHint}`
+      : `${size} · ${segN.value} 线程${zipHint}`
   }
   if (state.value === 'error') {
     return errorLine(err.value.raw, err.value.code, err.value.params) || '下载失败'
@@ -150,7 +161,7 @@ const chipTone = computed(() => {
       <component :is="icon" :size="16" :class="{ spin: state === 'downloading' }" />
     </span>
 
-    <div class="cell-lead" :title="dir">
+    <div class="cell-lead" :title="state === 'error' && errFull ? errFull : dir">
       <div class="name">{{ name }}</div>
       <div class="sub">{{ sub }}</div>
     </div>

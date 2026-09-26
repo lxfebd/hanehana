@@ -29,8 +29,12 @@ import { t } from '../i18n'
 const emit = defineEmits<{ exit: [] }>()
 
 const containerRef = ref<HTMLElement | null>(null)
-/** RecycleScroller 实例：类型声明只有 props，方法用松类型收（scrollToItem 运行时存在） */
-const scrollerRef = ref<{ scrollToItem?: (i: number) => void } | null>(null)
+/** RecycleScroller 实例：类型声明只有 props，方法用松类型收（scrollToItem/getScroll 运行时存在） */
+const scrollerRef = ref<{
+  scrollToItem?: (i: number) => void
+  getScroll?: () => { scrollTop: number }
+  $el?: HTMLElement
+} | null>(null)
 const cols = ref(1)
 const focusIdx = ref(0)
 const showBar = ref(true)
@@ -84,7 +88,20 @@ const fsRows = computed(() => {
 /** 键盘/手柄移动后把选中行滚进视口（RecycleScroller 不自动跟 focusIdx） */
 function scrollFocusIntoView(): void {
   const row = Math.floor(focusIdx.value / Math.max(1, cols.value))
-  scrollerRef.value?.scrollToItem?.(row)
+  const scroller = scrollerRef.value
+  if (!scroller) return
+  const el = (scroller as { $el?: HTMLElement }).$el
+  const viewH = el?.clientHeight ?? 0
+  const top =
+    typeof scroller.getScroll === 'function'
+      ? scroller.getScroll().scrollTop
+      : ((scroller as unknown as { scrollTop?: number }).scrollTop ?? 0)
+  const rowTop = row * FS_ROW_H
+  const rowBottom = rowTop + FS_ROW_H
+  // 行已在视口内只靠 scrollIntoView nearest；滚出视口才 scrollToItem（避免可见行也跳顶）
+  if (!viewH || rowTop < top || rowBottom > top + viewH) {
+    scroller.scrollToItem?.(row)
+  }
 }
 
 onMounted(() => {

@@ -18,7 +18,7 @@ import {
   Trash2,
 } from 'lucide-vue-next'
 import type { TaskRow } from '../../shared/types'
-import { matchesFilter, matchesQuery, rowState, sortRows, SORT_OPTIONS } from '../status'
+import { matchesFilter, matchesQuery, rowName, rowState, sortRows, SORT_OPTIONS } from '../status'
 import { downloads, removeTask, reportRejection, taskAction } from '../stores/downloads'
 import { refreshGames } from '../stores/library'
 import { library } from '../stores/library'
@@ -92,7 +92,7 @@ function dirOf(p: string): string {
 
 function removeWithConfirm(r: TaskRow): void {
   Modal.confirm({
-    title: t('dl_remove_title'),
+    title: `${t('dl_remove_title')}「${rowName(r)}」？`,
     content: t('dl_remove_content'),
     okText: t('dl_remove_task'),
     cancelText: t('common_cancel'),

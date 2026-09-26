@@ -9,7 +9,7 @@
  * 留下半个文件。单实例锁已保证同一时刻只有一个写入者。
  */
 import { app } from 'electron'
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
+import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, copyFileSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve, sep, dirname } from 'node:path'
 import type { Game, GameVariant } from '../shared/types'
 import { dataDir as storeDataDir } from './store'
@@ -180,11 +180,16 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
     const v = d[key]
     switch (key) {
       case 'exePath': {
-        // 主启动路径（路径失效自救）：与 GameAddOne 同标准——存在才收。
+        // 主启动路径（路径失效自救）：必须是已存在的**文件**（目录 existsSync 也过，statSync 挡掉）。
         // dir 跟着 exe 重推导，维持「dir = dirname(exePath)」不变量。
         if (typeof v !== 'string') break
         const p = v.trim()
-        if (!p || p.length > 4000 || /[\x00-\x1f]/.test(p) || !existsSync(p)) break
+        if (!p || p.length > 4000 || /[\x00-\x1f]/.test(p)) break
+        try {
+          if (!existsSync(p) || !statSync(p).isFile()) break
+        } catch {
+          break
+        }
         const abs = resolve(p)
         out.exePath = abs
         out.dir = dirname(abs)

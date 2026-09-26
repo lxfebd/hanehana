@@ -5,8 +5,8 @@
  * 半透明只出现在 component tokens 的定点覆盖（Select optionSelectedBg）。
  * 浮层（Modal/Select 下拉/Popconfirm/Message）保持实色高不透明。
  *
- * 双主题（樱夜深色 / 樱夜浅色）：ui.dark 切换 darkAlgorithm/defaultAlgorithm。
- * 暴露 computed：ConfigProvider :theme 传 computed，切主题自动重渲。
+ * 多套件（preset × dark）：seed 从 themePresets[ui.preset] × ui.dark 派生，
+ * darkAlgorithm/defaultAlgorithm 切换。暴露 computed：ConfigProvider :theme 传 computed，切主题自动重渲。
  *
  * 类型注：ant-design-vue 的 ComponentToken 声明面很窄（多数为空接口），
  * token 键名是运行时泛型，所以这里整体断言，值仍按规格书逐项落地。

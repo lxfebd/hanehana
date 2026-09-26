@@ -74,10 +74,13 @@ const moreMenuOpen = ref(false)
 function closeExportMenu(e: MouseEvent): void {
   const wrap = document.querySelector('.export-wrap')
   const more = document.querySelector('.more-wrap')
-  if (exportMenuOpen.value && wrap && wrap.contains(e.target as Node)) return
-  if (moreMenuOpen.value && more && more.contains(e.target as Node)) return
-  if (exportMenuOpen.value) exportMenuOpen.value = false
-  if (moreMenuOpen.value) moreMenuOpen.value = false
+  const target = e.target as Node
+  // 两菜单可短暂并存：点「更多」时 button 已先 toggle 开，document 监听再跑——
+  // 不能因为 more.contains 就整函数 return，否则导出菜单关不掉（双开）。
+  const inExport = !!wrap && wrap.contains(target)
+  const inMore = !!more && more.contains(target)
+  if (exportMenuOpen.value && !inExport) exportMenuOpen.value = false
+  if (moreMenuOpen.value && !inMore) moreMenuOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeExportMenu))
 onUnmounted(() => document.removeEventListener('click', closeExportMenu))
@@ -523,9 +526,15 @@ onUnmounted(() => {
   width: 208px;
   padding: 12px;
   position: relative;
+  /* .glass 的 backdrop-filter 会建立层叠上下文且 z-index 仍为 auto，
+     内容区里后绘制的封面（position:absolute 行项）会盖住悬出的 .more-menu。
+     抬到 2：压过内容区 z-index:auto 的定位子树，仍低于弹层 30/40。 */
+  z-index: 2;
   display: flex;
   flex-direction: column;
-  overflow-y: auto;
+  /* 不设 overflow-y:auto：overflow-x 会被算成 auto，把 .more-menu 伸出侧栏
+     右侧的浮层裁掉（「更多」入口点不到）。侧栏条目少，竖向本就不需要滚。 */
+  overflow: visible;
 }
 .nav-item {
   display: flex;
