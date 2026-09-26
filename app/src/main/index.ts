@@ -634,6 +634,33 @@ function wireIpc(): void {
     }
   })
 
+  // 统计海报导出（PNG）：渲染层把统计页画成 PNG（base64 data URL），这里弹保存框写盘。
+  // 对齐 ExportGames 的测试缝：HANEHANA_EXPORT_DEST 存在时跳过对话框直接写该路径。
+  ipcMain.handle(Ipc.StatsPosterExport, async (_e, dataUrl: unknown) => {
+    const src = typeof dataUrl === 'string' ? dataUrl : ''
+    const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(src)
+    if (!m) return { ok: false as const, error: '海报数据无效' }
+    const opts: Electron.SaveDialogOptions = {
+      title: '导出统计海报',
+      defaultPath: `hanehana-stats-${new Date().toISOString().slice(0, 10)}.png`,
+      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
+    }
+    let filePath: string | undefined
+    if (process.env['HANEHANA_EXPORT_DEST']) {
+      filePath = process.env['HANEHANA_EXPORT_DEST']
+    } else {
+      const r = win && !win.isDestroyed() ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
+      if (r.canceled || !r.filePath) return { ok: true as const, canceled: true as const }
+      filePath = r.filePath
+    }
+    try {
+      writeFileSync(filePath, Buffer.from(m[1], 'base64'))
+      return { ok: true as const, canceled: false as const, path: filePath }
+    } catch (e) {
+      return err('海报导出失败：' + (e instanceof Error ? e.message : String(e)))
+    }
+  })
+
   // 自定义背景图：原生文件对话框返回路径（渲染层存进 settings.bg_image）。
   // 只放行图片格式；路径交给 normalizeSettings 的 existsSync 兜底。
   ipcMain.handle(Ipc.PickBgImage, async () => {

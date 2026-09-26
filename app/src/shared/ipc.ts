@@ -39,6 +39,8 @@ export const Ipc = {
   TrackCheck: 'hanehana:track:check',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
+  /** 统计海报导出（PNG）：渲染层把统计页渲染成图片，主进程弹保存框写盘 */
+  StatsPosterExport: 'hanehana:stats:poster-export',
   // 存档备份（G1）
   BackupsList: 'hanehana:backups:list',
   BackupCreate: 'hanehana:backups:create',

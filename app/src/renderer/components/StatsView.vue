@@ -4,12 +4,14 @@
  * 图表全部自绘（SVG），不引入图表库依赖。
  */
 import { computed, onMounted, ref } from 'vue'
-import { BarChart3, Clock, Gamepad2, Trophy } from 'lucide-vue-next'
+import { BarChart3, Clock, Gamepad2, ImageDown, Trophy } from 'lucide-vue-next'
 import type { OverviewStats } from '../../shared/types'
 import { tokens } from '../design/tokens'
+import { message } from 'ant-design-vue'
 
 const stats = ref<OverviewStats | null>(null)
 const error = ref('')
+const posterBusy = ref(false)
 
 onMounted(async () => {
   try {
@@ -84,6 +86,196 @@ function topBars(): string {
     ${parts.join('')}
   </svg>`
 }
+
+/** hex → rgba() 字符串（Canvas 合成透明色用，SVG/页面 CSS 变量在离屏画布上不存在）。 */
+function hexA(hex: string, a: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex)
+  if (!m) return hex
+  const n = parseInt(m[1], 16)
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`
+}
+
+/**
+ * 统计海报：直接在 Canvas 2D 上绘制（不用 SVG→<img>→canvas 那条路——
+ * 后者在 Chromium 里对 SVG 文本做隔离栅格化，CJK 字形会碎裂错位）。
+ * 颜色全部内联写死，不依赖页面 CSS 变量。竖版 800×1100：
+ * 标题 + 5 KPI + 近 30 天柱状 + Top5 排行 + 水印。
+ */
+function drawPosterPng(): string {
+  const s = stats.value
+  if (!s) return ''
+  const c = tokens.color
+  const night = c.windowFallback
+  const text = c.textHot ?? c.text
+  const dim = c.textDim
+  const W = 800
+  const H = 1100
+  const PAD = 56
+  const innerW = W - PAD * 2
+  const font = `"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif`
+  const now = new Date()
+  const dateStr = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日`
+
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return ''
+  ctx.textBaseline = 'alphabetic'
+
+  // 深色渐变底 + 装饰圆
+  const bg = ctx.createLinearGradient(0, 0, 0, H)
+  bg.addColorStop(0, night)
+  bg.addColorStop(1, hexA(night, 0.85))
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, W, H)
+  ctx.fillStyle = c.accent
+  ctx.globalAlpha = 0.12
+  ctx.beginPath()
+  ctx.arc(W - 120, 140, 220, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 0.08
+  ctx.beginPath()
+  ctx.arc(W - 60, 200, 120, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.globalAlpha = 1
+
+  // 标题 + 日期
+  ctx.textAlign = 'left'
+  ctx.fillStyle = text
+  ctx.font = `800 38px ${font}`
+  ctx.fillText('游玩统计', PAD, 96)
+  ctx.fillStyle = dim
+  ctx.font = `14px ${font}`
+  ctx.fillText(`${dateStr} · 近 30 天数据`, PAD, 130)
+
+  // KPI 卡片：5 张横排
+  const kpis: [string, string][] = [
+    ['今日', fmtDur(s.todayMs)],
+    ['近 7 天', fmtDur(s.weekMs)],
+    ['近 30 天', fmtDur(s.monthMs)],
+    ['累计', fmtDur(s.totalMs)],
+    ['玩过', `${s.playedGames} 款`],
+  ]
+  const kpiW = (innerW - 4 * 14) / 5
+  kpis.forEach(([label, val], i) => {
+    const x = PAD + i * (kpiW + 14)
+    const cx = x + kpiW / 2
+    ctx.fillStyle = hexA(c.accent, 0.14)
+    ctx.beginPath()
+    ctx.roundRect(x, 210, kpiW, 92, 16)
+    ctx.fill()
+    ctx.strokeStyle = hexA(c.accent, 0.35)
+    ctx.lineWidth = 1
+    ctx.beginPath()
+    ctx.roundRect(x, 210, kpiW, 92, 16)
+    ctx.stroke()
+    const v = val.length > 9 ? val.slice(0, 9) + '…' : val
+    ctx.textAlign = 'center'
+    ctx.fillStyle = text
+    ctx.font = `700 19px ${font}`
+    ctx.fillText(v, cx, 246)
+    ctx.fillStyle = dim
+    ctx.font = `11.5px ${font}`
+    ctx.fillText(label, cx, 272)
+  })
+
+  // 近 30 天柱状（海报版，更宽更高）
+  const days = s.days
+  const barMaxV = Math.max(1, ...days.map((d) => d.ms))
+  const chartH = 240
+  const bw = innerW / Math.max(1, days.length)
+  days.forEach((d, i) => {
+    const h = Math.max(2, (d.ms / barMaxV) * (chartH - 24))
+    const x = PAD + i * bw
+    const y = 560 + chartH - h
+    const today = i === days.length - 1
+    const grad = ctx.createLinearGradient(x, y, x, y + h)
+    grad.addColorStop(0, c.accent)
+    grad.addColorStop(1, hexA(c.accent, 0.55))
+    ctx.fillStyle = today ? c.star : grad
+    ctx.globalAlpha = today ? 1 : 0.85
+    ctx.beginPath()
+    ctx.roundRect(x + 1, y, Math.max(2, bw - 2), h, 2)
+    ctx.fill()
+    ctx.globalAlpha = 1
+  })
+
+  // 区块标题
+  ctx.textAlign = 'left'
+  ctx.fillStyle = text
+  ctx.font = `700 18px ${font}`
+  ctx.fillText('近 30 天每日时长', PAD, 540)
+  ctx.fillStyle = dim
+  ctx.font = `12px ${font}`
+  ctx.textAlign = 'right'
+  ctx.fillText('今日高亮', W - PAD, 540)
+
+  // Top5 排行
+  const top = s.topGames.slice(0, 5)
+  const maxTop = Math.max(1, ...top.map((g) => g.ms))
+  const rankW = innerW - 240
+  ctx.fillStyle = text
+  ctx.textAlign = 'left'
+  ctx.font = `700 18px ${font}`
+  ctx.fillText('游戏时长排行 Top5', PAD, 856)
+  top.forEach((g, i) => {
+    const w = Math.max(6, (g.ms / maxTop) * rankW)
+    const y = 880 + i * 44
+    const label = g.title.length > 16 ? g.title.slice(0, 16) + '…' : g.title
+    ctx.fillStyle = i === 0 ? c.star : hexA(c.accent, 0.5)
+    ctx.beginPath()
+    ctx.arc(PAD + 12, y + 12, 13, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.textAlign = 'center'
+    ctx.fillStyle = i === 0 ? night : text
+    ctx.font = `700 12px ${font}`
+    ctx.fillText(String(i + 1), PAD + 12, y + 16)
+    ctx.textAlign = 'left'
+    ctx.fillStyle = text
+    ctx.font = `13.5px ${font}`
+    ctx.fillText(label, PAD + 34, y + 16)
+    const grad = ctx.createLinearGradient(PAD + 240, y + 4, PAD + 240, y + 20)
+    grad.addColorStop(0, c.accent)
+    grad.addColorStop(1, hexA(c.accent, 0.55))
+    ctx.fillStyle = grad
+    ctx.globalAlpha = 0.85
+    ctx.beginPath()
+    ctx.roundRect(PAD + 240, y + 4, w, 16, 4)
+    ctx.fill()
+    ctx.globalAlpha = 1
+    ctx.fillStyle = dim
+    ctx.font = `12px ${font}`
+    ctx.fillText(fmtShort(g.ms), PAD + 240 + rankW + 12, y + 16)
+  })
+
+  // 水印
+  ctx.fillStyle = dim
+  ctx.font = `11px ${font}`
+  ctx.textAlign = 'right'
+  ctx.fillText('由 HaneHana 生成 · hanehana.app', W - PAD, H - 40)
+
+  return canvas.toDataURL('image/png')
+}
+
+async function exportPoster(): Promise<void> {
+  if (posterBusy.value || !stats.value) return
+  posterBusy.value = true
+  try {
+    const dataUrl = drawPosterPng()
+    if (!dataUrl) throw new Error('海报渲染失败')
+    const r = await window.hh.exportStatsPoster(dataUrl)
+    if (!r.ok) {
+      message.error(r.error || '海报导出失败')
+    } else if (!r.canceled && r.path) {
+      message.success(`海报已保存：${r.path}`)
+    }
+  } catch (e) {
+    message.error(`海报导出失败：${e instanceof Error ? e.message : String(e)}`)
+  } finally {
+    posterBusy.value = false
+  }
+}
 </script>
 
 <template>
@@ -94,6 +286,12 @@ function topBars(): string {
       <div class="empty-text">正在统计游玩时长…</div>
     </div>
     <template v-else-if="stats">
+      <div class="stats-head">
+        <div class="stats-title">游玩统计</div>
+        <button class="poster-btn" :disabled="posterBusy" @click="exportPoster">
+          <ImageDown :size="14" /> {{ posterBusy ? '生成中…' : '导出海报' }}
+        </button>
+      </div>
       <div class="kpi-row">
         <div class="kpi glass">
           <Clock :size="16" class="kpi-ic" />
@@ -154,6 +352,32 @@ function topBars(): string {
   gap: 12px;
   padding-bottom: 16px;
 }
+.stats-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.stats-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--hh-color-text-strong);
+}
+.poster-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--hh-color-text-strong);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.poster-btn:hover { background: var(--hh-color-surface-mid); }
+.poster-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));

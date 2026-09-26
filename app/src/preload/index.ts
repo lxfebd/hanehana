@@ -27,6 +27,9 @@ const bridge = {
   // G14 游戏库导出（弹保存对话框写 CSV/JSON，返回落盘路径）
   exportGames: (fmt: 'csv' | 'json') =>
     ipcRenderer.invoke(Ipc.ExportGames, fmt) as Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }>,
+  /** 统计海报导出（PNG data URL → 主进程弹保存框写盘） */
+  exportStatsPoster: (dataUrl: string): Promise<{ ok: boolean; canceled?: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(Ipc.StatsPosterExport, dataUrl),
 
   // 新作追踪（G16）
   trackList: (): Promise<TrackEntry[]> => ipcRenderer.invoke(Ipc.TrackList),
