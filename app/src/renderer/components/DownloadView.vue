@@ -18,11 +18,12 @@ import {
   Trash2,
 } from 'lucide-vue-next'
 import type { TaskRow } from '../../shared/types'
-import { matchesFilter, matchesQuery, rowName, rowState, sortRows, SORT_OPTIONS } from '../status'
+import { matchesFilter, matchesQuery, rowState, sortRows, SORT_OPTIONS } from '../status'
 import { downloads, removeTask, reportRejection, taskAction } from '../stores/downloads'
 import { refreshGames } from '../stores/library'
 import { library } from '../stores/library'
 import { fmtSpeed } from '../../shared/format'
+import { t, type I18nKey } from '../i18n'
 import TaskRowView from './TaskRow.vue'
 
 const counts = computed(() => {
@@ -44,12 +45,12 @@ const visibleRows = computed(() =>
   ),
 )
 
-const FILTERS: { key: string; label: string }[] = [
-  { key: 'all', label: '全部' },
-  { key: 'downloading', label: '下载中' },
-  { key: 'paused', label: '已暂停' },
-  { key: 'done', label: '已完成' },
-  { key: 'error', label: '失败' },
+const FILTERS: { key: string; labelKey: I18nKey }[] = [
+  { key: 'all', labelKey: 'toolbar_all' },
+  { key: 'downloading', labelKey: 'dl_filter_downloading' },
+  { key: 'paused', labelKey: 'dl_filter_paused' },
+  { key: 'done', labelKey: 'dl_filter_done' },
+  { key: 'error', labelKey: 'dl_filter_failed' },
 ]
 
 async function onAction(r: TaskRow, action: string): Promise<void> {
@@ -91,10 +92,10 @@ function dirOf(p: string): string {
 
 function removeWithConfirm(r: TaskRow): void {
   Modal.confirm({
-    title: `移除「${rowName(r)}」？`,
-    content: '任务将从列表移除。磁盘上的文件与断点默认保留（不勾选删除文件时）。',
-    okText: '移除任务',
-    cancelText: '取消',
+    title: t('dl_remove_title'),
+    content: t('dl_remove_content'),
+    okText: t('dl_remove_task'),
+    cancelText: t('common_cancel'),
     onOk: () => removeTask(r.id, false),
   })
 }
@@ -123,7 +124,7 @@ function onAll(action: string): void {
             :class="{ active: downloads.taskFilter === f.key }"
             @click="downloads.taskFilter = f.key"
           >
-            {{ f.label }}<span class="cnt">{{ counts[f.key as keyof typeof counts] }}</span>
+            {{ t(f.labelKey) }}<span class="cnt">{{ counts[f.key as keyof typeof counts] }}</span>
           </button>
         </div>
 
@@ -132,7 +133,7 @@ function onAll(action: string): void {
           <input
             v-model="downloads.taskQuery"
             class="search-input"
-            placeholder="搜索文件名 / 链接…"
+            :placeholder="t('dl_search_placeholder')"
           />
         </div>
 
@@ -147,20 +148,20 @@ function onAll(action: string): void {
           {{ fmtSpeed(downloads.totalSpeed) }}
         </span>
         <div class="dl-btns">
-          <button class="dl-btn primary" title="新建下载" @click="downloads.addDialogOpen = true">
+          <button class="dl-btn primary" :title="t('dl_new')" @click="downloads.addDialogOpen = true">
             <Plus :size="16" />
           </button>
-          <button class="dl-btn" title="全部开始" @click="onAll('start')">
+          <button class="dl-btn" :title="t('dl_start_all')" @click="onAll('start')">
             <PlayCircle :size="16" />
           </button>
-          <button class="dl-btn" title="全部暂停" @click="onAll('pause')">
+          <button class="dl-btn" :title="t('dl_pause_all')" @click="onAll('pause')">
             <PauseCircle :size="16" />
           </button>
-          <button class="dl-btn" title="重试全部失败" @click="onAll('retry-failed')">
+          <button class="dl-btn" :title="t('dl_retry_failed')" @click="onAll('retry-failed')">
             <RotateCw :size="16" />
           </button>
-          <Popconfirm title="清空所有已完成任务？" ok-text="清空" cancel-text="取消" @confirm="onAll('clear-finished')">
-            <button class="dl-btn" title="清空已完成">
+          <Popconfirm :title="t('dl_clear_confirm')" :ok-text="t('dl_clear_ok')" :cancel-text="t('common_cancel')" @confirm="onAll('clear-finished')">
+            <button class="dl-btn" :title="t('dl_clear_finished')">
               <Trash2 :size="16" />
             </button>
           </Popconfirm>
@@ -190,10 +191,10 @@ function onAll(action: string): void {
         </RecycleScroller>
         <div v-if="visibleRows.length === 0" class="dl-empty">
           <div class="dl-empty-title">
-            {{ downloads.rows.length === 0 ? '还没有下载任务' : '没有符合条件的任务' }}
+            {{ downloads.rows.length === 0 ? t('dl_empty') : t('dl_no_match') }}
           </div>
           <div v-if="downloads.rows.length === 0" class="dl-empty-hint">
-            点右上角「＋」新建，或从游戏站捕获直链
+            {{ t('dl_empty_hint') }}
           </div>
         </div>
       </div>

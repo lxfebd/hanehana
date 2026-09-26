@@ -12,6 +12,7 @@ import type { Settings, TrackEntry, UpdateStatus } from '../../shared/types'
 import { proxyFormatError } from '../../shared/proxy'
 import { fmtSpeed } from '../../shared/format'
 import { THEME_PRESET_IDS } from '../design/tokens'
+import { t } from '../i18n'
 
 import { themePresets } from '../design/tokens'
 
@@ -239,30 +240,30 @@ function save(): void {
 <template>
   <div class="dlg">
     <Tabs defaultActiveKey="download" tab-position="left">
-      <TabPane key="download" tab="下载">
+      <TabPane key="download" :tab="t('set_tab_download')">
         <div v-if="engine && !engine.ok" class="card card-warn">
-          <div class="lbl">下载引擎不可用</div>
+          <div class="lbl">{{ t('set_engine_unavailable') }}</div>
           <div class="hint">{{ engine.hint }}</div>
         </div>
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
-            <Form.Item label="默认分片数">
+            <Form.Item :label="t('set_threads')">
               <InputNumber v-model:value="form.threads" :min="1" :max="32" style="width: 110px" />
             </Form.Item>
-            <Form.Item label="同时下载任务数">
+            <Form.Item :label="t('set_max_concurrent')">
               <InputNumber v-model:value="form.max_concurrent" :min="1" :max="20" style="width: 110px" />
             </Form.Item>
-            <Form.Item label="默认保存目录">
+            <Form.Item :label="t('set_download_dir')">
               <div class="row">
                 <Input v-model:value="form.download_dir" class="mono" />
                 <Button @click="browseDir">
                   <template #icon><FolderOpen :size="14" /></template>
-                  浏览
+                  {{ t('common_browse') }}
                 </Button>
               </div>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <Checkbox v-model:checked="form.confirm_delete">删除任务时确认</Checkbox>
+              <Checkbox v-model:checked="form.confirm_delete">{{ t('set_confirm_delete') }}</Checkbox>
             </Form.Item>
             <Form.Item label=" " :colon="false">
               <Checkbox v-model:checked="form.close_to_tray">
@@ -277,7 +278,7 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="notify" tab="通知">
+      <TabPane key="notify" :tab="t('set_tab_notify')">
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label=" " :colon="false">
@@ -294,13 +295,13 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="net" tab="网络">
+      <TabPane key="net" :tab="t('set_tab_net')">
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
-            <Form.Item label="代理">
+            <Form.Item :label="t('set_proxy')">
               <Input
                 v-model:value="form.proxy"
-                placeholder="留空＝跟随系统代理"
+                :placeholder="t('set_proxy_system')"
                 :status="proxyError ? 'error' : undefined"
                 class="mono"
                 allow-clear
@@ -337,9 +338,9 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="ui" tab="外观">
+      <TabPane key="ui" :tab="t('set_tab_ui')">
         <div class="card">
-          <div class="lbl" style="margin-bottom: 8px">界面语言 / Language</div>
+          <div class="lbl" style="margin-bottom: 8px">{{ t('set_language') }}</div>
           <Radio.Group v-model:value="form.language">
             <Radio.Button value="zh">中文</Radio.Button>
             <Radio.Button value="en">English</Radio.Button>
@@ -350,11 +351,11 @@ function save(): void {
         </div>
 
         <div class="card">
-          <div class="lbl" style="margin-bottom: 8px">主题模式</div>
+          <div class="lbl" style="margin-bottom: 8px">{{ t('set_theme_mode') }}</div>
           <Radio.Group v-model:value="form.theme_mode">
-            <Radio.Button value="system">跟随系统</Radio.Button>
-            <Radio.Button value="dark">深色</Radio.Button>
-            <Radio.Button value="light">浅色</Radio.Button>
+            <Radio.Button value="system">{{ t('set_theme_system') }}</Radio.Button>
+            <Radio.Button value="dark">{{ t('set_theme_dark') }}</Radio.Button>
+            <Radio.Button value="light">{{ t('set_theme_light') }}</Radio.Button>
           </Radio.Group>
           <div class="hint" style="margin-top: 8px">
             跟随系统 = 随 Windows 深浅色自动切换；固定深/浅 = 不随系统变化。
@@ -363,7 +364,7 @@ function save(): void {
         </div>
 
         <div class="card">
-          <div class="lbl" style="margin-bottom: 8px">主题配色</div>
+          <div class="lbl" style="margin-bottom: 8px">{{ t('set_theme_preset') }}</div>
           <div class="preset-row">
             <button
               v-for="id in THEME_PRESET_IDS"
@@ -382,24 +383,24 @@ function save(): void {
         <div class="card">
           <div class="row-between">
             <div>
-              <div class="lbl">自定义背景</div>
+              <div class="lbl">{{ t('set_bg_image') }}</div>
               <div class="hint">选择一张图片铺满窗口背景（无选中游戏封面时也生效）。留空 = 默认动态封面底。</div>
             </div>
             <div class="row">
               <Button @click="pickBg">
                 <template #icon><ImageIcon :size="14" /></template>
-                {{ form.bg_image ? '更换' : '选择图片' }}
+                {{ form.bg_image ? t('set_bg_replace') : t('set_bg_pick') }}
               </Button>
               <Button v-if="form.bg_image" danger @click="form.bg_image = ''">
                 <template #icon><Trash2 :size="14" /></template>
-                清除
+                {{ t('common_clear') }}
               </Button>
             </div>
           </div>
           <div v-if="form.bg_image" class="bg-path mono">{{ form.bg_image }}</div>
         </div>
       </TabPane>
-      <TabPane key="backup" tab="备份">
+      <TabPane key="backup" :tab="t('set_tab_backup')">
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label=" " :colon="false">
@@ -416,7 +417,7 @@ function save(): void {
                 <Input v-model:value="form.backup_dir" placeholder="留空＝数据目录 backups\ 下" class="mono" />
                 <Button @click="browseBackupDir">
                   <template #icon><FolderOpen :size="14" /></template>
-                  浏览
+                  {{ t('common_browse') }}
                 </Button>
               </div>
             </Form.Item>
@@ -444,7 +445,7 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-            <TabPane key="tools" tab="工具">
+            <TabPane key="tools" :tab="t('set_tab_tools')">
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label="LE 执行器">
@@ -452,7 +453,7 @@ function save(): void {
                 <Input v-model:value="form.le_path" placeholder="留空＝自动探测常见安装位置" class="mono" />
                 <Button @click="pickExe('le')">
                   <template #icon><FolderOpen :size="14" /></template>
-                  浏览
+                  {{ t('common_browse') }}
                 </Button>
               </div>
             </Form.Item>
@@ -467,7 +468,7 @@ function save(): void {
                 <Input v-model:value="form.magpie_path" placeholder="留空＝自动探测常见安装位置" class="mono" />
                 <Button @click="pickExe('magpie')">
                   <template #icon><FolderOpen :size="14" /></template>
-                  浏览
+                  {{ t('common_browse') }}
                 </Button>
               </div>
             </Form.Item>
@@ -479,7 +480,7 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="track" tab="新作">
+      <TabPane key="track" :tab="t('set_tab_track')">
         <div class="card">
           <div class="track-add">
             <Input v-model:value="trackKeyword" placeholder="开发商 / 系列名（如 柚子社、Yuzusoft）" @press-enter="addTrack" />
@@ -488,24 +489,24 @@ function save(): void {
           </div>
           <div v-if="trackMsg" class="track-msg">{{ trackMsg }}</div>
           <div class="track-list">
-            <div v-for="t in trackList" :key="t.id" class="track-item">
-              <span class="track-kw" :title="t.keyword">{{ t.keyword }}</span>
-              <span class="track-meta">上次检查 {{ new Date(t.lastCheck).toLocaleDateString('zh-CN') }}</span>
-              <Button type="text" danger size="small" @click="removeTrack(t.id)"><template #icon><Trash2 :size="13" /></template></Button>
+            <div v-for="track in trackList" :key="track.id" class="track-item">
+              <span class="track-kw" :title="track.keyword">{{ track.keyword }}</span>
+              <span class="track-meta">上次检查 {{ new Date(track.lastCheck).toLocaleDateString('zh-CN') }}</span>
+              <Button type="text" danger size="small" @click="removeTrack(track.id)"><template #icon><Trash2 :size="13" /></template></Button>
             </div>
             <div v-if="!trackList.length" class="track-empty">还没有订阅。加一个开发商或系列名，VNDB 有新品时会收到系统通知。</div>
           </div>
           <div class="hint track-hint">检查基于 VNDB 发行日期（released ≥ 上次检查时间）；每款游戏只通知一次。数据存本地 tracking.json。</div>
         </div>
       </TabPane>
-      <TabPane key="about" tab="关于">
+      <TabPane key="about" :tab="t('set_tab_about')">
         <div class="card">
           <div class="about-row">
-            <span class="about-key">版本</span>
+            <span class="about-key">{{ t('set_about_version') }}</span>
             <span class="about-val">{{ appVersion }}</span>
           </div>
           <div class="about-row">
-            <span class="about-key">数据目录</span>
+            <span class="about-key">{{ t('set_about_data_dir') }}</span>
             <span class="about-val mono">{{ dataDirText }}</span>
           </div>
           <div class="about-row" v-if="realDataDir">
@@ -513,22 +514,22 @@ function save(): void {
             <span class="about-val mono" :title="realDataDir">{{ realDataDir }}</span>
           </div>
           <div class="about-row">
-            <span class="about-key">引擎</span>
+            <span class="about-key">{{ t('set_about_engine') }}</span>
             <span class="about-val">
               Rust 多线程下载引擎（FastDrop）·
-              {{ engine === null ? '检测中…' : engine.ok ? '已就位' : '不可用' }}
+              {{ engine === null ? t('set_engine_checking') : engine.ok ? t('set_engine_ready') : t('set_engine_missing') }}
             </span>
           </div>
           <div v-if="engine" class="about-row">
-            <span class="about-key">引擎路径</span>
+            <span class="about-key">{{ t('set_about_engine_path') }}</span>
             <span class="about-val mono" :title="engine.path">{{ engine.path }}</span>
           </div>
           <div v-if="engine && !engine.ok" class="hint hint-err about-warn">{{ engine.hint }}</div>
           <div class="about-hint">问题反馈与更新公告见项目仓库 README。</div>
           <div class="about-row updater">
-            <span class="about-key">自动更新</span>
+            <span class="about-key">{{ t('set_auto_update') }}</span>
             <span class="about-val updater-val">
-              <template v-if="updater.phase === 'checking'">检查中…</template>
+              <template v-if="updater.phase === 'checking'">{{ t('set_update_checking') }}</template>
               <template v-else-if="updater.phase === 'available'">
                 发现新版本 {{ updater.version }}，正在下载…
               </template>
@@ -539,17 +540,17 @@ function save(): void {
               <template v-else-if="updater.phase === 'downloaded'">
                 新版本 {{ updater.version }} 已就绪
               </template>
-              <template v-else-if="updater.phase === 'installing'">正在安装…</template>
+              <template v-else-if="updater.phase === 'installing'">{{ t('set_update_installing') }}</template>
               <template v-else-if="updater.error">{{ updater.error }}</template>
-              <template v-else>未检查</template>
+              <template v-else>{{ t('set_update_idle') }}</template>
             </span>
           </div>
           <div class="updater-actions">
             <Button v-if="updater.phase === 'downloaded'" type="primary" size="small" @click="installUpdateClick">
-              立即重启安装
+              {{ t('set_install_restart') }}
             </Button>
             <Button v-else size="small" :loading="updaterBusy" @click="checkUpdateClick">
-              {{ updater.phase === 'idle' && !updater.error ? '检查更新' : '重新检查' }}
+              {{ updater.phase === 'idle' && !updater.error ? t('set_check_update') : t('set_recheck_update') }}
             </Button>
           </div>
         </div>
@@ -557,7 +558,7 @@ function save(): void {
     </Tabs>
 
     <div class="dlg-foot">
-      <Button type="primary" :disabled="!!proxyError" @click="save">保存</Button>
+      <Button type="primary" :disabled="!!proxyError" @click="save">{{ t('common_save') }}</Button>
       <span v-if="proxyError" class="save-hint">代理格式不正确，无法保存</span>
     </div>
   </div>
