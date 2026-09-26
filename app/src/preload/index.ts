@@ -11,7 +11,13 @@ const bridge = {
   // 游戏库
   listGames: (): Promise<Game[]> => ipcRenderer.invoke(Ipc.GameList),
   statsOverview: () => ipcRenderer.invoke(Ipc.StatsOverview),
-  scanDir: (root: string) => ipcRenderer.invoke(Ipc.GameScan, root),
+  /** 扫描：成功返回 {hits, added, skipped}；失败返回 {ok:false,error}（与兄弟 err() 同形） */
+  scanDir: (
+    root: string,
+  ): Promise<
+    | { hits: { dir: string; exePath: string; rawTitle: string }[]; added: Game[]; skipped: number }
+    | { ok: false; error: string }
+  > => ipcRenderer.invoke(Ipc.GameScan, root),
   updateGame: (id: string, patch: Partial<Game>) => ipcRenderer.invoke(Ipc.GameUpdate, id, patch),
   removeGame: (id: string) => ipcRenderer.invoke(Ipc.GameRemove, id),
   batchUpdateGames: (entries: { id: string; patch: Partial<Game> }[]) => ipcRenderer.invoke(Ipc.GameBatchUpdate, entries),
@@ -61,7 +67,7 @@ const bridge = {
   backupsList: (): Promise<BackupStats[]> => ipcRenderer.invoke(Ipc.BackupsList),
   backupCreate: (gameId: string): Promise<SnapshotInfo | null> => ipcRenderer.invoke(Ipc.BackupCreate, gameId),
   backupRestore: (gameId: string, snapshotDir: string) => ipcRenderer.invoke(Ipc.BackupRestore, gameId, snapshotDir),
-  backupDelete: (gameId: string, snapshotDir: string): Promise<boolean> =>
+  backupDelete: (gameId: string, snapshotDir: string): Promise<ActionResult> =>
     ipcRenderer.invoke(Ipc.BackupDelete, gameId, snapshotDir),
   backupSync: (gameId: string, snapshotDir: string): Promise<CloudSyncResult | ActionResult> =>
     ipcRenderer.invoke(Ipc.BackupSync, gameId, snapshotDir),

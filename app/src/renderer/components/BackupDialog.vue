@@ -8,7 +8,7 @@
  */
 import { computed, ref, watch } from 'vue'
 import { CloudUpload, DatabaseBackup, HardDriveDownload, RefreshCw, Trash2 } from 'lucide-vue-next'
-import { Modal } from 'ant-design-vue'
+import { Modal, message } from 'ant-design-vue'
 import { library } from '../stores/library'
 import type { BackupStats, SnapshotInfo } from '../../shared/types'
 
@@ -78,44 +78,64 @@ async function createBackup(): Promise<void> {
   }
 }
 
-async function restoreSnapshot(snap: SnapshotInfo): Promise<void> {
+function restoreSnapshot(snap: SnapshotInfo): void {
   const g = game.value
   if (!g || busy.value || !snap.dirPath) return
-  if (!window.confirm('恢复会覆盖游戏目录中同名存档（当前存档先挪到 .pre-restore 备份）。继续？')) return
-  busy.value = true
-  busyAction.value = 'restore-' + snap.dirPath
-  error.value = ''
-  try {
-    const r = await window.hh.backupRestore(g.id, snap.dirPath)
-    if (!r.ok) {
-      error.value = r.error
-    } else {
-      window.alert(`已恢复 ${r.restored} 个存档文件`)
-    }
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    busy.value = false
-    busyAction.value = ''
-  }
+  Modal.confirm({
+    title: '恢复存档',
+    content: '恢复会覆盖游戏目录中同名存档（当前存档先挪到 .pre-restore 备份）。继续？',
+    okText: '恢复',
+    cancelText: '取消',
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      busy.value = true
+      busyAction.value = 'restore-' + snap.dirPath
+      error.value = ''
+      try {
+        const r = await window.hh.backupRestore(g.id, snap.dirPath!)
+        if (!r.ok) {
+          error.value = r.error
+        } else {
+          message.success(`已恢复 ${r.restored} 个存档文件`)
+        }
+      } catch (e) {
+        error.value = e instanceof Error ? e.message : String(e)
+      } finally {
+        busy.value = false
+        busyAction.value = ''
+      }
+    },
+  })
 }
 
-async function deleteSnapshot(snap: SnapshotInfo): Promise<void> {
+function deleteSnapshot(snap: SnapshotInfo): void {
   const g = game.value
   if (!g || busy.value || !snap.dirPath) return
-  if (!window.confirm('删除这份快照？该操作不可恢复。')) return
-  busy.value = true
-  busyAction.value = 'delete-' + snap.dirPath
-  error.value = ''
-  try {
-    await window.hh.backupDelete(g.id, snap.dirPath)
-    await reload()
-  } catch (e) {
-    error.value = e instanceof Error ? e.message : String(e)
-  } finally {
-    busy.value = false
-    busyAction.value = ''
-  }
+  Modal.confirm({
+    title: '删除快照',
+    content: '删除这份快照？该操作不可恢复。',
+    okText: '删除',
+    cancelText: '取消',
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      busy.value = true
+      busyAction.value = 'delete-' + snap.dirPath
+      error.value = ''
+      try {
+        const r = await window.hh.backupDelete(g.id, snap.dirPath!)
+        if (r && r.ok === false) {
+          error.value = r.error || '删除失败'
+        } else {
+          await reload()
+        }
+      } catch (e) {
+        error.value = e instanceof Error ? e.message : String(e)
+      } finally {
+        busy.value = false
+        busyAction.value = ''
+      }
+    },
+  })
 }
 
 async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
@@ -130,7 +150,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
       if (r.errors.length) {
         error.value = `同步完成但有 ${r.errors.length} 项失败：${r.errors[0]}`
       } else {
-        window.alert(`同步完成：上传 ${r.uploaded}，下载 ${r.downloaded}`)
+        message.success(`同步完成：上传 ${r.uploaded}，下载 ${r.downloaded}`)
       }
     } else if (!r.ok) {
       error.value = r.error

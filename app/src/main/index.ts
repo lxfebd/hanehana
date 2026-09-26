@@ -452,11 +452,15 @@ function wireIpc(): void {
     win.setFullScreen(!win.isFullScreen())
     return win.isFullScreen()
   })
-  ipcMain.handle(Ipc.GameScan, (_e, root: unknown) => {
+  ipcMain.handle(Ipc.GameScan, async (_e, root: unknown) => {
     if (typeof root !== 'string' || !root.trim() || root.length > 4000) {
-      throw new Error('请先选择要扫描的目录')
+      return err('请先选择要扫描的目录')
     }
-    return handleScan(root.trim())
+    try {
+      return await handleScan(root.trim())
+    } catch (e) {
+      return err(e instanceof Error ? e.message : String(e))
+    }
   })
   // 手动添加单款游戏（T25）：渲染层选一个 exe，主进程校验存在后直接入库。
   // exePath 会写入 games.json 并被「启动」按钮执行——入参必须过存在性校验，不能信渲染层。
@@ -523,9 +527,9 @@ function wireIpc(): void {
     return restoreSnapshot(g, snapshotDir)
   })
   ipcMain.handle(Ipc.BackupDelete, (_e, id: unknown, snapshotDir: unknown) => {
-    if (!isId(id)) return false
-    if (!validSnapshotDir(id, snapshotDir)) return false
-    return deleteSnapshot(id, snapshotDir)
+    if (!isId(id)) return err('游戏不存在')
+    if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
+    return deleteSnapshot(id, snapshotDir) ? ({ ok: true as const }) : err('删除快照失败')
   })
   ipcMain.handle(Ipc.BackupSync, async (_e, id: unknown, snapshotDir: unknown) => {
     if (!isId(id)) return err('游戏不存在')

@@ -27,6 +27,16 @@ async function runScan(): Promise<void> {
   picked.value = []
   try {
     const r = await window.hh.scanDir(dir.value)
+    if (r && 'ok' in r && r.ok === false) {
+      scanError.value = true
+      result.value = `扫描失败：${r.error}`
+      return
+    }
+    if (!r || !('hits' in r)) {
+      scanError.value = true
+      result.value = '扫描失败：返回结果异常'
+      return
+    }
     picked.value = r.hits
     result.value = `扫描完成：发现 ${r.hits.length} 个游戏目录，新入库 ${r.added.length} 个（跳过 ${r.skipped} 个已有）`
     await refreshGames()

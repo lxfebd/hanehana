@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal, message } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2, Plus } from 'lucide-vue-next'
+import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, MoreHorizontal, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2, Plus } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, startRunningSync, stopRunningSync, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -59,19 +59,24 @@ const appBgImage = computed(() => {
 /** 当前页：library | downloads | games */
 const page = computed({
   get: () => ui.page,
-  set: (v: 'library' | 'downloads' | 'games') => (ui.page = v),
+  set: (v: 'library' | 'downloads' | 'games' | 'stats') => (ui.page = v),
 })
 const addSubmitKey = ref(0)
 
 /** G14 导出菜单开关（工具栏箭头按钮下的小菜单：CSV / JSON） */
 const exportMenuOpen = ref(false)
 
-/** 点菜单外的任意处收起导出菜单（含切页/点工具栏其他按钮）。 */
+/** 侧栏「更多」开关（P1-4：主项收敛为 库/下载/扫描/设置，其余收纳不删） */
+const moreMenuOpen = ref(false)
+
+/** 点菜单外的任意处收起导出/更多菜单（含切页/点工具栏其他按钮）。 */
 function closeExportMenu(e: MouseEvent): void {
-  if (!exportMenuOpen.value) return
   const wrap = document.querySelector('.export-wrap')
-  if (wrap && wrap.contains(e.target as Node)) return
-  exportMenuOpen.value = false
+  const more = document.querySelector('.more-wrap')
+  if (exportMenuOpen.value && wrap && wrap.contains(e.target as Node)) return
+  if (moreMenuOpen.value && more && more.contains(e.target as Node)) return
+  if (exportMenuOpen.value) exportMenuOpen.value = false
+  if (moreMenuOpen.value) moreMenuOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeExportMenu))
 onUnmounted(() => document.removeEventListener('click', closeExportMenu))
@@ -243,46 +248,59 @@ onUnmounted(() => {
               <span>{{ t('nav_downloads') }}</span>
               <span class="count">{{ runningCount }}</span>
             </button>
-            <button
-              class="nav-item"
-              :class="{ active: page === 'games' }"
-              :aria-current="page === 'games' ? 'page' : undefined"
-              @click="page = 'games'"
-            >
-              <Compass :size="16" class="nav-ic" />
-              <span>{{ t('nav_games') }}</span>
-            </button>
-            <button
-              class="nav-item"
-              :class="{ active: page === 'stats' }"
-              :aria-current="page === 'stats' ? 'page' : undefined"
-              @click="page = 'stats'"
-            >
-              <BarChart3 :size="16" class="nav-ic" />
-              <span>{{ t('nav_stats') }}</span>
-            </button>
 
             <div class="nav-spacer"></div>
-            <button class="nav-item" @click="enterFullscreen()">
-              <Maximize2 :size="16" class="nav-ic" />
-              <span>{{ t('nav_fullscreen') }}</span>
-            </button>
             <button class="nav-item" @click="library.scanOpen = true">
               <ScanSearch :size="16" class="nav-ic" />
               <span>{{ t('lib_scan') }}</span>
-            </button>
-            <button class="nav-item" @click="ui.addGameOpen = true">
-              <Plus :size="16" class="nav-ic" />
-              <span>{{ t('lib_add_one') }}</span>
-            </button>
-            <button class="nav-item" @click="ui.steamImportOpen = true">
-              <Gamepad2 :size="16" class="nav-ic" />
-              <span>{{ t('nav_steam_import') }}</span>
             </button>
             <button class="nav-item" @click="openSettings()">
               <Settings :size="16" class="nav-ic" />
               <span>{{ t('nav_settings') }}</span>
             </button>
+
+            <!-- P1-4 更多：游戏站/统计/全屏/添加/Steam 收纳，只收不删 -->
+            <div class="more-wrap">
+              <button
+                class="nav-item more-toggle"
+                :class="{ active: moreMenuOpen || page === 'stats' }"
+                :aria-expanded="moreMenuOpen"
+                @click="moreMenuOpen = !moreMenuOpen"
+              >
+                <MoreHorizontal :size="16" class="nav-ic" />
+                <span>{{ t('nav_more') }}</span>
+              </button>
+              <div v-if="moreMenuOpen" class="more-menu glass">
+                <button
+                  class="nav-item"
+                  :class="{ active: page === 'games' }"
+                  @click="page = 'games'; moreMenuOpen = false"
+                >
+                  <Compass :size="16" class="nav-ic" />
+                  <span>{{ t('nav_games') }}</span>
+                </button>
+                <button
+                  class="nav-item"
+                  :class="{ active: page === 'stats' }"
+                  @click="page = 'stats'; moreMenuOpen = false"
+                >
+                  <BarChart3 :size="16" class="nav-ic" />
+                  <span>{{ t('nav_stats') }}</span>
+                </button>
+                <button class="nav-item" @click="enterFullscreen(); moreMenuOpen = false">
+                  <Maximize2 :size="16" class="nav-ic" />
+                  <span>{{ t('nav_fullscreen') }}</span>
+                </button>
+                <button class="nav-item" @click="ui.addGameOpen = true; moreMenuOpen = false">
+                  <Plus :size="16" class="nav-ic" />
+                  <span>{{ t('lib_add_one') }}</span>
+                </button>
+                <button class="nav-item" @click="ui.steamImportOpen = true; moreMenuOpen = false">
+                  <Gamepad2 :size="16" class="nav-ic" />
+                  <span>{{ t('nav_steam_import') }}</span>
+                </button>
+              </div>
+            </div>
           </nav>
 
           <!-- 中栏 -->
@@ -557,6 +575,22 @@ onUnmounted(() => {
   opacity: 0.75;
 }
 .nav-spacer { flex: 1; }
+
+/* P1-4 「更多」收纳菜单：侧栏底部浮层，条目与 nav-item 同观感 */
+.more-wrap { position: relative; }
+.more-menu {
+  position: absolute;
+  left: calc(100% + 8px);
+  bottom: 0;
+  min-width: 160px;
+  padding: 6px;
+  border-radius: 10px;
+  border: 1px solid var(--hh-color-panel-glass-border);
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+}
+.more-menu .nav-item { margin-bottom: 0; }
 
 /* 极窄窗口：侧栏收成图标条（≤620px 时三列预算 208+12+12 也让内容区所剩无几）。
    放在 .sidebar/.nav-item 定义之后，才能覆盖前面的 width:208px。 */
