@@ -308,8 +308,10 @@ export function openEdit(id: string): void {
 
 export async function saveManualEdit(id: string, patch: Partial<Game>): Promise<boolean> {
   const fresh = await window.hh.updateGame(id, { ...patch, manualEdit: true })
-  if (!fresh) {
-    library.error = '保存失败'
+  // 主进程错误形状 {ok:false,error} 是真值，不能当 Game 直接入库（会把错误对象写进列表）
+  if (!fresh || (fresh as { ok?: boolean }).ok === false) {
+    const msg = (fresh as { error?: string } | null)?.error
+    library.error = msg || '保存失败'
     return false
   }
   const idx = library.games.findIndex((it) => it.id === id)

@@ -13,6 +13,8 @@ import type { Game, GameVariant } from '../../shared/types'
 const open = defineModel<boolean>('open')
 
 const title = ref('')
+/** 主启动路径：路径失效时在编辑框里自救（主进程过 existsSync 才落盘） */
+const exePath = ref('')
 const titleNative = ref('')
 const description = ref('')
 const releaseDate = ref('')
@@ -36,6 +38,7 @@ watch(open, (v) => {
   target.value = library.games.find((g) => g.id === library.editTargetId) ?? null
   if (!target.value) return
   title.value = target.value.title
+  exePath.value = target.value.exePath
   titleNative.value = target.value.titleNative ?? ''
   description.value = target.value.description ?? ''
   releaseDate.value = target.value.releaseDate ?? ''
@@ -70,6 +73,12 @@ async function pickVariantExe(v: GameVariant): Promise<void> {
   if (p) v.exePath = p
 }
 
+/** 原生对话框选主启动 exe（路径失效时的自救入口） */
+async function pickMainExe(): Promise<void> {
+  const p = await window.hh.pickExe()
+  if (p) exePath.value = p
+}
+
 async function save(): Promise<void> {
   const g = target.value
   if (!g) return
@@ -100,6 +109,8 @@ async function save(): Promise<void> {
     .filter((v) => v.label && v.exePath)
   const patch: Partial<Game> = {
     title: title.value.trim(),
+    // 清空输入框 = 维持原路径；新值由主进程 existsSync 校验，不合法会报错并保持弹窗打开
+    exePath: exePath.value.trim() || g.exePath,
     titleNative: titleNative.value.trim(),
     description: description.value.trim(),
     releaseDate: rd,
@@ -132,6 +143,14 @@ async function save(): Promise<void> {
         <span class="label">标题</span>
         <Input v-model:value="title" placeholder="主标题" />
       </label>
+      <div class="field">
+        <span class="label">启动路径</span>
+        <div class="exe-row">
+          <Input v-model:value="exePath" placeholder="启动 exe 绝对路径" class="exe-main" />
+          <button type="button" class="mini-btn" @click="pickMainExe">浏览</button>
+        </div>
+        <span class="hint">文件被移动/改名后启动会报「文件不存在」——在这里重新指向存在的 exe 即可修复</span>
+      </div>
       <label class="field">
         <span class="label">原文名</span>
         <Input v-model:value="titleNative" placeholder="日文原名（可选）" />
@@ -264,6 +283,9 @@ async function save(): Promise<void> {
 }
 .variant-label { width: 150px; flex-shrink: 0; }
 .variant-exe { flex: 1; min-width: 0; }
+/* 主启动路径行：输入 + 浏览并排 */
+.exe-row { display: flex; gap: 6px; align-items: center; }
+.exe-main { flex: 1; min-width: 0; }
 .mini-btn {
   height: 30px;
   padding: 0 10px;

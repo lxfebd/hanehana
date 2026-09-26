@@ -10,7 +10,7 @@
  */
 import { app } from 'electron'
 import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, copyFileSync, readdirSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { join, resolve, sep, dirname } from 'node:path'
 import type { Game, GameVariant } from '../shared/types'
 import { dataDir as storeDataDir } from './store'
 
@@ -119,7 +119,9 @@ export function updateGame(id: string, patch: Partial<Game>): Game | undefined {
 //
 // 渲染层是不可信输入（它加载的页面/扩展/任何一个 XSS 都能调 window.hh）。
 // 这里把「界面能改什么」写成显式白名单，而不是 Object.assign 直通：
-// 直通等于把 id、exePath、playMs 全部交出去，改 exePath 就是「点启动即执行任意程序」。
+// 直通等于把 id、playMs 等内部字段交出去。exePath 可改，但必须过
+// existsSync 存在性校验（见 case 'exePath'，与 variants.exePath 同闸）：
+// 渲染层只能指向磁盘上真实存在的 exe，「点启动即执行任意程序」的面不放开。
 
 /** 图片路径只准落在 covers/ 与 thumbs/ 内：hh:// 协议照着这两个字段读文件。 */
 export function isImageCachePath(p: unknown): p is string {
@@ -132,8 +134,10 @@ export function isImageCachePath(p: unknown): p is string {
   return false
 }
 
-/** 渲染层可改的游戏字段。不在表里的一律丢弃（含 id/dir/exePath/playMs/addedAt）。 */
+/** 渲染层可改的游戏字段。不在表里的一律丢弃（含 id/dir/playMs/addedAt）；
+ *  exePath 在表里但另过存在性校验（见 sanitizeGamePatch 的 case 'exePath'）。 */
 const PATCHABLE: readonly (keyof Game)[] = [
+  'exePath',
   'title',
   'titleNative',
   'description',
@@ -175,6 +179,17 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
     if (!(key in d)) continue
     const v = d[key]
     switch (key) {
+      case 'exePath': {
+        // 主启动路径（路径失效自救）：与 GameAddOne 同标准——存在才收。
+        // dir 跟着 exe 重推导，维持「dir = dirname(exePath)」不变量。
+        if (typeof v !== 'string') break
+        const p = v.trim()
+        if (!p || p.length > 4000 || /[\x00-\x1f]/.test(p) || !existsSync(p)) break
+        const abs = resolve(p)
+        out.exePath = abs
+        out.dir = dirname(abs)
+        break
+      }
       case 'useLE':
       case 'useMagpie':
       case 'favorite':

@@ -540,7 +540,15 @@ function wireIpc(): void {
   // patch 走白名单：渲染层能改哪些字段由主进程说了算，见 sanitizeGamePatch
   ipcMain.handle(Ipc.GameUpdate, (_e, id: unknown, patch: unknown) => {
     if (!isId(id)) return err('游戏不存在')
-    return handleUpdate(id, sanitizeGamePatch(patch))
+    const clean = sanitizeGamePatch(patch)
+    // exePath 显式提交但被 sanitize 丢弃（不存在/非法）→ 明确报错不静默。
+    // 与当前值相同的旧路径不拦：文件可能被移走，用户只是在修标题等其他字段。
+    const raw = patch && typeof patch === 'object' ? (patch as Record<string, unknown>).exePath : undefined
+    if (typeof raw === 'string' && raw.trim() && !clean.exePath) {
+      const cur = getGame(id)
+      if (!cur || cur.exePath !== raw.trim()) return err('启动路径无效：文件不存在或格式不合法')
+    }
+    return handleUpdate(id, clean)
   })
   // 批量：entries=[{id, patch}]，逐条过白名单；未知 id 静默跳过
   ipcMain.handle(Ipc.GameBatchUpdate, (_e, entries: unknown) => {

@@ -191,12 +191,16 @@ export function explainError(
   return { title: UNKNOWN_TITLE, advice: UNKNOWN_ADVICE, raw: text }
 }
 
-/** 任务行副标题用的短句式：只说发生了什么，放得下才谈建议。 */
+/** 任务行副标题用的短句式：说发生了什么 + 一句「下一步」（advice 截断防撑爆行）。 */
 export function errorLine(
   raw: string | null | undefined,
   code?: string | null,
   params?: ErrorParams,
 ): string {
   const e = explainError(raw, code, params)
-  return e ? e.title : ''
+  if (!e) return ''
+  const tip = e.advice.trim()
+  if (!tip) return e.title
+  const short = tip.length > 40 ? tip.slice(0, 40) + '…' : tip
+  return `${e.title} · ${short}`
 }
