@@ -12,7 +12,7 @@
  *   - Bangumi：POST https://api.bgm.tv/v0/search/subjects，body={keyword,filter:{type:[4]}}
  *     封面在 images.large；本机当前连不上 api.bgm.tv（超时），会静默缺源
  */
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ensureCoversDir, getGame, updateGame } from './gameStore'
 import { coverColorOf } from './coverColor'
@@ -125,9 +125,30 @@ async function searchBangumi(title: string): Promise<ScrapeCandidate[]> {
  *   warnings 记录某个源失败的原因（如「Bangumi 连接超时」），
  *   供 UI 提示，不让用户以为搜索结果就是全部。
  */
+/**
+ * 测试缝：HANEHANA_SCRAPE_MOCK_FILE 指向 JSON。
+ * 形状 `{ [query: string]: ScrapeCandidate[] }`，键按 query 精确命中；
+ * 未命中返回空结果。仅验收脚本设，生产不设（与 tracking 的 VNDB_MOCK 同约定）。
+ */
+function scrapeMock(title: string): { results: ScrapeCandidate[]; warnings: string[] } | null {
+  const f = process.env.HANEHANA_SCRAPE_MOCK_FILE
+  if (!f) return null
+  try {
+    const map = JSON.parse(readFileSync(f, 'utf8')) as Record<string, ScrapeCandidate[]>
+    return { results: map[title] ?? [], warnings: [] }
+  } catch {
+    return null
+  }
+}
+
 export async function searchScrape(
   title: string,
 ): Promise<{ results: ScrapeCandidate[]; warnings: string[] }> {
+  const mock = scrapeMock(title)
+  if (mock) {
+    for (const c of mock.results) rememberCoverHost(c.coverUrl)
+    return mock
+  }
   const [vndb, bgm] = await Promise.allSettled([searchVndb(title), searchBangumi(title)])
 
   const results: ScrapeCandidate[] = []

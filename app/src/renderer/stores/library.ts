@@ -394,6 +394,9 @@ export async function applyScrapeResult(result: ScrapeCandidate): Promise<void> 
   const r = await window.hh.scrapeApply(library.scrapeTargetId, result)
   if (!r.ok) {
     library.error = r.error ?? '刮削失败'
+  } else {
+    // 单刮确认成功 → 从批量待确认列表摘掉
+    batchScrape.pending = batchScrape.pending.filter((p) => p.id !== library.scrapeTargetId)
   }
   await refreshGames()
 }
@@ -401,4 +404,146 @@ export async function applyScrapeResult(result: ScrapeCandidate): Promise<void> 
 /** 渲染层缩略图 URL：有 thumbPath 才走 hh:// 协议，否则空（组件走占位色）。 */
 export function thumbUrl(g: Game): string {
   return g.thumbPath ? `hh://thumb/${g.id}` : ''
+}
+
+// ---------------------------------------------------------------- 批量刮削（P1-1）
+
+/**
+ * 批量刮削进度。Playnite `IsBackgroundDownload` 分界：
+ * 后台串行队列，高置信唯一命中直接 apply；多候选冲突不逐个弹窗，
+ * 汇入 pending 等用户二次确认。
+ */
+export const batchScrape = reactive({
+  running: false,
+  cancel: false,
+  total: 0,
+  done: 0,
+  applied: 0,
+  failed: 0,
+  /** 冲突/低置信：{ id, title, query } 供 overlay 逐个开 ScrapeDialog */
+  pending: [] as { id: string; title: string; query: string }[],
+  current: '',
+})
+
+/**
+ * 标题归一：小写 + 去空白/标点，保留 Unicode 字母数字。
+ * 不能用 `\W`：JS 默认 `\W`=`[^A-Za-z0-9_]`，会把中文/日文标题整个剥成空串。
+ */
+function normTitle(s: string): string {
+  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
+}
+
+/** 单候选对游戏标题的置信分（0–100）。≥80 视为可后台自动应用。 */
+function scoreCandidate(g: Game, c: ScrapeCandidate): number {
+  const gt = normTitle(g.rawTitle || g.title)
+  if (!gt) return 0
+  const forms = [c.title, c.titleNative, ...(c.aliases ?? [])]
+    .filter((x): x is string => !!x)
+    .map(normTitle)
+  if (!forms.length) return 10
+  if (forms.some((f) => f === gt)) return 100
+  if (forms.some((f) => f.includes(gt) || gt.includes(f))) return 75
+  // 公共前缀 ≥ 半长：目录名常带章节号，仍可对齐
+  const hit = forms.some((f) => {
+    const n = Math.min(f.length, gt.length, Math.ceil(gt.length / 2))
+    return n >= 3 && f.slice(0, n) === gt.slice(0, n)
+  })
+  return hit ? 55 : 10
+}
+
+/** 从搜索结果选自动应用项；null = 冲突待确认。 */
+function pickAuto(g: Game, results: ScrapeCandidate[]): ScrapeCandidate | null {
+  if (!results.length) return null
+  const scored = results
+    .map((c) => ({ c, s: scoreCandidate(g, c) }))
+    .sort((a, b) => b.s - a.s)
+  const best = scored[0]!
+  if (best.s < 80) return null
+  // 第二名同分 → 真冲突，不猜
+  if (scored[1] && scored[1].s === best.s) return null
+  return best.c
+}
+
+/**
+ * 批量刮削：对 selection 串行跑 现有 scrapeSearch → scrapeApply 管线。
+ * 源间加短延迟，避免 VNDB/Bangumi 被连发打限流。
+ */
+export async function startBatchScrape(ids: string[]): Promise<{ applied: number; failed: number; pending: number; cancelled: boolean }> {
+  const list = ids.filter((id) => library.games.some((g) => g.id === id))
+  const summary = { applied: 0, failed: 0, pending: 0, cancelled: false }
+  if (!list.length || batchScrape.running) return summary
+  batchScrape.running = true
+  batchScrape.cancel = false
+  batchScrape.total = list.length
+  batchScrape.done = 0
+  batchScrape.applied = 0
+  batchScrape.failed = 0
+  batchScrape.pending = []
+  batchScrape.current = ''
+  try {
+    for (const id of list) {
+      if (batchScrape.cancel) {
+        summary.cancelled = true
+        break
+      }
+      const g = library.games.find((it) => it.id === id)
+      if (!g) {
+        batchScrape.failed += 1
+        batchScrape.done += 1
+        continue
+      }
+      const query = g.rawTitle || g.title
+      batchScrape.current = query
+      let results: ScrapeCandidate[] = []
+      try {
+        const r = await window.hh.scrapeSearch(query)
+        results = r.results
+      } catch {
+        batchScrape.failed += 1
+        batchScrape.done += 1
+        continue
+      }
+      if (!results.length) {
+        batchScrape.failed += 1
+        batchScrape.done += 1
+        continue
+      }
+      const pick = pickAuto(g, results)
+      if (!pick) {
+        batchScrape.pending.push({ id, title: g.title, query })
+        batchScrape.done += 1
+        continue
+      }
+      try {
+        const r = await window.hh.scrapeApply(id, pick)
+        if (r && r.ok) {
+          batchScrape.applied += 1
+        } else {
+          batchScrape.failed += 1
+        }
+      } catch {
+        batchScrape.failed += 1
+      }
+      batchScrape.done += 1
+      await new Promise((res) => setTimeout(res, 180))
+    }
+    await refreshGames()
+    summary.applied = batchScrape.applied
+    summary.failed = batchScrape.failed
+    summary.pending = batchScrape.pending.length
+    return summary
+  } finally {
+    batchScrape.running = false
+    batchScrape.current = ''
+    batchScrape.cancel = false
+  }
+}
+
+export function cancelBatchScrape(): void {
+  if (batchScrape.running) batchScrape.cancel = true
+}
+
+/** 待确认项：打开单刮对话框（与 DetailPanel「元数据刮削」同路径）。 */
+export function resolvePending(item: { id: string; query: string }): void {
+  openScrape(item.id, item.query)
 }
