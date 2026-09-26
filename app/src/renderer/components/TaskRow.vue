@@ -16,6 +16,7 @@ import {
   CircleX,
   FolderOpen,
   Loader2,
+  PackagePlus,
   Pause,
   Play,
   RotateCw,
@@ -106,6 +107,8 @@ const sub = computed(() => {
 const canStart = computed(() => ['queued', 'paused', 'error', 'idle', 'cancelled'].includes(state.value))
 const canPause = computed(() => state.value === 'downloading' || state.value === 'preparing')
 const canOpen = computed(() => true)
+/** 完成且产物是 exe → 一键入库（复用 GameAddOne；zip 等解压后走扫描，不给假按钮） */
+const canIngest = computed(() => state.value === 'done' && /\.exe$/i.test(props.def.dest))
 const needsRetry = computed(() => state.value === 'done')
 const primaryAction = computed(() => (needsRetry.value ? 'retry' : 'start'))
 const primaryTitle = computed(() => {
@@ -189,6 +192,9 @@ const chipTone = computed(() => {
       </button>
       <button class="ibtn" :disabled="!canOpen" title="打开所在文件夹" @click.stop="emit('action', 'open')">
         <FolderOpen :size="14" />
+      </button>
+      <button v-if="canIngest" class="ibtn" title="导入游戏库" @click.stop="emit('action', 'ingest')">
+        <PackagePlus :size="14" />
       </button>
       <button class="ibtn danger" title="移除任务（可选连文件一起删）" @click.stop="emit('action', 'remove')">
         <Trash2 :size="14" />

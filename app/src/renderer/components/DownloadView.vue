@@ -20,6 +20,7 @@ import {
 import type { TaskRow } from '../../shared/types'
 import { matchesFilter, matchesQuery, rowName, rowState, sortRows, SORT_OPTIONS } from '../status'
 import { downloads, removeTask, reportRejection, taskAction } from '../stores/downloads'
+import { refreshGames } from '../stores/library'
 import { library } from '../stores/library'
 import { fmtSpeed } from '../../shared/format'
 import TaskRowView from './TaskRow.vue'
@@ -56,6 +57,21 @@ async function onAction(r: TaskRow, action: string): Promise<void> {
     try {
       const why = await window.hh.openDir(dirOf(r.def.dest))
       if (why) message.error(`打不开该文件夹：${why}`)
+    } catch (e) {
+      reportRejection(e)
+    }
+    return
+  }
+  if (action === 'ingest') {
+    // 下载完成 ≠ 入库：exe 产物在任务行一键进游戏库（主进程按存在性+去重校验）
+    try {
+      const res = await window.hh.addGameOne(r.def.dest)
+      if (res.ok) {
+        message.success(`已导入游戏库：${res.game?.title ?? ''}`.trim())
+        void refreshGames()
+      } else {
+        message.error(res.error || '导入失败')
+      }
     } catch (e) {
       reportRejection(e)
     }

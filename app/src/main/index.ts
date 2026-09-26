@@ -298,12 +298,17 @@ function notifyTerminal(row: TaskRow): void {
   const frontmost = !!win && !win.isDestroyed() && win.isVisible() && win.isFocused()
   if (st === 'done' && s.notify_on_finish) {
     const total = row.snap?.total || row.def.total
-    notify(
-      frontmost,
-      `${name} 下载完成`,
-      total ? `已保存到 ${dirname(row.def.dest)}（${fmtSize(total)}）` : `已保存到 ${dirname(row.def.dest)}`,
-      row.id,
-    )
+    // 完成只是第一跳：exe 提示任务行一键入库，压缩包提示解压后扫描——别让用户自己猜
+    const dest = row.def.dest
+    const hint = /\.exe$/i.test(dest)
+      ? '，任务行可一键导入游戏库'
+      : /\.(zip|7z|rar)$/i.test(dest)
+        ? '，解压后可用「扫描」导入游戏库'
+        : ''
+    const where = total
+      ? `已保存到 ${dirname(dest)}（${fmtSize(total)}）`
+      : `已保存到 ${dirname(dest)}`
+    notify(frontmost, `${name} 下载完成`, `${where}${hint}`, row.id)
   } else if (st === 'error' && s.notify_on_error) {
     // 原文和码取自同一份记录（理由同 TaskRow 的 err）：混着取会在
     // 「快照已清空、tasks.json 还没落盘」的窗口里把新错误配上旧病因。
