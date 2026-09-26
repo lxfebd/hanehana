@@ -572,7 +572,7 @@ function save(): void {
 .card {
   background: var(--hh-color-surface-soft);
   border: 1px solid var(--hh-color-panel-glass-border);
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   padding: 16px;
 }
 .card-warn {
@@ -592,11 +592,11 @@ function save(): void {
   justify-content: space-between;
 }
 .lbl {
-  font-size: 14px;
+  font-size: var(--hh-font-bodyLg-size);
   color: var(--hh-color-text-glow);
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   line-height: 1.7;
   color: var(--hh-color-text-muted);
 }
@@ -605,7 +605,7 @@ function save(): void {
   color: var(--hh-color-error-danger);
 }
 .save-hint {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-error-text);
 }
 .mono {
@@ -625,12 +625,11 @@ function save(): void {
   width: 148px;
   padding: 10px 12px;
   border: 1px solid var(--hh-color-card-border);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background: var(--hh-color-card);
   color: var(--hh-color-text);
   cursor: pointer;
-  transition: border-color var(--hh-motion-fast) var(--hh-motion-ease-move),
-    box-shadow var(--hh-motion-fast) var(--hh-motion-ease-move);
+  transition: border-color var(--hh-motion-fast) var(--hh-motion-ease-move), box-shadow var(--hh-motion-fast) var(--hh-motion-ease-move);
 }
 .preset-card:hover {
   border-color: var(--hh-color-accent-focus-border);
@@ -642,11 +641,11 @@ function save(): void {
 .preset-swatch {
   width: 100%;
   height: 28px;
-  border-radius: 6px;
+  border-radius: var(--hh-radius-xs);
   display: block;
 }
 .preset-name {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-weight: 600;
   color: var(--hh-color-text-glow);
 }
@@ -657,7 +656,7 @@ function save(): void {
 }
 .bg-path {
   margin-top: 8px;
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-secondary);
   word-break: break-all;
 }
@@ -667,7 +666,7 @@ function save(): void {
   justify-content: space-between;
   gap: 10px;
   padding: 6px 0;
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   border-bottom: 1px solid var(--hh-color-border-faint);
 }
 .about-key { color: var(--hh-color-text-tertiary); flex-shrink: 0; }
@@ -679,7 +678,7 @@ function save(): void {
   white-space: nowrap;
 }
 .about-hint {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim);
   margin-top: 10px;
 }
@@ -722,11 +721,11 @@ function save(): void {
   gap: 10px;
   padding: 6px 8px;
   border: 1px solid var(--hh-color-card-border);
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   background: var(--hh-color-surface-soft);
 }
 .track-kw {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   color: var(--hh-color-text-glow);
   font-weight: 600;
   flex: 1;
@@ -747,6 +746,6 @@ function save(): void {
 }
 .track-hint {
   display: block;
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
 }
 </style>

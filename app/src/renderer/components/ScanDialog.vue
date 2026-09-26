@@ -87,20 +87,20 @@ async function pickDir(): Promise<void> {
 .path-input {
   flex: 1;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 0 14px;
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-strong);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   outline: none;
 }
 .scan-btn {
   height: 38px; padding: 0 20px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background: var(--hh-color-accent-grad);
-  color: var(--hh-color-on-accent); font-weight: 600; font-size: 13px;
+  color: var(--hh-color-on-accent); font-weight: 600; font-size: var(--hh-font-body-size);
   cursor: pointer;
 }
 .scan-btn:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -110,16 +110,16 @@ async function pickDir(): Promise<void> {
   color: var(--hh-color-text-strong);
   font-weight: 400;
 }
-.result { font-size: 13px; color: var(--hh-color-success); }
+.result { font-size: var(--hh-font-body-size); color: var(--hh-color-success); }
 .result.error { color: var(--hh-color-error); }
 .hits {
   max-height: 260px;
   overflow-y: auto;
   border: 1px solid var(--hh-color-panel-glass-border);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 10px 12px;
 }
-.hits-title { font-size: 12px; color: var(--hh-color-text-soft); margin-bottom: 8px; }
+.hits-title { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-soft); margin-bottom: 8px; }
 .hit-row {
   display: flex; justify-content: space-between; gap: 10px;
   font-size: 12.5px;
@@ -128,6 +128,6 @@ async function pickDir(): Promise<void> {
 }
 .hit-name { color: var(--hh-color-text-stronger); white-space: nowrap; }
 .hit-path { color: var(--hh-color-text-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.hits-more { font-size: 12px; color: var(--hh-color-text-dim); padding-top: 6px; }
-.hint { font-size: 12px; color: var(--hh-color-text-dim); }
+.hits-more { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-dim); padding-top: 6px; }
+.hint { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-dim); }
 </style>

@@ -211,12 +211,12 @@ const chipTone = computed(() => {
   gap: 12px;
   height: 64px;
   padding: 0 16px;
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   margin-bottom: 8px;
   background: var(--hh-color-card);
   border: 1px solid var(--hh-color-card-border);
   cursor: pointer;
-  transition: background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+  transition: background var(--hh-motion-med) ease, border-color var(--hh-motion-med) ease, box-shadow var(--hh-motion-med) ease;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -275,7 +275,7 @@ const chipTone = computed(() => {
   gap: 2px;
 }
 .name {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-weight: 500;
   line-height: 20px;
   color: var(--hh-color-text-glow);
@@ -284,7 +284,7 @@ const chipTone = computed(() => {
   text-overflow: ellipsis;
 }
 .sub {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   line-height: 18px;
   color: var(--hh-color-text-muted);
   white-space: nowrap;
@@ -298,7 +298,7 @@ const chipTone = computed(() => {
   flex: none;
   min-width: 44px;
   text-align: right;
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   font-variant-numeric: tabular-nums;
   color: var(--hh-color-text-bright);
@@ -312,7 +312,7 @@ const chipTone = computed(() => {
   gap: 5px;
   height: 22px;
   padding: 0 9px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   background: var(--hh-color-surface-mid);
   white-space: nowrap;
 }
@@ -331,7 +331,7 @@ const chipTone = computed(() => {
   position: absolute;
   left: 16px; right: 16px; bottom: 0;
   height: 3px;
-  border-radius: 2px;
+  border-radius: var(--hh-radius-xs);
   overflow: hidden;
   background: var(--hh-color-surface-mid);
 }
@@ -339,7 +339,7 @@ const chipTone = computed(() => {
   position: absolute;
   top: 0; left: 0; bottom: 0;
   background: linear-gradient(90deg, var(--hh-color-accent-grad-stop), var(--hh-color-accent));
-  transition: width 0.15s linear;
+  transition: width var(--hh-motion-med) linear;
   overflow: hidden;
 }
 .bar-fill.moving::after {
@@ -371,7 +371,7 @@ const chipTone = computed(() => {
   justify-content: flex-end;
   gap: 2px;
   opacity: 0;
-  transition: opacity 0.167s ease;
+  transition: opacity var(--hh-motion-med) ease;
 }
 .task-row:hover .cell-actions,
 .task-row.selected .cell-actions,
@@ -385,13 +385,13 @@ const chipTone = computed(() => {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   background: transparent;
   color: var(--hh-color-text-mid);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--hh-font-bodyLg-size);
   padding: 0;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--hh-motion-med), color var(--hh-motion-med);
 }
 .ibtn:hover:not(:disabled) {
   background: var(--hh-color-surface-hover);

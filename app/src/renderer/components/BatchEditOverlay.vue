@@ -159,7 +159,7 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 8px;
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--hh-radius-panel);
 }
 .batch-count {
   font-size: 12.5px;
@@ -175,7 +175,7 @@ onBeforeUnmount(() => {
 .b-btn {
   height: 30px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-strong);
@@ -184,7 +184,7 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 5px;
-  transition: background 0.15s;
+  transition: background var(--hh-motion-med);
 }
 .b-btn:hover {
   background: var(--hh-color-surface-mid);

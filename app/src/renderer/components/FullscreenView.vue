@@ -23,6 +23,7 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Heart, Search, X } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { categories, debouncedKeyword, filteredGames, library, selectGame, thumbUrl, toggleFavorite } from '../stores/library'
+import { FS_COLORS } from '../design/tokens'
 import { t } from '../i18n'
 
 const emit = defineEmits<{ exit: [] }>()
@@ -207,7 +208,7 @@ function stopPadPoll(): void {
 function placeholderBg(g: Game): string {
   if (g.color) return g.color
   // 深色客厅空间的兜底调色板：低饱和的夜色系（全屏层不随主题变浅）
-  const palette = ['#5b6478', '#5f4d70', '#3f5a6b', '#4a6b5a', '#6b4f4f', '#6b6240']
+  const palette = FS_COLORS.palette
   let h = 0
   for (const ch of g.title) h = (h * 31 + ch.codePointAt(0)!) >>> 0
   return palette[h % palette.length]
@@ -320,14 +321,14 @@ function imgErr(e: Event): void {
 /* 全屏层是独立深色客厅空间：不随主题变浅。
    局部 CSS 变量覆盖全局 token（值取自深色主题语义），组件内不再出现散落色值字面量。 */
 .fs-root {
-  --fs-bg: #0b0b10;
+  --fs-bg: var(--hh-fs-bg);
   --fs-glass: rgba(255,255,255,0.08);
   --fs-glass-hover: rgba(255,255,255,0.16);
   --fs-glass-border: rgba(255,255,255,0.18);
   --fs-ink: rgba(255,255,255,0.85);
   --fs-ink-dim: rgba(255,255,255,0.5);
   --fs-ink-faint: rgba(255,255,255,0.3);
-  --fs-ink-fill: #fff;
+  --fs-ink-fill: var(--hh-fs-ink-fill);
   --fs-scrim: linear-gradient(to top, rgba(0,0,0,0.85), transparent);
   --fs-bar-bg: linear-gradient(to bottom, rgba(0,0,0,0.85), transparent);
   --fs-thumb-shadow: 0 8px 28px rgba(0,0,0,0.45);
@@ -355,7 +356,7 @@ function imgErr(e: Event): void {
   gap: 10px;
   padding: 16px 20px;
   background: var(--fs-bar-bg);
-  transition: opacity 0.25s ease;
+  transition: opacity var(--hh-motion-slow) ease;
 }
 .fs-bar.hidden { opacity: 0; pointer-events: none; }
 
@@ -373,12 +374,12 @@ function imgErr(e: Event): void {
 .fs-search-input {
   width: 220px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 0 12px 0 34px;
   border: 1px solid var(--fs-glass-border);
   background: var(--fs-glass);
   color: var(--fs-ink-fill);
-  font-size: 14px;
+  font-size: var(--hh-font-bodyLg-size);
   outline: none;
 }
 .fs-search-input:focus { border-color: var(--hh-color-accent); }
@@ -397,13 +398,13 @@ function imgErr(e: Event): void {
   flex-shrink: 0;
   height: 32px;
   padding: 0 14px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   border: 1px solid var(--fs-glass-border);
   background: var(--fs-glass);
   color: var(--fs-ink);
   font-size: 12.5px;
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
 }
 .fs-chip:hover { background: var(--fs-glass-hover); }
 .fs-chip.active {
@@ -416,13 +417,13 @@ function imgErr(e: Event): void {
 .fs-btn {
   flex-shrink: 0;
   width: 36px; height: 36px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   border: 1px solid var(--fs-glass-border);
   background: var(--fs-glass);
   color: var(--fs-ink);
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s ease;
+  transition: background var(--hh-motion-med) ease;
 }
 .fs-btn:hover { background: var(--fs-glass-hover); }
 .fs-btn.active { background: var(--hh-color-accent); color: var(--fs-ink-fill); }
@@ -447,9 +448,9 @@ function imgErr(e: Event): void {
   flex: 1;
   min-width: 0;
   cursor: pointer;
-  border-radius: 14px;
+  border-radius: var(--hh-radius-panel);
   outline: none;
-  transition: transform 0.18s ease;
+  transition: transform var(--hh-motion-med) ease;
 }
 .fs-card.selected { transform: translateY(-6px) scale(1.02); }
 .fs-card:focus-visible { box-shadow: 0 0 0 3px var(--hh-color-accent); }
@@ -457,7 +458,7 @@ function imgErr(e: Event): void {
 .fs-thumb {
   position: relative;
   aspect-ratio: 3 / 4;
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   overflow: hidden;
   box-shadow: var(--fs-thumb-shadow);
 }
@@ -481,7 +482,7 @@ function imgErr(e: Event): void {
   color: var(--hh-color-star);
   background: var(--fs-fav-bg);
   width: 26px; height: 26px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   display: flex; align-items: center; justify-content: center;
   z-index: 2;
 }
@@ -501,7 +502,7 @@ function imgErr(e: Event): void {
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .fs-sub {
-  font-size: 12px; color: var(--fs-ink);
+  font-size: var(--hh-font-caption-size); color: var(--fs-ink);
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
 }
@@ -515,8 +516,8 @@ function imgErr(e: Event): void {
   gap: 8px;
   color: var(--fs-ink);
 }
-.fs-empty-title { font-size: 20px; font-weight: 600; }
-.fs-empty-hint { font-size: 13px; color: var(--fs-ink-dim); }
+.fs-empty-title { font-size: var(--hh-font-title-size); font-weight: 600; }
+.fs-empty-hint { font-size: var(--hh-font-body-size); color: var(--fs-ink-dim); }
 
 /* 底部操作提示 */
 .fs-hints {
@@ -528,17 +529,17 @@ function imgErr(e: Event): void {
   align-items: center;
   gap: 18px;
   padding: 10px 20px;
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   background: var(--fs-hints-bg);
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--fs-ink);
-  transition: opacity 0.25s ease;
+  transition: opacity var(--hh-motion-slow) ease;
 }
 .fs-hints.hidden { opacity: 0; pointer-events: none; }
 .fs-hints kbd {
   display: inline-block;
   padding: 2px 6px;
-  border-radius: 5px;
+  border-radius: var(--hh-radius-xs);
   background: var(--fs-kbd-bg);
   font-size: 11px;
   color: var(--fs-ink-fill);

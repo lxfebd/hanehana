@@ -117,7 +117,7 @@ function submit(e?: Event): void {
 .dlg-card {
   background: var(--hh-color-surface-soft);
   border: 1px solid var(--hh-color-panel-glass-border);
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   padding: 16px;
 }
 .row {
@@ -132,12 +132,12 @@ function submit(e?: Event): void {
   align-items: stretch;
 }
 .cs-error {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   line-height: 1.6;
   color: var(--hh-color-error-danger);
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-muted);
 }
 .mono {

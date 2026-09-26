@@ -313,7 +313,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   max-width: 380px;
   padding: 40px 30px;
   text-align: center;
-  border-radius: 20px;
+  border-radius: var(--hh-radius-panel);
 }
 .empty-icon {
   color: var(--hh-color-text-tertiary);
@@ -323,20 +323,20 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 @keyframes ic-spin {
   to { transform: rotate(360deg); }
 }
-.empty-title { font-size: 16px; font-weight: 600; margin-bottom: 6px; color: var(--hh-color-text-glow); }
-.empty-hint { font-size: 13px; color: var(--hh-color-text-mid); margin-bottom: 0; }
+.empty-title { font-size: var(--hh-font-subtitle-size); font-weight: 600; margin-bottom: 6px; color: var(--hh-color-text-glow); }
+.empty-hint { font-size: var(--hh-font-body-size); color: var(--hh-color-text-mid); margin-bottom: 0; }
 .empty-cta {
   margin-top: 18px;
   height: 34px;
   padding: 0 22px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   border: none;
   background-image: var(--hh-color-accent-grad);
   color: var(--hh-color-on-accent);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-weight: 600;
   cursor: pointer;
-  transition: filter 0.15s ease;
+  transition: filter var(--hh-motion-med) ease;
 }
 .empty-cta:hover { filter: brightness(1.08); }
 .empty-cta.ghost {
@@ -366,11 +366,11 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   flex: none;
   width: 184px;
   cursor: pointer;
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   padding: 4px;
   background: var(--hh-color-card);
   border: 1px solid var(--hh-color-card-border);
-  transition: transform 0.18s ease, background 0.18s ease, border-color 0.18s ease;
+  transition: transform var(--hh-motion-med) ease, background var(--hh-motion-med) ease, border-color var(--hh-motion-med) ease;
   /* 焦点环交给全局 :focus-visible（WCAG 2.4.11），不留 outline:none 掐死它 */
 }
 .cover-card:hover {
@@ -396,17 +396,17 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 
 .cover-thumb {
   aspect-ratio: 3 / 4;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   overflow: hidden;
   position: relative;
   box-shadow: 0 6px 20px var(--hh-color-thumb-shadow);
-  transition: box-shadow 0.18s ease;
+  transition: box-shadow var(--hh-motion-med) ease;
 }
 .cover-thumb img {
   width: 100%; height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform 0.35s cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--hh-motion-page) cubic-bezier(0.22, 0.61, 0.36, 1);
 }
 .cover-card:hover .cover-thumb img { transform: scale(1.06); }
 .cover-letter {
@@ -420,7 +420,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   position: absolute; top: 8px; left: 8px;
   background: var(--hh-color-success-opaque);
   color: var(--hh-color-on-success); font-size: 11px; font-weight: 600;
-  padding: 3px 9px; border-radius: 8px;
+  padding: 3px 9px; border-radius: var(--hh-radius-sm);
   z-index: 2;
   display: flex; align-items: center; gap: 3px;
 }
@@ -430,7 +430,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   color: var(--hh-color-star);
   background: var(--hh-color-surface-strong);
   width: 20px; height: 20px;
-  border-radius: 7px;
+  border-radius: var(--hh-radius-sm);
   display: flex; align-items: center; justify-content: center;
   z-index: 2;
 }
@@ -440,7 +440,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
   width: 22px; height: 22px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   display: flex; align-items: center; justify-content: center;
   z-index: 2;
 }
@@ -460,12 +460,12 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   overflow: hidden;
 }
 .cover-title {
-  font-size: 13px; line-height: 18px; font-weight: 600;
+  font-size: var(--hh-font-body-size); line-height: 18px; font-weight: 600;
   color: var(--hh-color-text-glow);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .cover-sub {
-  font-size: 12px; line-height: 16px;
+  font-size: var(--hh-font-caption-size); line-height: 16px;
   color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -476,9 +476,9 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   display: flex; align-items: center; gap: 10px;
   height: 72px;
   padding: 0 10px;
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--hh-motion-med) ease;
   margin: 4px 0;
   box-sizing: border-box;
 }
@@ -487,7 +487,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 .list-row.checked { background: var(--hh-color-accent-selected-bg); }
 .list-thumb {
   width: 44px; height: 66px;
-  border-radius: 6px; overflow: hidden; flex-shrink: 0;
+  border-radius: var(--hh-radius-xs); overflow: hidden; flex-shrink: 0;
   position: relative;
   box-shadow: 0 3px 10px var(--hh-color-thumb-shadow-soft);
 }
@@ -501,7 +501,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   position: absolute; top: 4px; right: 4px;
   background: var(--hh-color-success-opaque);
   width: 18px; height: 18px;
-  border-radius: 6px;
+  border-radius: var(--hh-radius-xs);
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; color: var(--hh-color-on-success);
 }
@@ -509,7 +509,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   position: absolute; bottom: 3px; right: 3px;
   color: var(--hh-color-star);
   width: 15px; height: 15px;
-  border-radius: 5px;
+  border-radius: var(--hh-radius-xs);
   background: var(--hh-color-surface-strong);
   display: flex; align-items: center; justify-content: center;
 }
@@ -518,17 +518,17 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
   width: 18px; height: 18px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   display: flex; align-items: center; justify-content: center;
   font-size: 11px;
 }
 .list-body { flex: 1; min-width: 0; }
 .list-title {
-  font-size: 13px; font-weight: 500;
+  font-size: var(--hh-font-body-size); font-weight: 500;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .list-meta {
-  font-size: 12px; color: var(--hh-color-text-muted);
+  font-size: var(--hh-font-caption-size); color: var(--hh-color-text-muted);
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
@@ -537,7 +537,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
    窄视口下永不挤压标题区：左、中两列可整体收缩换行，右列为空时让位。 */
 .list-cols {
   display: flex; align-items: center; gap: 12px;
-  font-size: 12px; color: var(--hh-color-text-tertiary);
+  font-size: var(--hh-font-caption-size); color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
   min-width: 0;
   flex-shrink: 0;

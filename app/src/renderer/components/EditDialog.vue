@@ -273,7 +273,7 @@ async function save(): Promise<void> {
   gap: 6px;
   padding: 8px;
   border: 1px solid var(--hh-color-card-border);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background: var(--hh-color-surface-soft);
 }
 .variant-fields {
@@ -290,14 +290,14 @@ async function save(): Promise<void> {
   height: 30px;
   padding: 0 10px;
   border: 1px solid var(--hh-color-card-border);
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   background: var(--hh-color-surface-bright);
   color: var(--hh-color-text-mid-high);
   font-size: 12.5px;
   cursor: pointer;
   white-space: nowrap;
   font-family: inherit;
-  transition: background 0.15s;
+  transition: background var(--hh-motion-med);
 }
 .mini-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .mini-btn.danger { color: var(--hh-color-danger-text); }
@@ -311,8 +311,8 @@ async function save(): Promise<void> {
 .btn {
   height: 34px;
   padding: 0 18px;
-  border-radius: 9px;
-  font-size: 13px;
+  border-radius: var(--hh-radius-sm);
+  font-size: var(--hh-font-body-size);
   cursor: pointer;
   border: none;
 }

@@ -233,7 +233,7 @@ function onAll(action: string): void {
   display: flex;
   gap: 2px;
   padding: 2px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   background: var(--hh-color-surface-bright);
   border: 1px solid var(--hh-color-card-border);
   flex-shrink: 0;
@@ -247,12 +247,12 @@ function onAll(action: string): void {
   height: 32px;
   padding: 0 12px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   background: transparent;
   color: var(--hh-color-text-mid);
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
 }
 .seg-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .seg-chip.active {
@@ -283,14 +283,14 @@ function onAll(action: string): void {
 .search-input {
   width: 100%;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 0 12px 0 34px;
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-bright);
   color: var(--hh-color-text-glow);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--hh-motion-slow), box-shadow var(--hh-motion-slow);
 }
 .search-input:focus {
   border-color: var(--hh-color-accent-focus-border);
@@ -300,7 +300,7 @@ function onAll(action: string): void {
 /* ============ 单行工具栏：右端按钮组 ============ */
 .total-speed {
   margin-left: auto;
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-accent-text);
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
   font-variant-numeric: tabular-nums;
@@ -311,14 +311,14 @@ function onAll(action: string): void {
 }
 .dl-btn {
   width: 32px; height: 32px;
-  border-radius: 9px;
+  border-radius: var(--hh-radius-sm);
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-bright);
   cursor: pointer;
-  font-size: 14px;
+  font-size: var(--hh-font-bodyLg-size);
   display: flex; align-items: center; justify-content: center;
-  transition: all 0.15s;
+  transition: all var(--hh-motion-med);
 }
 .dl-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-text-glow); }
 .dl-btn.primary {
@@ -345,5 +345,5 @@ function onAll(action: string): void {
   color: var(--hh-color-text-soft);
 }
 .dl-empty-title { font-size: 15px; font-weight: 600; margin-bottom: 6px; color: var(--hh-color-text-mid); }
-.dl-empty-hint { font-size: 13px; color: var(--hh-color-text-mid); }
+.dl-empty-hint { font-size: var(--hh-font-body-size); color: var(--hh-color-text-mid); }
 </style>

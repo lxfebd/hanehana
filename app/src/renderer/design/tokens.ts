@@ -541,6 +541,16 @@ export const themePresets: Record<ThemePresetId, ThemePresetMeta> = {
 
 export const THEME_PRESET_IDS = Object.keys(themePresets) as ThemePresetId[]
 
+/**
+ * 全屏墙（BigBox 客厅）固定调色：不随主题/明暗变浅（P2-1 裸色唯一真值）。
+ * 组件只消费 `--hh-fs-*` 或 `FS_COLORS.palette`，不得再写 hex 字面量。
+ */
+export const FS_COLORS = {
+  bg: '#0b0b10',
+  inkFill: '#ffffff',
+  palette: ['#5b6478', '#5f4d70', '#3f5a6b', '#4a6b5a', '#6b4f4f', '#6b6240'],
+} as const
+
 // 默认套件（樱夜，向后兼容组件 import { tokens }）
 const DEFAULT_PRESET: ThemePresetId = 'sakura'
 const defaultColorsDark = deriveDark(themePresets[DEFAULT_PRESET].dark)
@@ -642,6 +652,9 @@ export function applyCssVars(
       set(`--hh-${group}-${kebab(k)}`, v)
     }
   }
+  // 全屏墙固定层（与主题无关，P2-1 裸色唯一真值）
+  set('--hh-fs-bg', FS_COLORS.bg)
+  set('--hh-fs-ink-fill', FS_COLORS.inkFill)
   root.dataset.theme = darkMode ? 'dark' : 'light'
   root.style.colorScheme = darkMode ? 'dark' : 'light'
 }

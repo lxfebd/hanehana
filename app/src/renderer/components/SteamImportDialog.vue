@@ -104,18 +104,18 @@ async function doImport(): Promise<void> {
 <style scoped>
 .steam-body { display: flex; flex-direction: column; gap: 14px; }
 .row { display: flex; align-items: center; gap: 10px; }
-.hint { font-size: 12px; color: var(--hh-color-text-tertiary); }
+.hint { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-tertiary); }
 .scan-btn {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   height: 34px;
   padding: 0 16px;
-  border-radius: 9px;
+  border-radius: var(--hh-radius-sm);
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-strong);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   cursor: pointer;
 }
 .scan-btn:hover { background: var(--hh-color-surface-mid); }
@@ -129,10 +129,10 @@ async function doImport(): Promise<void> {
 }
 .spin { animation: ic-spin 1s linear infinite; }
 @keyframes ic-spin { to { transform: rotate(360deg); } }
-.result { font-size: 13px; color: var(--hh-color-success-text); }
+.result { font-size: var(--hh-font-body-size); color: var(--hh-color-success-text); }
 .result.error { color: var(--hh-color-error-text); }
 .cands { display: flex; flex-direction: column; gap: 10px; }
-.cands-title { font-size: 13px; color: var(--hh-color-text-strong); }
+.cands-title { font-size: var(--hh-font-body-size); color: var(--hh-color-text-strong); }
 .cand-list {
   max-height: 280px;
   overflow-y: auto;
@@ -145,12 +145,12 @@ async function doImport(): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
 }
 .cand-row:hover { background: var(--hh-color-surface-soft); }
 .cand-name { font-weight: 500; color: var(--hh-color-text-glow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-.cand-appid { font-size: 11px; color: var(--hh-color-accent-text); background: var(--hh-color-accent-bg); padding: 1px 7px; border-radius: 6px; flex: none; }
+.cand-appid { font-size: 11px; color: var(--hh-color-accent-text); background: var(--hh-color-accent-bg); padding: 1px 7px; border-radius: var(--hh-radius-xs); flex: none; }
 .cand-path { font-size: 11px; color: var(--hh-color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: auto; max-width: 180px; }
 </style>

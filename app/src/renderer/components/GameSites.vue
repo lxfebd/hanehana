@@ -551,7 +551,7 @@ onBeforeUnmount(() => {
   background: transparent;
   color: var(--hh-color-text-mid-high);
   cursor: pointer;
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
 }
 .g-site.active {
   background: var(--hh-color-select-bg);
@@ -560,7 +560,7 @@ onBeforeUnmount(() => {
   font-weight: 600;
 }
 .g-site-ic {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
 }
 .g-search {
   display: flex;
@@ -574,7 +574,7 @@ onBeforeUnmount(() => {
   background: var(--hh-color-float);
   color: var(--hh-color-text-glow);
   padding: 0 10px;
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
 }
 .g-input:focus {
   outline: none;
@@ -598,7 +598,7 @@ onBeforeUnmount(() => {
   overflow-y: auto;
 }
 .g-group-title {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-tertiary);
   display: flex;
   align-items: center;
@@ -632,13 +632,13 @@ onBeforeUnmount(() => {
   border-radius: var(--hh-radius-md);
   margin-bottom: 6px;
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color var(--hh-motion-med);
 }
 .g-result:hover {
   border-color: var(--hh-color-accent);
 }
 .g-result-title {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   color: var(--hh-color-text-glow);
   display: -webkit-box;
   -webkit-line-clamp: 2;
@@ -646,12 +646,12 @@ onBeforeUnmount(() => {
   overflow: hidden;
 }
 .g-empty {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-faint);
   padding: 4px 2px;
 }
 .g-hint {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-faint);
   padding: 8px 2px;
   line-height: 1.6;
@@ -698,7 +698,7 @@ onBeforeUnmount(() => {
   background: var(--hh-color-float);
   color: var(--hh-color-text-glow);
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
 }
 .g-open {
   width: 30px;
@@ -710,7 +710,7 @@ onBeforeUnmount(() => {
   cursor: pointer;
 }
 .g-title {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-tertiary);
   padding: 0 2px;
   white-space: nowrap;
@@ -754,12 +754,12 @@ onBeforeUnmount(() => {
   max-width: 90vw;
   background: var(--hh-color-float);
   border: 1px solid var(--hh-color-float-border);
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   padding: 16px;
   box-shadow: var(--hh-shadow-float);
 }
 .m-title {
-  font-size: 14px;
+  font-size: var(--hh-font-bodyLg-size);
   font-weight: 600;
   color: var(--hh-color-text-glow);
   margin-bottom: 12px;
@@ -775,9 +775,9 @@ onBeforeUnmount(() => {
   gap: 10px;
   padding: 10px 12px;
   border: 1px solid var(--hh-color-border-ghost-soft);
-  border-radius: 6px;
+  border-radius: var(--hh-radius-xs);
   cursor: pointer;
-  transition: border-color 0.15s;
+  transition: border-color var(--hh-motion-med);
 }
 .m-row:hover {
   border-color: var(--hh-color-accent);
@@ -788,10 +788,10 @@ onBeforeUnmount(() => {
   color: var(--hh-color-accent);
   background: var(--hh-color-accent-bg);
   padding: 2px 6px;
-  border-radius: 4px;
+  border-radius: var(--hh-radius-xs);
 }
 .m-name {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   color: var(--hh-color-text-glow);
 }
 .m-foot {
@@ -803,7 +803,7 @@ onBeforeUnmount(() => {
   border: none;
   background: transparent;
   color: var(--hh-color-text-mid-high);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   cursor: pointer;
   padding: 4px 8px;
 }

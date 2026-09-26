@@ -238,7 +238,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   min-width: 0;
 }
 .game-title {
-  font-size: 14px;
+  font-size: var(--hh-font-bodyLg-size);
   font-weight: 600;
   color: var(--hh-color-text-glow);
   overflow: hidden;
@@ -246,7 +246,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   white-space: nowrap;
 }
 .hint {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim);
 }
 .error-bar {
@@ -254,12 +254,12 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   color: var(--hh-color-error-text);
   background: var(--hh-color-error-soft-bg);
   border: 1px solid var(--hh-color-error);
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   padding: 8px 10px;
   word-break: break-all;
 }
 .loading {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   color: var(--hh-color-text-dim);
   padding: 18px 0;
   text-align: center;
@@ -278,7 +278,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   gap: 10px;
   background: var(--hh-color-surface-soft);
   border: 1px solid var(--hh-color-panel-glass-border);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 10px 12px;
 }
 .snap-info {
@@ -288,13 +288,13 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   min-width: 0;
 }
 .snap-time {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-weight: 600;
   color: var(--hh-color-text-stronger);
   font-variant-numeric: tabular-nums;
 }
 .snap-meta {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim);
 }
 .snap-actions {
@@ -304,7 +304,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
 }
 .empty {
   border: 1px dashed var(--hh-color-card-border);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 22px 14px;
   text-align: center;
 }
@@ -329,7 +329,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   gap: 5px;
   height: 30px;
   padding: 0 12px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   font-size: 12.5px;
   cursor: pointer;
   border: none;

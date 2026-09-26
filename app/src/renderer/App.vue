@@ -509,9 +509,9 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-.logo { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: 14px; letter-spacing: 0.5px; }
+.logo { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: var(--hh-font-bodyLg-size); letter-spacing: 0.5px; }
 .logo-ic { color: var(--hh-color-accent); flex: none; }
-.tag { margin-left: 12px; font-size: 12px; opacity: 0.55; }
+.tag { margin-left: 12px; font-size: var(--hh-font-caption-size); opacity: 0.55; }
 .titlebar-right { flex: 1; }
 
 .layout {
@@ -537,12 +537,12 @@ onUnmounted(() => {
   gap: 8px;
   height: 34px;
   padding: 0 10px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   margin-bottom: 2px;
   cursor: pointer;
   color: var(--hh-color-text-bright);
-  transition: background 0.15s ease, color 0.15s ease;
-  font-size: 13px;
+  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
+  font-size: var(--hh-font-body-size);
   position: relative;
   /* button 重置：不加 border/背景，保持原玻璃观感 */
   border: none;
@@ -566,7 +566,7 @@ onUnmounted(() => {
   font-size: 11px;
   background: var(--hh-color-surface-mid);
   padding: 1px 7px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   color: var(--hh-color-text-mid-high);
 }
 .nav-item.active .count {
@@ -584,7 +584,7 @@ onUnmounted(() => {
   bottom: 0;
   min-width: 160px;
   padding: 6px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-panel-glass-border);
   z-index: 40;
   display: flex;
@@ -651,14 +651,14 @@ onUnmounted(() => {
 .search-input {
   width: 100%;
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 0 42px 0 34px;
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-bright);
   color: var(--hh-color-text-glow);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   outline: none;
-  transition: border-color 0.2s, box-shadow 0.2s;
+  transition: border-color var(--hh-motion-slow), box-shadow var(--hh-motion-slow);
 }
 .search-input:focus {
   border-color: var(--hh-color-accent-focus-border);
@@ -672,13 +672,13 @@ onUnmounted(() => {
   min-width: 30px;
   padding: 0 6px;
   border: none;
-  border-radius: 6px;
+  border-radius: var(--hh-radius-xs);
   background: transparent;
   color: var(--hh-color-text-dim);
   font-family: ui-monospace, Consolas, monospace;
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--hh-motion-med), color var(--hh-motion-med);
 }
 .regex-toggle:hover {
   background: var(--hh-color-surface-hover);
@@ -707,13 +707,13 @@ onUnmounted(() => {
   flex-shrink: 0;
   height: 32px;
   padding: 0 12px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-bright);
   color: var(--hh-color-text-mid-high);
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
 }
 .cat-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .cat-chip.active {
@@ -722,12 +722,12 @@ onUnmounted(() => {
   color: var(--hh-color-select-text);
   font-weight: 600;
 }
-.toolbar-count { font-size: 12px; color: var(--hh-color-text-tertiary); white-space: nowrap; }
+.toolbar-count { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-tertiary); white-space: nowrap; }
 
 /* 智能列表下拉 + 收藏/多选工具按钮（与 seg-btn 同口径） */
 .smart-select {
   height: 32px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   padding: 0 10px;
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-bright);
@@ -744,12 +744,12 @@ onUnmounted(() => {
 .tool-btn {
   width: 32px; height: 32px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background: transparent;
   color: var(--hh-color-text-mid);
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
 }
 .tool-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .tool-btn.active {
@@ -780,13 +780,13 @@ onUnmounted(() => {
   height: 30px;
   padding: 0 10px;
   border: none;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   background: transparent;
   color: var(--hh-color-text-bright);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-family: inherit;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: background var(--hh-motion-med) ease;
   text-align: left;
 }
 .export-item:hover { background: var(--hh-color-surface-mid); }
@@ -798,14 +798,14 @@ onUnmounted(() => {
   gap: 5px;
   height: 28px;
   padding: 0 10px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   border: 1px solid var(--hh-color-accent-ring);
   background: var(--hh-color-accent-soft);
   color: var(--hh-color-accent-text);
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   cursor: pointer;
   white-space: nowrap;
-  transition: background 0.15s;
+  transition: background var(--hh-motion-med);
 }
 .meta-chip:hover { background: var(--hh-color-accent-chip-bg); }
 
@@ -814,19 +814,19 @@ onUnmounted(() => {
   display: flex;
   gap: 2px;
   padding: 2px;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   background: var(--hh-color-surface-bright);
   border: 1px solid var(--hh-color-card-border);
 }
 .seg-btn {
   width: 32px; height: 32px;
   border: none;
-  border-radius: 999px;
+  border-radius: var(--hh-radius-pill);
   background: transparent;
   color: var(--hh-color-text-mid);
   cursor: pointer;
   display: flex; align-items: center; justify-content: center;
-  transition: background 0.15s ease, color 0.15s ease;
+  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
 }
 .seg-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .seg-btn.active {
@@ -836,13 +836,13 @@ onUnmounted(() => {
 
 .glass-btn {
   width: 36px; height: 36px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-float-border);
   background: var(--hh-color-panel-glass);
   color: var(--hh-color-text-bright);
   cursor: pointer;
   font-size: 15px;
-  transition: all 0.15s;
+  transition: all var(--hh-motion-med);
 }
 .glass-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
 .glass-btn.active {
@@ -857,7 +857,7 @@ onUnmounted(() => {
   align-self: stretch;
   flex: none;
   border: 1px solid var(--hh-color-panel-glass-border);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-mid);
   cursor: pointer;
@@ -865,7 +865,7 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: center;
   padding-top: 12px;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--hh-motion-med), color var(--hh-motion-med);
   margin: 8px;
 }
 .detail-collapsed:hover {
@@ -878,8 +878,8 @@ onUnmounted(() => {
   bottom: 16px; left: 50%;
   transform: translateX(-50%);
   padding: 10px 16px;
-  border-radius: 12px;
-  font-size: 13px;
+  border-radius: var(--hh-radius-lg);
+  font-size: var(--hh-font-body-size);
   color: var(--hh-color-error-soft-text);
   display: flex; gap: 10px; align-items: center;
   z-index: 20;

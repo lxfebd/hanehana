@@ -370,7 +370,7 @@ async function exportPoster(): Promise<void> {
   height: 32px;
   padding: 0 14px;
   border: 1px solid var(--hh-color-border-ghost-soft);
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background: transparent;
   color: var(--hh-color-text-strong);
   font-size: 12.5px;
@@ -388,17 +388,17 @@ async function exportPoster(): Promise<void> {
   align-items: center;
   gap: 10px;
   padding: 14px 16px;
-  border-radius: 12px;
+  border-radius: var(--hh-radius-lg);
 }
 .kpi-ic { color: var(--hh-color-accent); flex: none; }
 .kpi-num { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--hh-color-text-glow); }
 .kpi-label { font-size: 11.5px; color: var(--hh-color-text-tertiary); }
 .panel {
-  border-radius: 14px;
+  border-radius: var(--hh-radius-panel);
   padding: 14px 16px;
 }
 .panel-title {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   font-weight: 600;
   color: var(--hh-color-text-strong);
   margin-bottom: 10px;
@@ -410,14 +410,14 @@ async function exportPoster(): Promise<void> {
   max-width: 360px;
   padding: 36px 28px;
   text-align: center;
-  border-radius: 18px;
+  border-radius: var(--hh-radius-panel);
 }
 .empty-icon { color: var(--hh-color-text-tertiary); margin-bottom: 10px; }
-.empty-text { font-size: 13px; color: var(--hh-color-text-mid); }
+.empty-text { font-size: var(--hh-font-body-size); color: var(--hh-color-text-mid); }
 .error-banner {
   padding: 10px 14px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   color: var(--hh-color-error-text);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
 }
 </style>

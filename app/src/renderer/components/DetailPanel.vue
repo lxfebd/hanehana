@@ -319,11 +319,11 @@ function openBackups(): void {
   align-items: center;
   justify-content: center;
   border: none;
-  border-radius: 7px;
+  border-radius: var(--hh-radius-sm);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-mid);
   cursor: pointer;
-  transition: background 0.15s, color 0.15s;
+  transition: background var(--hh-motion-med), color var(--hh-motion-med);
   margin-bottom: -40px;
   flex: none;
 }
@@ -342,11 +342,11 @@ function openBackups(): void {
   color: var(--hh-color-text-mid);
 }
 .empty-icon { color: var(--hh-color-text-mid); }
-.empty-text { font-size: 13px; }
+.empty-text { font-size: var(--hh-font-body-size); }
 
 /* ============ 横幅 224px hero ============ */
 .banner {
-  border-radius: 14px;
+  border-radius: var(--hh-radius-panel);
   overflow: hidden;
   position: relative;
   height: 224px;
@@ -381,7 +381,7 @@ function openBackups(): void {
 .banner-cover {
   position: relative;
   width: 104px; height: 156px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   overflow: hidden;
   flex-shrink: 0;
   box-shadow: 0 6px 20px var(--hh-color-shade-banner);
@@ -403,7 +403,7 @@ function openBackups(): void {
   padding-bottom: 2px;
 }
 .banner-title {
-  font-size: 20px; line-height: 28px; font-weight: 700;
+  font-size: var(--hh-font-title-size); line-height: 28px; font-weight: 700;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -411,7 +411,7 @@ function openBackups(): void {
   text-shadow: 0 1px 6px var(--hh-color-shade-text);
 }
 .banner-native {
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-bright);
   text-shadow: 0 1px 4px var(--hh-color-shade-text);
 }
@@ -420,7 +420,7 @@ function openBackups(): void {
   font-size: 11px;
   background: var(--hh-color-surface-strong);
   padding: 2px 8px;
-  border-radius: 7px;
+  border-radius: var(--hh-radius-sm);
   display: flex; align-items: center; gap: 3px;
 }
 .chip-rating { color: var(--hh-color-star); font-weight: 600; }
@@ -431,13 +431,13 @@ function openBackups(): void {
   flex: 1;
   height: 40px;
   border: none;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   background-image: var(--hh-color-accent-grad);
   color: var(--hh-color-on-accent);
-  font-size: 14px; font-weight: 600;
+  font-size: var(--hh-font-bodyLg-size); font-weight: 600;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  transition: transform 0.12s, box-shadow 0.12s;
+  transition: transform var(--hh-motion-med), box-shadow var(--hh-motion-med);
   box-shadow: 0 4px 16px var(--hh-color-accent-shadow);
 }
 .primary-btn:hover {
@@ -449,14 +449,14 @@ function openBackups(): void {
 .ghost-btn {
   flex: 1;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-strong);
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  transition: background 0.12s;
+  transition: background var(--hh-motion-med);
 }
 .ghost-btn:hover { background: var(--hh-color-surface-hover-soft); }
 
@@ -465,14 +465,14 @@ function openBackups(): void {
 .fav-btn {
   flex: 1;
   height: 32px;
-  border-radius: 9px;
+  border-radius: var(--hh-radius-sm);
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: transparent;
   color: var(--hh-color-text-mid);
   font-size: 12.5px;
   cursor: pointer;
   display: flex; align-items: center; justify-content: center; gap: 6px;
-  transition: all 0.12s;
+  transition: all var(--hh-motion-med);
 }
 .fav-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
 .fav-btn.on {
@@ -500,12 +500,12 @@ function openBackups(): void {
 .variant-chip {
   font-size: 11.5px;
   padding: 4px 10px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   border: 1px solid var(--hh-color-surface-hover);
   background: transparent;
   color: var(--hh-color-text-mid-high);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all var(--hh-motion-med);
   max-width: 120px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -524,7 +524,7 @@ function openBackups(): void {
 .tag-chip {
   font-size: 11px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: var(--hh-radius-xs);
   background: var(--hh-color-accent-bg);
   color: var(--hh-color-accent-text);
 }
@@ -535,13 +535,13 @@ function openBackups(): void {
 .series-chip {
   font-size: 11px;
   padding: 3px 9px;
-  border-radius: 6px;
+  border-radius: var(--hh-radius-xs);
   background: var(--hh-color-accent-bg);
   color: var(--hh-color-accent-text);
   opacity: 0.85;
   border: 1px solid transparent;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all var(--hh-motion-med);
 }
 .series-chip:hover {
   opacity: 1;
@@ -571,12 +571,12 @@ function openBackups(): void {
 .cat-chip {
   font-size: 11.5px;
   padding: 5px 10px;
-  border-radius: 8px;
+  border-radius: var(--hh-radius-sm);
   border: 1px solid var(--hh-color-surface-hover);
   background: transparent;
   color: var(--hh-color-text-mid-high);
   cursor: pointer;
-  transition: all 0.12s;
+  transition: all var(--hh-motion-med);
 }
 .cat-chip:hover { background: var(--hh-color-surface-mid); }
 .cat-chip.on {
@@ -592,7 +592,7 @@ function openBackups(): void {
   gap: 4px;
 }
 .desc {
-  font-size: 13px;
+  font-size: var(--hh-font-body-size);
   line-height: 20px;
   color: var(--hh-color-text-mid-high);
   margin: 0;
@@ -609,7 +609,7 @@ function openBackups(): void {
   border: none;
   background: none;
   color: var(--hh-color-accent);
-  font-size: 12px;
+  font-size: var(--hh-font-caption-size);
   cursor: pointer;
   padding: 0;
 }
