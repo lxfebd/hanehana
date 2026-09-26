@@ -88,7 +88,7 @@ async function addOne(): Promise<void> {
   padding: 0 14px;
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: var(--hh-color-surface-soft);
-  color: var(--hh-color-on-accent);
+  color: var(--hh-color-text-strong);
   font-size: 13px;
   outline: none;
 }

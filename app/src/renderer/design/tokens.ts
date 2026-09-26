@@ -164,6 +164,11 @@ function gradToTop(baseHex: Hex, a1: number, a2: number): string {
   const [r, g, b] = hexToRgb(baseHex)
   return `linear-gradient(to top, ${baseHex} 0%, rgba(${r},${g},${b},${a1}) 55%, rgba(${r},${g},${b},${a2}) 100%)`
 }
+/** 实色成功底上的前景字：亮绿配深字、深绿配白字（运行徽章等，六套 preset 通用）。 */
+function onColor(hex: Hex): Hex {
+  const [r, g, b] = hexToRgb(hex)
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.55 ? '#0A1A10' : '#FFFFFF'
+}
 
 function deriveDark(s: DarkSeeds) {
   const tb = s.textBase
@@ -186,6 +191,7 @@ function deriveDark(s: DarkSeeds) {
     accentHover: s.accentHover,
     accentBg: rgba(hexToRgb(s.accent), 0.14),
     success: s.success,
+    onSuccess: onColor(s.success),
     warning: s.warning,
     error: s.error,
     scrim: 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))',
@@ -283,6 +289,7 @@ function deriveLight(s: LightSeeds) {
     accentHover: s.accentHover,
     accentBg: rgba(hexToRgb(s.accent), 0.1),
     success: s.success,
+    onSuccess: onColor(s.success),
     warning: s.warning,
     error: s.error,
     scrim: `linear-gradient(to top, rgba(${rgbCss(tb)},0.85), rgba(${rgbCss(tb)},0))`,

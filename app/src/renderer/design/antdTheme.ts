@@ -15,8 +15,15 @@ import { computed } from 'vue'
 import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import { theme } from 'ant-design-vue'
 import { ui } from '../stores/ui'
-import { colorState } from './tokens'
+import { colorState, themePresets } from './tokens'
 import type { TokenColors } from './tokens'
+
+/** RGB 元组 → 实色 hex（antd seed 只收实色，§0-3）。 */
+const seedHex = (c: readonly [number, number, number]): string =>
+  '#' +
+  c
+    .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0'))
+    .join('')
 
 /** 深浅主题的组件级覆盖（Modal/Select/Input/Button/Tabs 等） */
 function componentTokens(colors: TokenColors) {
@@ -66,10 +73,17 @@ function componentTokens(colors: TokenColors) {
 /** 按 UI 主题生成 antd ThemeConfig（响应式：切换后 ConfigProvider 自动重渲） */
 export const antdTheme = computed<ThemeConfig>(() => {
   const dark = ui.dark
+  // seed 跟随当前套件（sakura/starnight/mint）× 明暗：从种子色取实色 hex，
+  // 不再写死樱夜一套——否则切套件后 antd 控件底色/边框停留在旧主题。
+  const seeds = dark ? themePresets[ui.preset].dark : themePresets[ui.preset].light
   // seed 只喂实色 hex（§0-3）：rgba 会破坏 darkAlgorithm 的派生色链
-  const bodyBg = dark ? '#0E0B16' : '#FFFFFF'
-  const bodyText = dark ? '#F4F1FF' : '#26183A'
-  const border = dark ? '#424048' : '#CCCCCC'
+  const bodyBg = seedHex(seeds.night)
+  const bodyText = seedHex(seeds.textBase)
+  // 边框 = 底色向文字色混一小段：深浅两态各固定比例，六套 preset 同源跟随
+  const t = dark ? 0.22 : 0.15
+  const border = seedHex(
+    seeds.night.map((v, i) => v + (seeds.textBase[i] - v) * t) as [number, number, number],
+  )
   return {
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     token: {

@@ -419,7 +419,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 .cover-running {
   position: absolute; top: 8px; left: 8px;
   background: var(--hh-color-success-opaque);
-  color: var(--hh-color-on-accent); font-size: 11px; font-weight: 600;
+  color: var(--hh-color-on-success); font-size: 11px; font-weight: 600;
   padding: 3px 9px; border-radius: 8px;
   z-index: 2;
   display: flex; align-items: center; gap: 3px;
@@ -503,7 +503,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   width: 18px; height: 18px;
   border-radius: 6px;
   display: flex; align-items: center; justify-content: center;
-  font-size: 11px; color: var(--hh-color-on-accent);
+  font-size: 11px; color: var(--hh-color-on-success);
 }
 .list-fav {
   position: absolute; bottom: 3px; right: 3px;
