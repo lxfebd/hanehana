@@ -14,32 +14,35 @@
  *   - 标题栏：titleBarStyle: 'hidden' + titleBarOverlay 保留系统三个按钮，
  *     渲染层用 app-region: drag 画自定义标题栏。
  */
-import { app, BrowserWindow, ipcMain, dialog, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
-import { existsSync, writeFileSync } from 'node:fs'
-import { dirname, join, resolve, sep } from 'node:path'
+import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Ipc } from '../shared/ipc'
 import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
-import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
-import { normalizeChecksum } from '../shared/types'
-import { loadGames, getGames, getGame, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleAddOne, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup, setToolPaths } from './games'
-import { createSnapshot, deleteSnapshot, gameBackupDir, listAllBackups, restoreSnapshot, rotateSnapshots, syncToCloud } from './saves'
-import { scanSteamLibrary } from './steam'
+import type { TaskProgressPush, TaskRow } from '../shared/types'
+import { loadGames, getGames, ensureCoversDir } from './gameStore'
+import { detachAllRunning, setSessionSink, setCrashNotifier, setAutoBackup, setToolPaths } from './games'
+import { createSnapshot, rotateSnapshots } from './saves'
 import { engineStatus } from './engine'
-import { searchScrape, applyScrape } from './scraper'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
 import { Manager } from './manager'
-import { normalizeSettings, Store, dataDir, isPortable } from './store'
-import { computeOverview } from './stats'
+import { Store, dataDir } from './store'
 import { applyChromiumProxy } from './netConfig'
-import { proxyFormatError } from '../shared/proxy'
 import { TRAY_ICON_DATA_URL } from './trayIcon'
-import { checkUpdate, initAutoUpdater, installUpdate, setUpdatePush, updateEnabled } from './updater'
+import { checkUpdate, initAutoUpdater, setUpdatePush } from './updater'
 import { wireSites } from './sites/bridge'
-import { addTrack, checkTracks, loadTracking, removeTrack } from './tracking'
+import { checkTracks } from './tracking'
 import type { TrackCheckResult } from '../shared/types'
+import { registerSettingsHandlers } from './ipc/settings'
+import { registerWinHandlers } from './ipc/win'
+import { registerScanHandlers } from './ipc/scan'
+import { registerSteamHandlers } from './ipc/steam'
+import { registerBackupHandlers } from './ipc/backup'
+import { registerGamesHandlers } from './ipc/games'
+import { registerScrapeHandlers } from './ipc/scrape'
+import { registerTasksHandlers } from './ipc/tasks'
+import { registerStatsHandlers } from './ipc/stats'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const preloadPath = join(here, '../preload/index.cjs')
@@ -343,510 +346,33 @@ function notify(muted: boolean, title: string, body: string, taskId: string): vo
   n.show()
 }
 
-// ---------------------------------------------------------------- IPC 校验
+// ---------------------------------------------------------------- IPC 组装
 //
-// 渲染层的输入在这里全部当成不可信数据：类型不对就拒掉，而不是让主进程抛
-// 未捕获异常（那会让整个调度器连同正在下载的任务一起没掉）。
-
-const DOWNLOAD_URL_RE = /^(https?|ftp):\/\//i
-/** 动作白名单：与 preload 暴露的 action() 以及 Manager.action 的分支一致。 */
-const TASK_ACTIONS = new Set(['start', 'pause', 'resume', 'retry'])
-const ALL_ACTIONS = new Set(['start', 'pause', 'clear-finished', 'retry-failed'])
-
-function isId(v: unknown): v is string {
-  return typeof v === 'string' && v.length > 0 && v.length <= 64
-}
-
-function err(error: string): { ok: false; error: string } {
-  return { ok: false, error }
-}
-
-/** G14：把导出行数组转成 CSV（值里带逗号/引号/换行时按 RFC4180 引号包裹）。 */
-function gamesToCsv(rows: Record<string, unknown>[]): string {
-  if (!rows.length) return ''
-  const keys = Object.keys(rows[0])
-  const esc = (v: unknown): string => {
-    const s = String(v ?? '')
-    return /[",\n\r]/.test(s) ? '"' + s.replaceAll('"', '""') + '"' : s
-  }
-  return [keys.join(','), ...rows.map((r) => keys.map((k) => esc(r[k])).join(','))].join('\r\n')
-}
-
-/**
- * 用户在原生「选择目录」对话框里亲自选过的目录（小写绝对路径）。
- *
- * 下载路径必须落在「设置的默认目录」或这里面的某一棵子树内：引擎会照着这个
- * 路径创建文件、预分配几个 GB 的 .part，路径由渲染层随意指定的话，一个被
- * 注入的界面就能往启动项、系统目录里写东西。用户手选的目录是他自己授权的，
- * 所以记下来放行；重启后清空——那时用户可以再选一次。
- */
-const approvedDirs = new Set<string>()
-
-/** dest 是不是落在允许的目录树里（默认下载目录 + 本次会话用户手选的目录）。 */
-function isDestAllowed(dest: string, downloadDir: string): boolean {
-  const p = resolve(dest).toLowerCase()
-  const roots = [downloadDir, ...approvedDirs].filter((r): r is string => typeof r === 'string' && !!r)
-  for (const r of roots) {
-    const root = resolve(r).toLowerCase()
-    if (p === root || p.startsWith(root.endsWith(sep) ? root : root + sep)) return true
-  }
-  return false
-}
+// 各域的 ipcMain.handle 注册在 src/main/ipc/*，这里只注入运行时依赖（窗口、
+// 调度器、设置库、主题/防休眠回调）。渲染层输入的校验也随各 handler 就地
+// 完成——类型不对就拒掉，而不是让主进程抛未捕获异常。
 
 function wireIpc(): void {
-  const m = manager
-  const s = store
-
-  // 引擎自检结果搭 hello 一起下去：设置页靠它说明「下载为什么不可用、怎么修」。
-  // 每次调用都重新查，用户在设置页点「重新检测」时不用重启应用。
-  ipcMain.handle(Ipc.Hello, () => {
-    const st = engineStatus()
-    return {
-      name: 'hanehana',
-      version: app.getVersion(),
-      engine_ok: st.ok,
-      engine_path: st.path,
-      engine_hint: st.hint,
-      // G15 便携模式：让渲染层「关于」页直接显示真实数据目录，不用自己猜
-      data_dir: dataDir(),
-      portable: isPortable(),
-    }
-  })
-
-  // 新作追踪（G16）：订阅/取消/检查 VNDB 新作，命中弹系统通知（带激活窗口）
-  ipcMain.handle(Ipc.TrackList, () => loadTracking())
-  ipcMain.handle(Ipc.TrackAdd, (_e, keyword: unknown) => {
-    if (typeof keyword !== 'string' || !keyword.trim() || keyword.trim().length > 200) {
-      return { ok: false as const, error: '订阅词不能为空且不超过 200 字' }
-    }
-    return { ok: true as const, entry: addTrack(keyword) }
-  })
-  ipcMain.handle(Ipc.TrackRemove, (_e, id: unknown) => {
-    if (typeof id !== 'string' || !id) return { ok: false as const, error: '订阅不存在' }
-    return { ok: removeTrack(id) }
-  })
-  ipcMain.handle(Ipc.TrackCheck, async (): Promise<TrackCheckResult> => {
-    const r = await checkTracks()
-    notifyTrackFresh(r)
-    return r
-  })
-
-  // 游戏库
-  ipcMain.handle(Ipc.GameList, () => getGames())
-  // 统计报表：重放游玩会话聚合（量级小，无需缓存）
-  ipcMain.handle(Ipc.StatsOverview, () => computeOverview(getGames(), store.loadPlaySessions()))
-
-  // 全屏模式（G11）：切换主窗口全屏。渲染层只管调，窗口状态以主进程为准。
-  // 测试缝：CDP 对 OS 真全屏截图会残留旧帧合成鬼影（probe 已证布局本身正确）。
-  // HANEHANA_NO_OS_FULLSCREEN=1 时只回传目标态、不动 OS 全屏，视觉验收可干净截图。
-  // 生产环境从不设置该变量，行为不变。
-  ipcMain.handle(Ipc.FullscreenSet, (_e, on: unknown) => {
-    if (!win || typeof on !== 'boolean') return false
-    if (process.env['HANEHANA_NO_OS_FULLSCREEN'] === '1') return on
-    win.setFullScreen(on)
-    return win.isFullScreen()
-  })
-  ipcMain.handle(Ipc.FullscreenToggle, () => {
-    if (!win) return false
-    if (process.env['HANEHANA_NO_OS_FULLSCREEN'] === '1') return !win.isFullScreen()
-    win.setFullScreen(!win.isFullScreen())
-    return win.isFullScreen()
-  })
-  ipcMain.handle(Ipc.GameScan, async (_e, root: unknown) => {
-    if (typeof root !== 'string' || !root.trim() || root.length > 4000) {
-      return err('请先选择要扫描的目录')
-    }
-    try {
-      return await handleScan(root.trim())
-    } catch (e) {
-      return err(e instanceof Error ? e.message : String(e))
-    }
-  })
-  // 手动添加单款游戏（T25）：渲染层选一个 exe，主进程校验存在后直接入库。
-  // exePath 会写入 games.json 并被「启动」按钮执行——入参必须过存在性校验，不能信渲染层。
-  ipcMain.handle(Ipc.GameAddOne, (_e, exePath: unknown) => {
-    if (typeof exePath !== 'string' || !exePath.trim() || exePath.length > 4000 || /[\x00-\x1f]/.test(exePath)) {
-      return err('可执行文件路径无效')
-    }
-    return handleAddOne(exePath.trim())
-  })
-  // Steam 库导入（G4）：扫库目录 → 返回候选（含 appid/官方名）
-  ipcMain.handle(Ipc.SteamScan, async () => {
-    const candidates = await scanSteamLibrary()
-    // 剔除已入库的（按 exe 去重，与扫描一致）
-    const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
-    return candidates.filter((c) => !existing.has(c.exePath.toLowerCase()))
-  })
-  // 导入选中的 Steam 候选（渲染层传来的白名单形状：dir/exePath/rawTitle/appid）
-  ipcMain.handle(Ipc.SteamImport, (_e, entries: unknown) => {
-    if (!Array.isArray(entries) || entries.length > 500) return err('选择无效')
-    const list = entries
-      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-      .filter(
-        (x) =>
-          typeof x.dir === 'string' && x.dir &&
-          typeof x.exePath === 'string' && x.exePath &&
-          typeof x.rawTitle === 'string' && x.rawTitle,
-      )
-      .map((x) => ({
-        dir: x.dir as string,
-        exePath: x.exePath as string,
-        rawTitle: x.rawTitle as string,
-        appid: typeof x.appid === 'string' ? x.appid : undefined,
-      }))
-    if (!list.length) return { ok: true as const, added: 0, skipped: 0 }
-    const added = handleSteamImport(list)
-    return { ok: true as const, ...added }
-  })
-  // 存档备份（G1）：快照创建/列出/恢复/删除 + WebDAV 云同步
-  ipcMain.handle(Ipc.BackupsList, () => listAllBackups(getGames()))
-  ipcMain.handle(Ipc.BackupCreate, (_e, id: unknown) => {
-    if (!isId(id)) return err('游戏不存在')
-    const g = getGame(id)
-    if (!g) return err('游戏不在库中')
-    const snap = createSnapshot(g)
-    if (!snap) return err('游戏目录不存在，无法备份')
-    rotateSnapshots(g.id, s.loadSettings().backup_keep)
-    return snap
-  })
-  /** 快照路径必须在该游戏的备份目录内（IPC 输入不可信：防任意路径恢复/删除） */
-  function validSnapshotDir(id: string, snapshotDir: unknown): snapshotDir is string {
-    if (typeof snapshotDir !== 'string' || !snapshotDir) return false
-    const root = gameBackupDir(id)
-    const full = resolve(snapshotDir)
-    const base = resolve(root)
-    // 必须在备份根之下（含根本身），且不能是根——快照必是根下的子目录
-    return full.startsWith(base + sep) && existsSync(full)
+  const approvedDirs = new Set<string>()
+  const ctx = {
+    win: () => win,
+    manager: () => manager,
+    store: () => store,
+    approvedDirs: () => approvedDirs,
+    applyThemeMode,
+    applyThemeToWindow,
+    syncKeepAwake,
+    notifyTrackFresh,
   }
-
-  ipcMain.handle(Ipc.BackupRestore, (_e, id: unknown, snapshotDir: unknown) => {
-    if (!isId(id)) return err('游戏不存在')
-    const g = getGame(id)
-    if (!g) return err('游戏不在库中')
-    if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
-    return restoreSnapshot(g, snapshotDir)
-  })
-  ipcMain.handle(Ipc.BackupDelete, (_e, id: unknown, snapshotDir: unknown) => {
-    if (!isId(id)) return err('游戏不存在')
-    if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
-    return deleteSnapshot(id, snapshotDir) ? ({ ok: true as const }) : err('删除快照失败')
-  })
-  ipcMain.handle(Ipc.BackupSync, async (_e, id: unknown, snapshotDir: unknown) => {
-    if (!isId(id)) return err('游戏不存在')
-    const g = getGame(id)
-    if (!g) return err('游戏不在库中')
-    if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
-    const st = s.loadSettings()
-    if (!st.webdav_url) return err('未配置 WebDAV 同步地址')
-    return await syncToCloud(g, { url: st.webdav_url, user: st.webdav_user, pass: st.webdav_pass }, snapshotDir)
-  })
-
-  ipcMain.handle(Ipc.GameRemove, (_e, id: unknown) => {
-    if (!isId(id)) return err('游戏不存在')
-    handleRemove(id)
-    return { ok: true as const }
-  })
-  // patch 走白名单：渲染层能改哪些字段由主进程说了算，见 sanitizeGamePatch
-  ipcMain.handle(Ipc.GameUpdate, (_e, id: unknown, patch: unknown) => {
-    if (!isId(id)) return err('游戏不存在')
-    const clean = sanitizeGamePatch(patch)
-    // exePath 显式提交但被 sanitize 丢弃（不存在/非法）→ 明确报错不静默。
-    // 与当前值相同的旧路径不拦：文件可能被移走，用户只是在修标题等其他字段。
-    const raw = patch && typeof patch === 'object' ? (patch as Record<string, unknown>).exePath : undefined
-    if (typeof raw === 'string' && raw.trim() && !clean.exePath) {
-      const cur = getGame(id)
-      if (!cur || cur.exePath !== raw.trim()) return err('启动路径无效：文件不存在或格式不合法')
-    }
-    return handleUpdate(id, clean)
-  })
-  // 批量：entries=[{id, patch}]，逐条过白名单；未知 id 静默跳过
-  ipcMain.handle(Ipc.GameBatchUpdate, (_e, entries: unknown) => {
-    if (!Array.isArray(entries) || entries.length > 500) return err('选择无效')
-    const list = entries
-      .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
-      .filter((x) => isId(x.id))
-      .map((x) => ({ id: x.id as string, patch: sanitizeGamePatch(x.patch) }))
-    if (!list.length) return { ok: true as const, updated: 0, removed: 0 }
-    return { ok: true as const, ...handleBatchUpdate(list) }
-  })
-  ipcMain.handle(Ipc.GameBatchRemove, (_e, ids: unknown) => {
-    if (!Array.isArray(ids)) return err('选择无效')
-    const list = ids.filter(isId)
-    if (!list.length) return { ok: true as const, ...handleBatchRemove([]) }
-    return { ok: true as const, ...handleBatchRemove(list) }
-  })
-  ipcMain.handle(Ipc.GameLaunch, async (_e, id: unknown) => {
-    if (!isId(id)) return { ok: false as const, error: '游戏不存在' }
-    return handleLaunch(id)
-  })
-  ipcMain.handle(Ipc.GameRunning, () => handleRunning())
-  // 打开目录只接受磁盘上真实存在的路径：这个频道会在资源管理器里落地一个窗口，
-  // 不该由渲染层随便指定去哪儿。
-  ipcMain.handle(Ipc.OpenDir, (_e, dir: unknown) => {
-    if (typeof dir !== 'string' || !dir.trim() || dir.length > 4000) return
-    const p = dir.trim()
-    if (!existsSync(p)) return
-    handleOpenDir(p)
-  })
-  ipcMain.handle(Ipc.PickDir, async () => {
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openDirectory'],
-      title: '选择游戏目录',
-    }
-    const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    const picked = r.canceled ? '' : r.filePaths[0] ?? ''
-    // 用户在原生对话框里亲自选过的目录 = 授权写入点，下载路径沙箱认它（见 isDestAllowed）
-    if (picked) approvedDirs.add(resolve(picked).toLowerCase())
-    return picked
-  })
-
-  // G2 工具路径选择：原生文件对话框选 exe（LEProc/Magpie）。返回绝对路径或空串（取消）。
-  ipcMain.handle(Ipc.PickExe, async () => {
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      title: '选择可执行文件',
-      filters: [
-        { name: '程序', extensions: ['exe'] },
-        { name: '所有文件', extensions: ['*'] },
-      ],
-    }
-    const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    return r.canceled ? '' : r.filePaths[0] ?? ''
-  })
-
-  // G14 游戏库导出：弹保存对话框选 .csv / .json，把库里每个游戏的关键字段写出去。
-  // 返回值 { ok, path } 让渲染层能提示落盘位置；用户取消返回 { ok: true, canceled: true }。
-  ipcMain.handle(Ipc.ExportGames, async (_e, fmt: unknown) => {
-    const format = fmt === 'csv' || fmt === 'json' ? fmt : 'json'
-    const opts: Electron.SaveDialogOptions = {
-      title: '导出游戏库',
-      defaultPath: `hanehana-library.${format}`,
-      filters: format === 'csv' ? [{ name: 'CSV 表格', extensions: ['csv'] }] : [{ name: 'JSON', extensions: ['json'] }],
-    }
-    // 测试缝：HANEHANA_EXPORT_DEST 存在时跳过保存对话框直接写该路径（验收脚本用，生产不设）。
-    let filePath: string | undefined
-    if (process.env['HANEHANA_EXPORT_DEST']) {
-      filePath = process.env['HANEHANA_EXPORT_DEST']
-    } else {
-      const r = win && !win.isDestroyed() ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
-      if (r.canceled || !r.filePath) return { ok: true as const, canceled: true as const }
-      filePath = r.filePath
-    }
-    try {
-      const games = getGames().map((g) => ({
-        title: g.title,
-        titleNative: g.titleNative ?? '',
-        rawTitle: g.rawTitle,
-        developer: g.developer ?? '',
-        series: (g.series ?? []).join('; '),
-        releaseDate: g.releaseDate ?? '',
-        rating: g.rating ?? '',
-        tags: g.tags.join('; '),
-        categories: g.categories.join('; '),
-        dir: g.dir,
-        exePath: g.exePath,
-        playMs: g.playMs,
-        playHours: +(g.playMs / 3600000).toFixed(2),
-        lastPlayed: g.lastPlayed ? new Date(g.lastPlayed).toISOString() : '',
-        lengthMinutes: g.lengthMinutes ?? '',
-        favorite: g.favorite,
-      }))
-      const out = format === 'csv' ? gamesToCsv(games) : JSON.stringify(games, null, 2)
-      writeFileSync(filePath, out, 'utf8')
-      return { ok: true as const, canceled: false as const, path: filePath }
-    } catch (e) {
-      return err('导出失败：' + (e instanceof Error ? e.message : String(e)))
-    }
-  })
-
-  // 统计海报导出（PNG）：渲染层把统计页画成 PNG（base64 data URL），这里弹保存框写盘。
-  // 对齐 ExportGames 的测试缝：HANEHANA_EXPORT_DEST 存在时跳过对话框直接写该路径。
-  ipcMain.handle(Ipc.StatsPosterExport, async (_e, dataUrl: unknown) => {
-    const src = typeof dataUrl === 'string' ? dataUrl : ''
-    const m = /^data:image\/png;base64,([A-Za-z0-9+/=]+)$/.exec(src)
-    if (!m) return { ok: false as const, error: '海报数据无效' }
-    const opts: Electron.SaveDialogOptions = {
-      title: '导出统计海报',
-      defaultPath: `hanehana-stats-${new Date().toISOString().slice(0, 10)}.png`,
-      filters: [{ name: 'PNG 图片', extensions: ['png'] }],
-    }
-    let filePath: string | undefined
-    if (process.env['HANEHANA_EXPORT_DEST']) {
-      filePath = process.env['HANEHANA_EXPORT_DEST']
-    } else {
-      const r = win && !win.isDestroyed() ? await dialog.showSaveDialog(win, opts) : await dialog.showSaveDialog(opts)
-      if (r.canceled || !r.filePath) return { ok: true as const, canceled: true as const }
-      filePath = r.filePath
-    }
-    try {
-      writeFileSync(filePath, Buffer.from(m[1], 'base64'))
-      return { ok: true as const, canceled: false as const, path: filePath }
-    } catch (e) {
-      return err('海报导出失败：' + (e instanceof Error ? e.message : String(e)))
-    }
-  })
-
-  // 自定义背景图：原生文件对话框返回路径（渲染层存进 settings.bg_image）。
-  // 只放行图片格式；路径交给 normalizeSettings 的 existsSync 兜底。
-  ipcMain.handle(Ipc.PickBgImage, async () => {
-    const opts: Electron.OpenDialogOptions = {
-      properties: ['openFile'],
-      title: '选择背景图',
-      filters: [
-        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] },
-      ],
-    }
-    const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    return r.canceled ? '' : r.filePaths[0] ?? ''
-  })
-
-  // 元数据刮削
-  ipcMain.handle(Ipc.ScrapeSearch, (_e, title: string) => searchScrape(title))
-  ipcMain.handle(Ipc.ScrapeApply, (_e, gameId: unknown, result: unknown) => {
-    if (!isId(gameId)) return { ok: false as const, error: '游戏不存在' }
-    return applyScrape(gameId, result)
-  })
-
-  // ---- 下载引擎 ----
-  // 返回 rows（定义 + 实时快照）而不是裸 listDefs：渲染进程靠它恢复断点进度
-  ipcMain.handle(Ipc.TasksList, () => m.rows())
-
-  ipcMain.handle(Ipc.TasksAdd, (_e, input) => {
-    const raw = (input ?? {}) as Record<string, unknown>
-    const url = typeof raw.url === 'string' ? raw.url.trim() : ''
-    if (!DOWNLOAD_URL_RE.test(url)) return err('下载地址无效：需要 http(s):// 或 ftp:// 开头')
-    const dest = typeof raw.dest === 'string' ? raw.dest.trim() : ''
-    if (dest.length > 4000) return err('保存路径过长')
-    // 空串 = 用设置里的默认下载目录（Manager 会补），那本身就是允许的根。
-    if (dest && !isDestAllowed(dest, s.loadSettings().download_dir)) {
-      return err('保存路径不在允许的目录内：请用「浏览」选目录，或在设置里改默认保存目录')
-    }
-    const note = typeof raw.note === 'string' ? raw.note.trim().slice(0, 500) : ''
-    // 校验和要么当场判掉，要么原样落盘。放一串读不懂的字符进去，代价是
-    // 十几个 GB 下完之后才报「校验失败」，那时用户已经不知道差异出在哪了。
-    const checksum = normalizeChecksum(typeof raw.checksum === 'string' ? raw.checksum : '')
-    if (checksum === null) {
-      return err('校验和看不懂：需要 32 位（MD5）/ 40 位（SHA-1）/ 64 位（SHA-256）十六进制，或写成 sha256:… 的形式')
-    }
-    // 分片数按设置页的同一区间夹住（1-32）：引擎会为每一片开一条连接，
-    // 传个 10 万进来就是自己给自己造一次对目标站点的拒绝服务。
-    const requested = Number.isFinite(raw.threads) ? Math.floor(Number(raw.threads)) : s.loadSettings().threads
-    const threads = Math.min(32, Math.max(1, Number.isFinite(requested) ? requested : 8))
-    return { ok: true as const, ...m.add({ url, dest, threads, note, checksum }) }
-  })
-
-  // 移除任务。deleteFiles 由渲染层的勾选框决定：默认只删记录，磁盘上的东西
-  // 一律不动（界面上就是这么承诺的）。用户明确要求连文件一起删时，
-  // 只可能删这个任务自己的三个路径（成品 / .part / .part.meta），
-  // 而删不掉的（被占用、没权限）必须回报原因，不能假装清理成功了。
-  ipcMain.handle(Ipc.TasksRemove, async (_e, id: unknown, deleteFiles: unknown) => {
-    if (!isId(id) || !m.has(id)) return err('任务不存在，可能已经被移除')
-    const failures = await m.remove(id, deleteFiles === true)
-    if (failures.length) return err(`任务已移除，但文件没删掉：${failures.join('；')}`)
-    return { ok: true as const }
-  })
-  ipcMain.handle(Ipc.TasksClearFinished, async () => {
-    await m.clearFinished()
-    return { ok: true as const }
-  })
-  ipcMain.handle(Ipc.TaskAction, (_e, id: unknown, action: unknown) => {
-    if (!isId(id) || !m.has(id)) return err('任务不存在，可能已经被移除')
-    if (typeof action !== 'string' || !TASK_ACTIONS.has(action)) {
-      return err(`不支持的操作：${String(action)}`)
-    }
-    m.action(id, action)
-    return { ok: true as const }
-  })
-  ipcMain.handle(Ipc.TaskSetThreads, (_e, id: unknown, n: unknown) => {
-    if (!isId(id) || !m.has(id)) return err('任务不存在，可能已经被移除')
-    if (!Number.isFinite(n)) return err('线程数无效')
-    m.setThreads(id, Number(n))
-    return { ok: true as const }
-  })
-  // 事后补校验和：站点上的 md5 往往是用户下完才回去看到的。空串 = 取消校验。
-  ipcMain.handle(Ipc.TaskSetChecksum, (_e, id: unknown, cs: unknown) => {
-    if (!isId(id) || !m.has(id)) return err('任务不存在，可能已经被移除')
-    const checksum = normalizeChecksum(typeof cs === 'string' ? cs : '')
-    if (checksum === null) {
-      return err('校验和看不懂：需要 32 位（MD5）/ 40 位（SHA-1）/ 64 位（SHA-256）十六进制，或写成 sha256:… 的形式')
-    }
-    m.setChecksum(id, checksum)
-    return { ok: true as const }
-  })
-  ipcMain.handle(Ipc.ActionAll, async (_e, action: unknown) => {
-    if (typeof action !== 'string' || !ALL_ACTIONS.has(action)) {
-      return err(`不支持的操作：${String(action)}`)
-    }
-    await m.actionAll(action)
-    return { ok: true as const }
-  })
-
-  ipcMain.handle(Ipc.SettingsGet, () => s.loadSettings())
-  ipcMain.handle(Ipc.SettingsSave, async (_e, next) => {
-    // 不直接把渲染层的对象写盘：normalizeSettings 会把非法字段回落到默认值。
-    const prev = s.loadSettings()
-    const raw = (next && typeof next === 'object' ? next : {}) as Partial<Settings>
-    const saved = normalizeSettings(next)
-    // 固定模式（非 system）下 dark 与 theme_mode 必须一致，否则窗口跟谁走说不清：
-    // - 只改了 theme_mode（老脚本只翻 dark 时 mode 原样回带）→ 以 theme_mode 对齐 dark
-    // - 只改了 dark（老调用 {...s, dark:x}，mode 原样回带）→ theme_mode 跟随 dark 意图
-    // - 两者都改（新设置面板一次提交）→ 信任调用方已对齐
-    if (saved.theme_mode !== 'system') {
-      const modeChanged = typeof raw.theme_mode === 'string' && raw.theme_mode !== prev.theme_mode
-      const darkChanged = typeof raw.dark === 'boolean' && raw.dark !== prev.dark
-      if (modeChanged && !darkChanged) saved.dark = saved.theme_mode === 'dark'
-      else if (darkChanged && !modeChanged) saved.theme_mode = saved.dark ? 'dark' : 'light'
-      else saved.dark = saved.theme_mode === 'dark'
-    }
-    // 代理要「先确认能下发，再落盘」。顺序反了的话：盘里是新代理、Chromium 还在用
-    // 旧代理，用户看到的就是「设置了代理但没生效」，而这正是最难自己查出来的一种。
-    const bad = proxyFormatError(saved.proxy)
-    if (bad) return err(bad)
-    try {
-      await applyChromiumProxy(saved.proxy)
-    } catch (e) {
-      return err(`代理没能下发到内置浏览器与站点解析：${e instanceof Error ? e.message : String(e)}`)
-    }
-    s.saveSettings(saved)
-    m.applySettings(saved)
-    // 深浅主题：主进程窗口底色/标题栏/原生控件跟随模式（system 时按系统当前深浅）。
-    const effDark = applyThemeMode(saved.theme_mode)
-    applyThemeToWindow(effDark)
-    // 落盘值保持「当前生效」语义：system 模式时把 dark 同步成系统实际值，
-    // 渲染层与老脚本读到的 dark 始终与屏幕一致。
-    if (saved.theme_mode === 'system' && saved.dark !== effDark) {
-      s.saveSettings({ ...saved, dark: effDark })
-      saved.dark = effDark
-    }
-    // 防休眠开关改了要立刻生效，不能等下一秒的定时器——用户可能正把最后一个
-    // 任务勾上，然后就走开了。
-    syncKeepAwake()
-    // 用户填了路径但 normalizeSettings 没留下（不存在）的字段列出来，
-    // 渲染层提示「这个路径没生效」，避免保存成功但值还是旧的那个哑坑。
-    const discarded: string[] = []
-    for (const key of ['backup_dir', 'le_path', 'magpie_path'] as const) {
-      const input = (raw as Record<string, unknown>)[key]
-      const kept = saved[key]
-      if (typeof input === 'string' && input.trim() && !kept) discarded.push(key)
-    }
-    return { ok: true as const, settings: saved, ...(discarded.length ? { discarded } : {}) }
-  })
-
-  // 自动更新：检查与安装都由用户界面发起（“关于”页按钮），不在后台擅自下载。
-  // 状态推送经 setUpdatePush 接好，窗口不在时也能收到。
-  ipcMain.handle(Ipc.UpdateCheck, async () => {
-    const st = updateEnabled()
-    if (!st) return { ok: false as const, error: '自动更新仅打包版可用（开发模式无发布源）' }
-    void checkUpdate()
-    return { ok: true as const }
-  })
-
-  ipcMain.handle(Ipc.UpdateInstall, () => {
-    const st = updateEnabled()
-    if (!st) return { ok: false as const, error: '自动更新仅打包版可用（开发模式无发布源）' }
-    if (!installUpdate()) return { ok: false as const, error: '没有已下载的更新可安装' }
-    return { ok: true as const }
-  })
+  registerSettingsHandlers(ctx)
+  registerWinHandlers(ctx)
+  registerScanHandlers(ctx)
+  registerSteamHandlers(ctx)
+  registerBackupHandlers(ctx)
+  registerGamesHandlers(ctx)
+  registerScrapeHandlers(ctx)
+  registerTasksHandlers(ctx)
+  registerStatsHandlers(ctx)
 }
 
 // ---------------------------------------------------------------- 生命周期

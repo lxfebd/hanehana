@@ -4,7 +4,8 @@
  * 主进程 handleAddOne 会校验文件存在、按 exe 去重，返回 { ok, game } 或 { ok:false, error }。
  */
 import { computed, ref, watch } from 'vue'
-import { Modal, message } from 'ant-design-vue'
+import { message } from 'ant-design-vue'
+import DialogShell from './DialogShell.vue'
 import { refreshGames } from '../stores/library'
 
 const open = defineModel<boolean>('open')
@@ -57,7 +58,7 @@ async function addOne(): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="480" :centered="true" title="手动添加游戏">
+  <DialogShell v-model:open="open" title="手动添加游戏" :width="480">
     <div class="add-body">
       <div class="row">
         <input v-model="exePath" class="path-input" placeholder="游戏 exe 路径，如 D:\Games\Game\game.exe" @keyup.enter="addOne" />
@@ -75,7 +76,7 @@ async function addOne(): Promise<void> {
 
       <div class="hint">直接选一个可执行文件加入游戏库（不会扫描所在目录）。重复的 exe 会被自动跳过。</div>
     </div>
-  </Modal>
+  </DialogShell>
 </template>
 
 <style scoped>

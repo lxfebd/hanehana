@@ -5,7 +5,7 @@
  *  - 候选列出（官方名 + 路径 + appid），勾选后批量导入
  */
 import { ref } from 'vue'
-import { Modal } from 'ant-design-vue'
+import DialogShell from './DialogShell.vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { refreshGames } from '../stores/library'
 import type { SteamCandidate } from '../../shared/types'
@@ -72,7 +72,7 @@ async function doImport(): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="560" :centered="true" title="从 Steam 导入">
+  <DialogShell v-model:open="open" title="从 Steam 导入" :width="560">
     <div class="steam-body">
       <div class="row">
         <button class="scan-btn" :disabled="scanning" @click="runScan">
@@ -98,7 +98,7 @@ async function doImport(): Promise<void> {
         </button>
       </div>
     </div>
-  </Modal>
+  </DialogShell>
 </template>
 
 <style scoped>

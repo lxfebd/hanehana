@@ -6,7 +6,8 @@
  *  - 弹窗内用 antd Input/InputNumber/Select（tags 用 mode=tags）
  */
 import { ref, watch } from 'vue'
-import { Input, InputNumber, Modal, Select } from 'ant-design-vue'
+import { Input, InputNumber, Select } from 'ant-design-vue'
+import DialogShell from './DialogShell.vue'
 import { library, saveManualEdit } from '../stores/library'
 import type { Game, GameVariant } from '../../shared/types'
 
@@ -137,7 +138,7 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="560" :centered="true" title="编辑游戏信息">
+  <DialogShell v-model:open="open" title="编辑游戏信息" :width="560">
     <div class="edit-body">
       <label class="field">
         <span class="label">标题</span>
@@ -230,7 +231,7 @@ async function save(): Promise<void> {
         <button class="btn primary" @click="save">保存</button>
       </div>
     </div>
-  </Modal>
+  </DialogShell>
 </template>
 
 <style scoped>

@@ -9,6 +9,7 @@
 import { computed, ref, watch } from 'vue'
 import { CloudUpload, DatabaseBackup, HardDriveDownload, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { Modal, message } from 'ant-design-vue'
+import DialogShell from './DialogShell.vue'
 import { library } from '../stores/library'
 import type { BackupStats, SnapshotInfo } from '../../shared/types'
 
@@ -165,7 +166,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="600" :centered="true" title="存档备份">
+  <DialogShell v-model:open="open" title="存档备份" :width="600">
     <div class="backup-body">
       <div class="head-row">
         <div class="title-wrap">
@@ -215,7 +216,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
         恢复前当前存档会先挪到 .pre-restore 下，可找回。
       </div>
     </div>
-  </Modal>
+  </DialogShell>
 </template>
 
 <style scoped>

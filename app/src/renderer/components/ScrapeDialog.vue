@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Modal, Spin } from 'ant-design-vue'
+import { Spin } from 'ant-design-vue'
+import DialogShell from './DialogShell.vue'
 import { Star } from 'lucide-vue-next'
 import { applyScrapeResult, library, runSearch } from '../stores/library'
 import type { ScrapeCandidate } from '../../shared/types'
@@ -55,7 +56,7 @@ async function apply(): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="560" :centered="true" title="元数据刮削">
+  <DialogShell v-model:open="open" title="元数据刮削" :width="560">
     <div class="scrape-body">
       <div class="row">
         <div class="search-box">
@@ -105,7 +106,7 @@ async function apply(): Promise<void> {
         <button class="apply-btn" :disabled="!selected" @click="apply">应用选中</button>
       </div>
     </div>
-  </Modal>
+  </DialogShell>
 </template>
 
 <style scoped>

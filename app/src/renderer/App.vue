@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { App as AntApp, ConfigProvider, Modal, message } from 'ant-design-vue'
+import { App as AntApp, ConfigProvider, message } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, MoreHorizontal, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2, Plus } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
@@ -23,6 +23,7 @@ import StatsView from './components/StatsView.vue'
 import SteamImportDialog from './components/SteamImportDialog.vue'
 import BackupDialog from './components/BackupDialog.vue'
 import FullscreenView from './components/FullscreenView.vue'
+import DialogShell from './components/DialogShell.vue'
 
 const bootInfo = ref('')
 let unsubPushes: Array<() => void> = []
@@ -444,12 +445,10 @@ onUnmounted(() => {
         <!-- 全屏模式：覆盖整个窗口，独立于普通布局 -->
         <FullscreenView v-if="ui.fullscreen" @exit="exitFullscreen" />
 
-        <Modal
+        <DialogShell
           v-model:open="downloads.addDialogOpen"
-          :footer="null"
-          :width="540"
-          :destroy-on-close="true"
           title="新建下载"
+          :width="540"
         >
           <NewDownloadDialog
             v-if="downloads.settings"
@@ -457,17 +456,15 @@ onUnmounted(() => {
             :settings="downloads.settings"
             @submit="submitAddTask"
           />
-        </Modal>
+        </DialogShell>
 
-        <Modal
+        <DialogShell
           v-model:open="ui.settingsOpen"
-          :footer="null"
-          :width="680"
-          :destroy-on-close="true"
           title="偏好设置"
+          :width="680"
         >
           <SettingsDialog v-if="downloads.settings" :settings="downloads.settings" @save="saveSettings" />
-        </Modal>
+        </DialogShell>
       </div>
     </AntApp>
   </ConfigProvider>

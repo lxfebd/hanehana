@@ -1,0 +1,102 @@
+/**
+ * 设置 / 引擎自检 / 自动更新 / 新作追踪 IPC。通道名来自 Ipc，一字不改。
+ */
+import { app, ipcMain } from 'electron'
+import { Ipc } from '../../shared/ipc'
+import type { Settings, TrackCheckResult } from '../../shared/types'
+import { engineStatus } from '../engine'
+import { normalizeSettings, dataDir, isPortable } from '../store'
+import { applyChromiumProxy } from '../netConfig'
+import { proxyFormatError } from '../../shared/proxy'
+import { checkUpdate, installUpdate, updateEnabled } from '../updater'
+import { addTrack, checkTracks, loadTracking, removeTrack } from '../tracking'
+import { err, type IpcCtx } from './shared'
+
+export function registerSettingsHandlers(ctx: IpcCtx): void {
+  const m = () => ctx.manager()
+  const s = () => ctx.store()
+
+  // 引擎自检结果搭 hello 一起下去：设置页靠它说明「下载为什么不可用、怎么修」。
+  ipcMain.handle(Ipc.Hello, () => {
+    const st = engineStatus()
+    return {
+      name: 'hanehana',
+      version: app.getVersion(),
+      engine_ok: st.ok,
+      engine_path: st.path,
+      engine_hint: st.hint,
+      data_dir: dataDir(),
+      portable: isPortable(),
+    }
+  })
+
+  // 新作追踪（G16）
+  ipcMain.handle(Ipc.TrackList, () => loadTracking())
+  ipcMain.handle(Ipc.TrackAdd, (_e, keyword: unknown) => {
+    if (typeof keyword !== 'string' || !keyword.trim() || keyword.trim().length > 200) {
+      return { ok: false as const, error: '订阅词不能为空且不超过 200 字' }
+    }
+    return { ok: true as const, entry: addTrack(keyword) }
+  })
+  ipcMain.handle(Ipc.TrackRemove, (_e, id: unknown) => {
+    if (typeof id !== 'string' || !id) return { ok: false as const, error: '订阅不存在' }
+    return { ok: removeTrack(id) }
+  })
+  ipcMain.handle(Ipc.TrackCheck, async (): Promise<TrackCheckResult> => {
+    const r = await checkTracks()
+    ctx.notifyTrackFresh(r)
+    return r
+  })
+
+  ipcMain.handle(Ipc.SettingsGet, () => s().loadSettings())
+  ipcMain.handle(Ipc.SettingsSave, async (_e, next) => {
+    const prev = s().loadSettings()
+    const raw = (next && typeof next === 'object' ? next : {}) as Partial<Settings>
+    const saved = normalizeSettings(next)
+    if (saved.theme_mode !== 'system') {
+      const modeChanged = typeof raw.theme_mode === 'string' && raw.theme_mode !== prev.theme_mode
+      const darkChanged = typeof raw.dark === 'boolean' && raw.dark !== prev.dark
+      if (modeChanged && !darkChanged) saved.dark = saved.theme_mode === 'dark'
+      else if (darkChanged && !modeChanged) saved.theme_mode = saved.dark ? 'dark' : 'light'
+      else saved.dark = saved.theme_mode === 'dark'
+    }
+    const bad = proxyFormatError(saved.proxy)
+    if (bad) return err(bad)
+    try {
+      await applyChromiumProxy(saved.proxy)
+    } catch (e) {
+      return err(`代理没能下发到内置浏览器与站点解析：${e instanceof Error ? e.message : String(e)}`)
+    }
+    s().saveSettings(saved)
+    m().applySettings(saved)
+    const effDark = ctx.applyThemeMode(saved.theme_mode)
+    ctx.applyThemeToWindow(effDark)
+    if (saved.theme_mode === 'system' && saved.dark !== effDark) {
+      s().saveSettings({ ...saved, dark: effDark })
+      saved.dark = effDark
+    }
+    ctx.syncKeepAwake()
+    const discarded: string[] = []
+    for (const key of ['backup_dir', 'le_path', 'magpie_path'] as const) {
+      const input = (raw as Record<string, unknown>)[key]
+      const kept = saved[key]
+      if (typeof input === 'string' && input.trim() && !kept) discarded.push(key)
+    }
+    return { ok: true as const, settings: saved, ...(discarded.length ? { discarded } : {}) }
+  })
+
+  // 自动更新：检查与安装都由用户界面发起
+  ipcMain.handle(Ipc.UpdateCheck, async () => {
+    const st = updateEnabled()
+    if (!st) return { ok: false as const, error: '自动更新仅打包版可用（开发模式无发布源）' }
+    void checkUpdate()
+    return { ok: true as const }
+  })
+
+  ipcMain.handle(Ipc.UpdateInstall, () => {
+    const st = updateEnabled()
+    if (!st) return { ok: false as const, error: '自动更新仅打包版可用（开发模式无发布源）' }
+    if (!installUpdate()) return { ok: false as const, error: '没有已下载的更新可安装' }
+    return { ok: true as const }
+  })
+}

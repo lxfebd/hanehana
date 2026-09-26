@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, watch } from 'vue'
-import { Modal } from 'ant-design-vue'
+import DialogShell from './DialogShell.vue'
 import { refreshGames } from '../stores/library'
 
 const open = defineModel<boolean>('open')
@@ -55,7 +55,7 @@ async function pickDir(): Promise<void> {
 </script>
 
 <template>
-  <Modal v-model:open="open" :footer="null" width="480" :centered="true" title="扫描导入游戏">
+  <DialogShell v-model:open="open" title="扫描导入游戏" :width="480">
     <div class="scan-body">
       <div class="row">
         <input v-model="dir" class="path-input" placeholder="游戏目录，如 D:\Games" @keyup.enter="runScan" />
@@ -78,7 +78,7 @@ async function pickDir(): Promise<void> {
 
       <div class="hint">扫描会递归查找目录下所有 .exe/.bat/.lnk，自动排除汉化补丁、安装器等工具文件。</div>
     </div>
-  </Modal>
+  </DialogShell>
 </template>
 
 <style scoped>
