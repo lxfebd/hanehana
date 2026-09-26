@@ -18,14 +18,18 @@
  *   - 右摇杆：无（保留给未来缩放）
  */
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { RecycleScroller } from 'vue-virtual-scroller'
+import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Heart, Search, X } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
-import { categories, filteredGames, library, selectGame, thumbUrl, toggleFavorite } from '../stores/library'
+import { categories, debouncedKeyword, filteredGames, library, selectGame, thumbUrl, toggleFavorite } from '../stores/library'
 import { t } from '../i18n'
 
 const emit = defineEmits<{ exit: [] }>()
 
 const containerRef = ref<HTMLElement | null>(null)
+/** RecycleScroller 实例：类型声明只有 props，方法用松类型收（scrollToItem 运行时存在） */
+const scrollerRef = ref<{ scrollToItem?: (i: number) => void } | null>(null)
 const cols = ref(1)
 const focusIdx = ref(0)
 const showBar = ref(true)
@@ -38,11 +42,48 @@ let lastPadAt = 0
 /** 全屏里始终用网格视图 */
 const games = computed(() => filteredGames.value)
 
+/**
+ * 虚拟化度量（P1-3，对照 CoverGrid §3.5）：
+ *   卡槽 260（封面 240 + 列距 20）；封面 3:4 → 高 320；行距 20 → itemSize 340。
+ *   标题叠在封面上，不占额外行高。
+ */
+const FS_SLOT = 260
+const FS_CARD_W = 240
+const FS_ROW_GAP = 20
+const FS_ROW_H = Math.round((FS_CARD_W * 4) / 3) + FS_ROW_GAP // 340
+
+/** 行 wrapper 宽度 = cols*260 - 20，与旧 CSS grid 1fr 布局观感一致 */
+const fsGridW = computed(() => `${cols.value * FS_SLOT - FS_ROW_GAP}px`)
+
+/** 筛选指纹：数量突变后强制重建 scroller（复用 CoverGrid 约定） */
+const filterFingerprint = computed(
+  () => `${debouncedKeyword.value}|${library.categoryFilter}|${library.favOnly}|${cols.value}`,
+)
+
 /** 网格列数：全屏铺满，卡槽 260px（封面 240 + 间距 20） */
 function updateCols(): void {
   const el = containerRef.value
   if (!el) return
-  cols.value = Math.max(1, Math.floor((el.clientWidth + 20) / 260))
+  cols.value = Math.max(1, Math.floor((el.clientWidth + FS_ROW_GAP) / FS_SLOT))
+}
+
+/** 按列数切行；行 key 带列数，避免窗口缩放后复用旧行 DOM */
+const fsRows = computed(() => {
+  const c = cols.value
+  const rows: { k: string; items: { g: Game; i: number }[] }[] = []
+  const list = games.value
+  for (let i = 0; i < list.length; i += c) {
+    const items: { g: Game; i: number }[] = []
+    for (let j = i; j < Math.min(i + c, list.length); j++) items.push({ g: list[j]!, i: j })
+    rows.push({ k: `${c}-${Math.floor(i / c)}`, items })
+  }
+  return rows
+})
+
+/** 键盘/手柄移动后把选中行滚进视口（RecycleScroller 不自动跟 focusIdx） */
+function scrollFocusIntoView(): void {
+  const row = Math.floor(focusIdx.value / Math.max(1, cols.value))
+  scrollerRef.value?.scrollToItem?.(row)
 }
 
 onMounted(() => {
@@ -89,9 +130,12 @@ function selectAt(idx: number): void {
 
 function moveFocus(next: number): void {
   selectAt(next)
-  // 滚动到可视区（容器滚动）
-  const el = containerRef.value?.querySelector('[data-fs-selected="true"]')
-  el?.scrollIntoView({ block: 'nearest' })
+  scrollFocusIntoView()
+  // 滚动到可视区（容器滚动；虚拟化下目标卡可能尚未挂载，以行滚动为准）
+  requestAnimationFrame(() => {
+    const el = containerRef.value?.querySelector('[data-fs-selected="true"]')
+    el?.scrollIntoView({ block: 'nearest' })
+  })
 }
 
 function onKeydown(e: KeyboardEvent): void {
@@ -220,32 +264,47 @@ function imgErr(e: Event): void {
       <div class="fs-empty-hint">Esc 退出全屏，先到普通视图扫描导入游戏</div>
     </div>
 
-    <!-- 封面墙：CSS grid 自适应列，天然适合全屏 -->
-    <div v-else class="fs-grid" :style="{ gridTemplateColumns: `repeat(${cols}, 1fr)` }">
-      <div
-        v-for="(g, i) in games"
-        :key="g.id"
-        class="fs-card"
-        :class="{ selected: focusIdx === i }"
-        :data-fs-selected="focusIdx === i"
-        role="button"
-        :tabindex="focusIdx === i ? 0 : -1"
-        @click="selectAt(i)"
-        @dblclick="launchSel()"
-        @keydown.enter.prevent="launchSel()"
-      >
-        <div class="fs-thumb" :style="{ background: placeholderBg(g) }">
-          <img v-if="thumbUrl(g)" :src="thumbUrl(g)" :alt="g.title" @error="imgErr" />
-          <span v-else class="fs-letter">{{ g.title.slice(0, 2) }}</span>
-          <div v-if="g.favorite" class="fs-fav"><Heart :size="11" :fill="'currentColor'" :stroke-width="0" /></div>
-          <div class="fs-shade"></div>
-          <div class="fs-title-zone">
-            <div class="fs-title" :title="g.title">{{ g.title }}</div>
-            <div class="fs-sub" v-if="fmtSub(g)">{{ fmtSub(g) }}</div>
+    <!-- 封面墙：行级虚拟化（P1-3）。scroller 负责纵向窗口化，行内 flex 排卡片。 -->
+    <RecycleScroller
+      v-else
+      ref="scrollerRef"
+      :key="`fs-${filterFingerprint}`"
+      class="fs-scroller"
+      :items="fsRows"
+      :item-size="FS_ROW_H"
+      key-field="k"
+      :page-mode="false"
+      :buffer="400"
+      item-class="fs-row-item"
+    >
+      <template #default="{ item }">
+        <div class="fs-row" :style="{ width: fsGridW }">
+          <div
+            v-for="entry in item.items"
+            :key="entry.g.id"
+            class="fs-card"
+            :class="{ selected: focusIdx === entry.i }"
+            :data-fs-selected="focusIdx === entry.i"
+            role="button"
+            :tabindex="focusIdx === entry.i ? 0 : -1"
+            @click="selectAt(entry.i)"
+            @dblclick="launchSel()"
+            @keydown.enter.prevent="launchSel()"
+          >
+            <div class="fs-thumb" :style="{ background: placeholderBg(entry.g) }">
+              <img v-if="thumbUrl(entry.g)" :src="thumbUrl(entry.g)" :alt="entry.g.title" @error="imgErr" />
+              <span v-else class="fs-letter">{{ entry.g.title.slice(0, 2) }}</span>
+              <div v-if="entry.g.favorite" class="fs-fav"><Heart :size="11" :fill="'currentColor'" :stroke-width="0" /></div>
+              <div class="fs-shade"></div>
+              <div class="fs-title-zone">
+                <div class="fs-title" :title="entry.g.title">{{ entry.g.title }}</div>
+                <div class="fs-sub" v-if="fmtSub(entry.g)">{{ fmtSub(entry.g) }}</div>
+              </div>
+            </div>
           </div>
         </div>
-      </div>
-    </div>
+      </template>
+    </RecycleScroller>
 
     <!-- 底部操作提示（客厅场景） -->
     <div class="fs-hints" :class="{ hidden: !showBar }">
@@ -281,7 +340,7 @@ function imgErr(e: Event): void {
   inset: 0;
   z-index: 1000;
   background: var(--fs-bg);
-  overflow-y: auto;
+  overflow: hidden;
   color: var(--fs-ink-fill);
   display: flex;
   flex-direction: column;
@@ -368,15 +427,25 @@ function imgErr(e: Event): void {
 .fs-btn:hover { background: var(--fs-glass-hover); }
 .fs-btn.active { background: var(--hh-color-accent); color: var(--fs-ink-fill); }
 
-/* 封面墙 */
-.fs-grid {
+/* 封面墙：RecycleScroller 自己滚，行内 flex 排卡（P1-3） */
+.fs-scroller {
   flex: 1;
-  display: grid;
+  min-height: 0;
+  height: auto;
+}
+.fs-row {
+  display: flex;
   gap: 20px;
-  padding: 8px 24px 90px;
-  align-content: start;
+  margin: 0 auto;
+  padding: 8px 0 90px;
+  box-sizing: border-box;
+}
+.fs-row-item {
+  display: block;
 }
 .fs-card {
+  flex: 1;
+  min-width: 0;
   cursor: pointer;
   border-radius: 14px;
   outline: none;
