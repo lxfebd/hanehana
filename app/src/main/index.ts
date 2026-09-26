@@ -24,7 +24,7 @@ import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { Settings, TaskProgressPush, TaskRow } from '../shared/types'
 import { normalizeChecksum } from '../shared/types'
 import { loadGames, getGames, getGame, ensureCoversDir, sanitizeGamePatch } from './gameStore'
-import { handleScan, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup, setToolPaths } from './games'
+import { handleScan, handleAddOne, handleRemove, handleUpdate, handleBatchUpdate, handleBatchRemove, handleOpenDir, handleLaunch, handleRunning, detachAllRunning, setSessionSink, setCrashNotifier, handleSteamImport, setAutoBackup, setToolPaths } from './games'
 import { createSnapshot, deleteSnapshot, gameBackupDir, listAllBackups, restoreSnapshot, rotateSnapshots, syncToCloud } from './saves'
 import { scanSteamLibrary } from './steam'
 import { engineStatus } from './engine'
@@ -452,6 +452,14 @@ function wireIpc(): void {
       throw new Error('请先选择要扫描的目录')
     }
     return handleScan(root.trim())
+  })
+  // 手动添加单款游戏（T25）：渲染层选一个 exe，主进程校验存在后直接入库。
+  // exePath 会写入 games.json 并被「启动」按钮执行——入参必须过存在性校验，不能信渲染层。
+  ipcMain.handle(Ipc.GameAddOne, (_e, exePath: unknown) => {
+    if (typeof exePath !== 'string' || !exePath.trim() || exePath.length > 4000 || /[\x00-\x1f]/.test(exePath)) {
+      return err('可执行文件路径无效')
+    }
+    return handleAddOne(exePath.trim())
   })
   // Steam 库导入（G4）：扫库目录 → 返回候选（含 appid/官方名）
   ipcMain.handle(Ipc.SteamScan, async () => {

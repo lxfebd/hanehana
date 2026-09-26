@@ -7,9 +7,9 @@
  */
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { basename } from 'node:path'
+import { basename, dirname } from 'node:path'
 import { shell } from 'electron'
-import { addGames, getGame, getGames, removeGame, updateGame } from './gameStore'
+import { addGames, findGameByExe, getGame, getGames, removeGame, updateGame } from './gameStore'
 import { scanDir, isValidDir } from './scanner'
 import type { Game, GameVariant, PlaySession, SteamImportResult } from '../shared/types'
 
@@ -41,9 +41,21 @@ export async function handleScan(root: string): Promise<ScanResult> {
   return { added, hits, skipped: hits.length - fresh.length }
 }
 
+/** 手动添加单款游戏：直接指定一个 exe 入库（T25，不走目录扫描）。 */
+export function handleAddOne(exePath: string): { ok: true; game: Game } | { ok: false; error: string } {
+  if (!existsSync(exePath)) return { ok: false, error: '文件不存在：' + exePath }
+  const dir = dirname(exePath)
+  const rawTitle = basename(exePath).replace(/\.[^.]+$/, '')
+  const added = addGames([{ dir, exePath, rawTitle, title: rawTitle, useLE: false, useMagpie: false }])
+  if (added.length === 0) {
+    const ex = findGameByExe(exePath)
+    return { ok: false, error: `该 exe 已在库中：${ex?.title ?? exePath}` }
+  }
+  return { ok: true, game: added[0] }
+}
+
 /** Steam 导入（G4）：把选中的 Steam 候选入库。 */
-export function handleSteamImport(candidates: { dir: string; exePath: string; rawTitle: string; appid?: string }[]): SteamImportResult {
-  const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
+export function handleSteamImport(candidates: { dir: string; exePath: string; rawTitle: string; appid?: string }[]): SteamImportResult {  const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
   const fresh = candidates.filter((c) => !existing.has(c.exePath.toLowerCase()))
   const added = addGames(
     fresh.map((c) => ({

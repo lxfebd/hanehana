@@ -19,6 +19,9 @@ const bridge = {
   steamScan: (): Promise<import('../shared/types').SteamCandidate[]> => ipcRenderer.invoke(Ipc.SteamScan),
   steamImport: (entries: { dir: string; exePath: string; rawTitle: string; appid?: string }[]): Promise<import('../shared/types').SteamImportResult> =>
     ipcRenderer.invoke(Ipc.SteamImport, entries),
+  /** 手动添加单款游戏：给定 exe 路径，主进程校验存在后入库（返回 {ok, game} 或 {ok:false, error}） */
+  addGameOne: (exePath: string): Promise<{ ok: boolean; game?: import('../shared/types').Game; error?: string }> =>
+    ipcRenderer.invoke(Ipc.GameAddOne, exePath),
 
   // 元数据刮削
   scrapeSearch: (title: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title),

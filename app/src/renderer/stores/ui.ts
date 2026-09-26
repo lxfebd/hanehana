@@ -18,6 +18,8 @@ export const ui = reactive({
   detailCollapsed: false,
   /** Steam 导入对话框 */
   steamImportOpen: false,
+  /** 手动添加游戏对话框（T25：选 exe 直接入库） */
+  addGameOpen: false,
   /** 全屏模式（G11）：进入全屏封面墙后为 true（由主进程推送校正） */
   fullscreen: false,
 })

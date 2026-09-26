@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { App as AntApp, ConfigProvider, Modal, message } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2 } from 'lucide-vue-next'
+import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2, Plus } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, startRunningSync, stopRunningSync, thumbUrl } from './stores/library'
 import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
@@ -11,6 +11,7 @@ import { setLanguage, t } from './i18n'
 import CoverGrid from './components/CoverGrid.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
+import AddGameDialog from './components/AddGameDialog.vue'
 import ScrapeDialog from './components/ScrapeDialog.vue'
 import DownloadView from './components/DownloadView.vue'
 import NewDownloadDialog from './components/NewDownloadDialog.vue'
@@ -268,6 +269,10 @@ onUnmounted(() => {
               <ScanSearch :size="16" class="nav-ic" />
               <span>{{ t('lib_scan') }}</span>
             </button>
+            <button class="nav-item" @click="ui.addGameOpen = true">
+              <Plus :size="16" class="nav-ic" />
+              <span>{{ t('lib_add_one') }}</span>
+            </button>
             <button class="nav-item" @click="ui.steamImportOpen = true">
               <Gamepad2 :size="16" class="nav-ic" />
               <span>{{ t('nav_steam_import') }}</span>
@@ -410,6 +415,7 @@ onUnmounted(() => {
         </div>
 
         <ScanDialog v-model:open="library.scanOpen" />
+        <AddGameDialog v-model:open="ui.addGameOpen" />
         <ScrapeDialog v-model:open="library.scrapeOpen" />
         <EditDialog v-model:open="library.editOpen" />
         <SteamImportDialog v-model:open="ui.steamImportOpen" />

@@ -18,6 +18,8 @@ export const Ipc = {
   GameBatchRemove: 'hanehana:games:batch-remove',
   SteamScan: 'hanehana:games:steam-scan',
   SteamImport: 'hanehana:games:steam-import',
+  /** 手动添加单款游戏：渲染层选一个 exe，主进程校验后直接入库（不走目录扫描） */
+  GameAddOne: 'hanehana:games:add-one',
   // 元数据刮削
   ScrapeSearch: 'hanehana:scrape:search',
   ScrapeApply: 'hanehana:scrape:apply',
