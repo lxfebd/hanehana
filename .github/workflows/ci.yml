@@ -25,6 +25,12 @@ jobs:
         working-directory: app
         run: npm ci
 
+      # Electron 44 起 npm 不再 postinstall 下载二进制：require('electron') 时才惰性落地。
+      # 不显式装一次，acceptance 脚本直接 spawn dist/electron.exe 会 ENOENT。
+      - name: install electron binary
+        working-directory: app
+        run: npx install-electron
+
       # Windows runner 中文输出编码崩溃的既有坑：强制 UTF-8
       - name: typecheck
         working-directory: app
