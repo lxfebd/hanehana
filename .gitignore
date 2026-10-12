@@ -32,6 +32,8 @@ app/.batch*-export/
 # 命令输出重定向的残留（lint/probe 等的 stdout 落地文件）
 app/eslint_out.txt
 app/*_out.txt
+# 探测脚本的截图输出目录
+app/scripts/out/
 # 批处理验收的临时输出（脚本跑完留下，非源码）
 app/.batch*-err.txt
 app/.batch*-out.txt
