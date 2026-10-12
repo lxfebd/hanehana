@@ -33,8 +33,7 @@ function leafCoverage(x, y) {
     const sin = Math.sin(-l.ang)
     const lx = Math.abs(dx * cos - dy * sin) - l.w / 2
     const ly = Math.abs(dx * sin + dy * cos) - l.h / 2
-    const d =
-      Math.hypot(Math.max(lx, 0), Math.max(ly, 0)) + Math.min(Math.max(lx, ly), 0)
+    const d = Math.hypot(Math.max(lx, 0), Math.max(ly, 0)) + Math.min(Math.max(lx, ly), 0)
     best = Math.max(best, Math.min(1, 0.5 - d))
   }
   return best

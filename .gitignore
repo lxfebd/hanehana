@@ -5,6 +5,8 @@ node_modules/
 app/out/
 app/release/
 app/dist/
+# 单测转译产物（node --test 前 esbuild 落盘的中转 JS）
+app/.test-build/
 
 # rust engine
 engine-rs/target/
@@ -27,3 +29,12 @@ app/.*-game/
 app/.*-game2/
 app/.batch*-mock.json
 app/.batch*-export/
+
+# 图标管线的中间产物（只有 icon_src.png 输入 + icon.ico/tray.png/icon-256.png 输出入库）
+app/build/icon_src_cropped.png
+app/build/user_icon_icon.png
+
+# 一次性探测/迁移脚本与它们的截图产物（用完即弃，不进仓库）
+app/scripts/*_probe*.mjs
+app/scripts/wide_shots/
+app/hh_sites2.png

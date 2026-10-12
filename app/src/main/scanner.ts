@@ -23,6 +23,16 @@ export interface ScanHit {
 const EXE_BLACKLIST = [
   /^unins\d*\.exe$/i,
   /^(setup|install|installer)\.exe$/i,
+  /^config\.exe$/i,
+  /^(dlss|dlssg).*\.exe$/i,
+  /^cheat(engine)?(_?v?\d*)?\.exe$/i,
+  /^magpie.*\.exe$/i,
+  /^updater\.exe$/i,
+  /^touchhelper\.exe$/i,
+  /^unitycrashhandler\d*\.exe$/i,
+  /^crashpad.*\.exe$/i,
+  /^vcredist.*\.exe$/i,
+  /^dxsetup\.exe$/i,
   /汉化/i,
   /补丁/i,
   /patch/i,
@@ -36,10 +46,16 @@ const EXE_BLACKLIST = [
   /desktop\.ini/i,
 ]
 
+/** 宽匹配：cheat / dlss / magpie / unitycrash 等带版本尾巴的工具 exe。
+ *  模块级常量而不是函数内联：函数在扫描循环里被每个文件调用一次，
+ *  每次内联都会重新编译正则（扫描几千文件 × 每次编译 = 白耗 CPU）。 */
+const TOOL_WIDE_RE = /cheat|dlss|magpie|unitycrash|crashpad|vcredist|dxwebsetup|^config\.exe$/i
+
 function looksLikeTool(name: string): boolean {
   const base = basename(name)
   if (!/\.(exe|bat|lnk)$/i.test(base)) return true
-  return EXE_BLACKLIST.some((re) => re.test(base))
+  if (EXE_BLACKLIST.some((re) => re.test(base))) return true
+  return TOOL_WIDE_RE.test(base)
 }
 
 /**
@@ -108,10 +124,14 @@ function pickLauncher(exes: string[], dir: string): string | null {
   const valid = exes.filter((p) => !looksLikeTool(p))
   if (valid.length === 0) return null
 
-  const dirBase = basename(dir).toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
+  const dirBase = basename(dir)
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
   const scored = valid
     .map((p) => {
-      const base = basename(p).toLowerCase().replace(/\.(exe|bat|lnk)$/i, '')
+      const base = basename(p)
+        .toLowerCase()
+        .replace(/\.(exe|bat|lnk)$/i, '')
       const norm = base.replace(/[^a-z0-9\u4e00-\u9fa5]/g, '')
       let score = 0
       if (dirBase && norm === dirBase) score = 100

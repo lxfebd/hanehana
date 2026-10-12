@@ -95,13 +95,11 @@ export async function searchSite(id: string, keyword: string): Promise<SiteSearc
   let timer: ReturnType<typeof setTimeout> | undefined
   // 输掉这场比赛的 Promise 还在后台跑，它若稍后 reject 就是未捕获拒绝，
   // 所以先把 rejection 收敛成一个正常返回值再进 race。
-  const attempt = site.adapter.search(keyword).catch(
-    (e: unknown): SiteSearchOutcome => ({
-      ok: false,
-      siteId: id,
-      message: `${site.name} 搜索异常：${e instanceof Error ? e.message : String(e)}`,
-    }),
-  )
+  const attempt = site.adapter.search(keyword).catch((e: unknown): SiteSearchOutcome => ({
+    ok: false,
+    siteId: id,
+    message: `${site.name} 搜索异常：${e instanceof Error ? e.message : String(e)}`,
+  }))
   const budget = new Promise<SiteSearchOutcome>((resolve) => {
     timer = setTimeout(
       () =>
@@ -120,8 +118,49 @@ export async function searchSite(id: string, keyword: string): Promise<SiteSearc
   }
 }
 
+/** 取镜像清单的总预算：与搜索同量级（慢请求上限 15s + 余量），超时先回超时原因，
+ *  不让一个死站的镜像抓取把整列镜像卡住。 */
+const MIRRORS_BUDGET_MS = 20000
+
 export async function mirrorsOf(id: string, detailUrl: string): Promise<SiteMirrorOutcome> {
   const site = getSite(id)
   if (!site) return { ok: false, siteId: id, message: `未知站点：${id}` }
-  return site.adapter.mirrors(detailUrl)
+  // 渲染层的 detailUrl 不可信：必须确认它真的属于这一站（siteIdForUrl 与请求的
+  // siteId 一致），否则镜像抓取会让主进程去请求任意地址（SSRF——渲染层被 XSS 或
+  // 被劫持页面可以直接抓内网/元数据地址）。同时只放 https：明文 http 的镜像页
+  // 会把请求内容裸露在网络里，也不该由主进程去访问。
+  let parsed: URL
+  try {
+    parsed = new URL(detailUrl)
+  } catch {
+    return { ok: false, siteId: id, message: '镜像页地址不是合法 URL' }
+  }
+  if (parsed.protocol !== 'https:') {
+    return { ok: false, siteId: id, message: '镜像页只支持 https 地址' }
+  }
+  if (siteIdForUrl(detailUrl) !== id) {
+    return { ok: false, siteId: id, message: '镜像页地址不属于该站点' }
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const attempt = site.adapter.mirrors(detailUrl).catch((e: unknown): SiteMirrorOutcome => ({
+    ok: false,
+    siteId: id,
+    message: `${site.name} 镜像抓取异常：${e instanceof Error ? e.message : String(e)}`,
+  }))
+  const budget = new Promise<SiteMirrorOutcome>((resolve) => {
+    timer = setTimeout(
+      () =>
+        resolve({
+          ok: false,
+          siteId: id,
+          message: `${site.name} 在 ${Math.round(MIRRORS_BUDGET_MS / 1000)} 秒内没有回话。这只说明这一次没等到，不代表站点坏了——点「重试」再试一次。`,
+        }),
+      MIRRORS_BUDGET_MS,
+    )
+  })
+  try {
+    return await Promise.race([attempt, budget])
+  } finally {
+    clearTimeout(timer)
+  }
 }

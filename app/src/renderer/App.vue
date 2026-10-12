@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
-import { App as AntApp, ConfigProvider, message } from 'ant-design-vue'
+import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
+import { App as AntApp, ConfigProvider } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { ArrowUpFromLine, Download, Flower2, LayoutGrid, LibraryBig, List, MoreHorizontal, ScanSearch, Search, Settings, X, ChevronLeft, Compass, Heart, CheckSquare, BarChart3, Gamepad2, Maximize2, Plus } from 'lucide-vue-next'
+import { Flower2, X, ChevronLeft } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
-import { categories, enterSelectMode, filteredGames, library, refreshGames, selectedGame, SMART_LISTS, startRunningSync, stopRunningSync, thumbUrl } from './stores/library'
-import { addTask, downloads, initTasks, openSettings, report, reportRejection } from './stores/downloads'
-import { ui, applyDarkFromSettings } from './stores/ui'
-import { setLanguage, t } from './i18n'
+import { filteredGames, library, selectedGame, thumbUrl } from './stores/library'
+import { addTask, downloads } from './stores/downloads'
+import { ui } from './stores/ui'
+import { t, tf } from './i18n'
+import { useBoot } from './composables/useBoot'
+import { useGlobalShortcuts, shortcutHelpOpen } from './composables/useGlobalShortcuts'
 import CoverGrid from './components/CoverGrid.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
@@ -24,36 +26,42 @@ import SteamImportDialog from './components/SteamImportDialog.vue'
 import BackupDialog from './components/BackupDialog.vue'
 import FullscreenView from './components/FullscreenView.vue'
 import DialogShell from './components/DialogShell.vue'
+import NavSidebar from './components/NavSidebar.vue'
+import LibraryToolbar from './components/LibraryToolbar.vue'
+import ShortcutHelp from './components/ShortcutHelp.vue'
+import GameContextMenu from './components/GameContextMenu.vue'
 
-const bootInfo = ref('')
-let unsubPushes: Array<() => void> = []
+// 启动编排（hello/刷新/订阅/窄窗口折叠/全屏控制）收在 useBoot 里，
+// 组件只拿结果：bootInfo 标题栏版本号、全屏/保存回调、gamesMounted 保活开关。
+const { bootInfo, enterFullscreen, exitFullscreen, saveSettings, gamesMounted } = useBoot()
 
-/** 全屏模式（G11）：进入用主进程切真全屏，Esc/系统手势退出同步回渲染层 */
-async function enterFullscreen(): Promise<void> {
-  ui.page = 'library'
-  ui.detailCollapsed = true
-  const on = await window.hh.fullscreenSet(true).catch(() => false)
-  // 主进程 win.isFullScreen() 立即生效；推送兜底（某些平台 enter 延迟）
-  ui.fullscreen = on || true
-}
-async function exitFullscreen(): Promise<void> {
-  await window.hh.fullscreenSet(false).catch(() => {})
-  ui.fullscreen = false
-}
-/** 窄窗口（<1100px）时详情面板宽度会把内容区挤没，自动收起 */
-let narrowMq: MediaQueryList | null = null
-let narrowMqFn: ((e: MediaQueryListEvent) => void) | null = null
+// 全局快捷键（Ctrl+F/Esc/Ctrl+A/Delete/F5/1-3/Space）。挂在 App 级一次生效，
+// 各页面通用；防误触规则见 useGlobalShortcuts 顶部注释。
+useGlobalShortcuts()
+
+// 封面右键菜单：实例放这里（App 级单例），经 provide 给 CoverGrid 调。
+// 不放 CoverGrid 内部是因为菜单 Teleport 到 body，且虚拟化滚动时要能
+// 从外部关掉它——单例 + provide 比「每个封面墙各持一个」简单。
+const gameCtxMenu = ref<InstanceType<typeof GameContextMenu> | null>(null)
+provide('gameCtxMenu', gameCtxMenu)
 
 const filteredCount = computed(() => filteredGames.value.length)
 
 /** 整窗动态底：自定义背景图 > 选中游戏封面（Steam 式）。无图时透明，露出系统 Mica。 */
+function fileUrl(p: string): string {
+  // 路径进 CSS url() 必须编码：空格/中文/#/& 直接拼进去会让浏览器按
+  // URL 语法解析（# 后当 fragment、& 当参数、空格当分隔符），背景图就裂了。
+  // encodeURI 保留 :// 与斜杠，只编空格和特殊字符；Windows 盘符的冒号
+  // 也在保留集里，file:///C:/… 不会被改坏。
+  return `url("file://${encodeURI(p.replace(/\\/g, '/'))}")`
+}
 const appBgImage = computed(() => {
   const custom = downloads.settings?.bg_image
-  if (custom) return `url("file://${custom.replace(/\\/g, '/')}")`
+  if (custom) return fileUrl(custom)
   const g = selectedGame.value
   if (!g) return ''
   if (g.thumbPath) return `url("${thumbUrl(g)}")`
-  if (g.coverPath) return `url("file://${g.coverPath.replace(/\\/g, '/')}")`
+  if (g.coverPath) return fileUrl(g.coverPath)
   return ''
 })
 
@@ -62,25 +70,22 @@ const page = computed({
   get: () => ui.page,
   set: (v: 'library' | 'downloads' | 'games' | 'stats') => (ui.page = v),
 })
+
+/** 清元数据筛选（系列/开发商 chip 上的 ×）：两字段一起清 */
+function clearMeta(): void {
+  library.metaKey = ''
+  library.metaValue = ''
+}
 const addSubmitKey = ref(0)
 
 /** G14 导出菜单开关（工具栏箭头按钮下的小菜单：CSV / JSON） */
 const exportMenuOpen = ref(false)
 
-/** 侧栏「更多」开关（P1-4：主项收敛为 库/下载/扫描/设置，其余收纳不删） */
-const moreMenuOpen = ref(false)
-
-/** 点菜单外的任意处收起导出/更多菜单（含切页/点工具栏其他按钮）。 */
+/** 点菜单外的任意处收起导出菜单（含切页/点工具栏其他按钮）。 */
 function closeExportMenu(e: MouseEvent): void {
   const wrap = document.querySelector('.export-wrap')
-  const more = document.querySelector('.more-wrap')
   const target = e.target as Node
-  // 两菜单可短暂并存：点「更多」时 button 已先 toggle 开，document 监听再跑——
-  // 不能因为 more.contains 就整函数 return，否则导出菜单关不掉（双开）。
-  const inExport = !!wrap && wrap.contains(target)
-  const inMore = !!more && more.contains(target)
-  if (exportMenuOpen.value && !inExport) exportMenuOpen.value = false
-  if (moreMenuOpen.value && !inMore) moreMenuOpen.value = false
+  if (exportMenuOpen.value && wrap && !wrap.contains(target)) exportMenuOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeExportMenu))
 onUnmounted(() => document.removeEventListener('click', closeExportMenu))
@@ -91,131 +96,26 @@ async function doExport(fmt: 'csv' | 'json'): Promise<void> {
   try {
     const r = await window.hh.exportGames(fmt)
     if (!r.ok) {
-      library.error = r.error ?? '导出失败'
+      library.error = r.error ?? t('app_export_failed')
       return
     }
     if (r.canceled) return
-    library.error = `已导出 ${fmt.toUpperCase()} 到：${r.path ?? ''}`
+    library.error = tf('app_export_ok', { fmt: fmt.toUpperCase(), path: r.path ?? '' })
   } catch (e) {
-    library.error = '导出失败：' + (e instanceof Error ? e.message : String(e))
+    library.error = tf('app_export_err', { msg: e instanceof Error ? e.message : String(e) })
   }
 }
 
-/**
- * 游戏站视图挂载过一次就留着（webview 的 src 一挂载就去加载站点首页，
- * v-show 只藏不销毁：切走再切回来，搜索结果、已打开的页面和登录会话都得在）。
- * 模板里 v-if 首次进入才挂载，之后 v-show 保活。
- * watch immediate 是不把正确性押在「切到 games 一定发生在 App 挂载之后」这条时序上。
- */
-const gamesMounted = ref(false)
-watch(
-  () => ui.page,
-  (p) => {
-    if (p === 'games') gamesMounted.value = true
-  },
-  { immediate: true },
-)
-
-/** 下载进行中数量（侧栏徽章） */
-const runningCount = computed(
-  () =>
-    downloads.rows.filter(
-      (r) => r.snap?.state === 'downloading' || r.snap?.state === 'preparing' || (!r.snap && r.def.state === 'downloading'),
-    ).length,
-)
-
-async function submitAddTask(input: { url: string; dest: string; threads: number; note: string; checksum: string }): Promise<void> {
+async function submitAddTask(input: {
+  url: string
+  dest: string
+  threads: number
+  note: string
+  checksum: string
+}): Promise<void> {
   const ok = await addTask(input)
   if (ok) downloads.addDialogOpen = false
 }
-
-async function saveSettings(s: unknown): Promise<void> {
-  try {
-    const r = await window.hh.saveSettings(s as never)
-    if (!r.ok) {
-      report(r as never)
-      return
-    }
-    downloads.settings = r.settings
-    // 填了但没生效的路径：主进程按「不存在」丢弃回落到旧值，这里点名让用户知道
-    if (r.discarded?.length) {
-      const names: Record<string, string> = {
-        backup_dir: '备份目录',
-        le_path: 'Locale Emulator 路径',
-        magpie_path: 'Magpie 路径',
-      }
-      message.warning(
-        `${r.discarded.map((k) => names[k] ?? k).join('、')} 不存在，未保存。请检查路径后重试。`,
-      )
-    }
-    // 深浅/套件主题设置落盘后的渲染层同步（system 模式主进程已按系统校正 dark）
-    applyDarkFromSettings(r.settings.dark, r.settings.theme_preset)
-    // 界面语言保存后立即生效，不用重启（词典是响应式 ref，setLanguage 即触发重渲染）
-    setLanguage(r.settings.language)
-    ui.settingsOpen = false
-  } catch (e) {
-    reportRejection(e)
-  }
-}
-
-onMounted(async () => {
-  // 运行中状态轮询：游戏退出后 runningIds 收敛（主进程 handleRunning 清僵尸）
-  startRunningSync()
-  try {
-    if (!window.hh?.hello) {
-      bootInfo.value = '主进程桥未就绪（浏览器预览模式）'
-      return
-    }
-    const info = await window.hh.hello()
-    bootInfo.value = `v${info.version}`
-    await refreshGames()
-    unsubPushes = await initTasks()
-    library.error = ''
-    // G18 i18n：从设置应用界面语言（骨架：zh/en）
-    const s = await window.hh.getSettings()
-    if (s?.language === 'en' || s?.language === 'zh') setLanguage(s.language)
-  } catch (e) {
-    const msg = e instanceof Error ? e.message : String(e ?? '')
-    bootInfo.value = `连接主进程失败：${msg.trim() || '主进程未响应'}`
-  }
-
-  // 跟随系统：主进程在系统深浅切换时推送，渲染层实时换肤
-  if (window.hh?.onThemeChanged) {
-    unsubPushes.push(
-      window.hh.onThemeChanged(({ dark }) => {
-        applyDarkFromSettings(dark, ui.preset)
-      }),
-    )
-  }
-
-  // 全屏状态同步：主进程 enter/leave 时校正渲染层状态
-  if (window.hh?.onFullscreenChanged) {
-    unsubPushes.push(
-      window.hh.onFullscreenChanged((on) => {
-        ui.fullscreen = on
-        if (on) ui.detailCollapsed = true
-      }),
-    )
-  }
-
-  // 窄窗口自动收起详情面板：360px 详情 + 208px 侧栏会把内容区挤没
-  if ('matchMedia' in window) {
-    narrowMq = window.matchMedia('(max-width: 1100px)')
-    narrowMqFn = (e: MediaQueryListEvent) => {
-      if (e.matches) ui.detailCollapsed = true
-    }
-    if (narrowMq.matches) ui.detailCollapsed = true
-    narrowMq.addEventListener('change', narrowMqFn)
-  }
-})
-
-onUnmounted(() => {
-  stopRunningSync()
-  narrowMq?.removeEventListener('change', narrowMqFn as EventListener)
-  narrowMq = null
-  narrowMqFn = null
-  for (const unsub of unsubPushes) unsub()
-})
 </script>
 
 <template>
@@ -224,181 +124,26 @@ onUnmounted(() => {
       <div class="app-shell">
         <div class="app-bg" :style="{ backgroundImage: appBgImage }" aria-hidden="true"></div>
         <header class="titlebar">
-          <span class="logo"><Flower2 :size="15" class="logo-ic" />羽花 HaneHana</span>
+          <span class="logo"><Flower2 :size="15" class="logo-ic" />{{ t('app_logo') }}</span>
           <span class="no-drag tag">{{ bootInfo }}</span>
           <div class="titlebar-right no-drag"></div>
         </header>
 
         <div class="layout">
-          <!-- 左侧导航 -->
-          <nav class="glass sidebar" aria-label="主导航">
-            <button
-              class="nav-item"
-              :class="{ active: page === 'library' }"
-              :aria-current="page === 'library' ? 'page' : undefined"
-              @click="page = 'library'"
-            >
-              <LibraryBig :size="16" class="nav-ic" />
-              <span>{{ t('nav_library') }}</span>
-              <span class="count">{{ library.games.length }}</span>
-            </button>
-            <button
-              class="nav-item"
-              :class="{ active: page === 'downloads' }"
-              :aria-current="page === 'downloads' ? 'page' : undefined"
-              @click="page = 'downloads'"
-            >
-              <Download :size="16" class="nav-ic" />
-              <span>{{ t('nav_downloads') }}</span>
-              <span class="count">{{ runningCount }}</span>
-            </button>
-
-            <div class="nav-spacer"></div>
-            <button class="nav-item" @click="library.scanOpen = true">
-              <ScanSearch :size="16" class="nav-ic" />
-              <span>{{ t('lib_scan') }}</span>
-            </button>
-            <button class="nav-item" @click="openSettings()">
-              <Settings :size="16" class="nav-ic" />
-              <span>{{ t('nav_settings') }}</span>
-            </button>
-
-            <!-- P1-4 更多：游戏站/统计/全屏/添加/Steam 收纳，只收不删 -->
-            <div class="more-wrap">
-              <button
-                class="nav-item more-toggle"
-                :class="{ active: moreMenuOpen || page === 'stats' }"
-                :aria-expanded="moreMenuOpen"
-                @click="moreMenuOpen = !moreMenuOpen"
-              >
-                <MoreHorizontal :size="16" class="nav-ic" />
-                <span>{{ t('nav_more') }}</span>
-              </button>
-              <div v-if="moreMenuOpen" class="more-menu glass">
-                <button
-                  class="nav-item"
-                  :class="{ active: page === 'games' }"
-                  @click="page = 'games'; moreMenuOpen = false"
-                >
-                  <Compass :size="16" class="nav-ic" />
-                  <span>{{ t('nav_games') }}</span>
-                </button>
-                <button
-                  class="nav-item"
-                  :class="{ active: page === 'stats' }"
-                  @click="page = 'stats'; moreMenuOpen = false"
-                >
-                  <BarChart3 :size="16" class="nav-ic" />
-                  <span>{{ t('nav_stats') }}</span>
-                </button>
-                <button class="nav-item" @click="enterFullscreen(); moreMenuOpen = false">
-                  <Maximize2 :size="16" class="nav-ic" />
-                  <span>{{ t('nav_fullscreen') }}</span>
-                </button>
-                <button class="nav-item" @click="ui.addGameOpen = true; moreMenuOpen = false">
-                  <Plus :size="16" class="nav-ic" />
-                  <span>{{ t('lib_add_one') }}</span>
-                </button>
-                <button class="nav-item" @click="ui.steamImportOpen = true; moreMenuOpen = false">
-                  <Gamepad2 :size="16" class="nav-ic" />
-                  <span>{{ t('nav_steam_import') }}</span>
-                </button>
-              </div>
-            </div>
-          </nav>
+          <!-- 左侧导航（G17 拆出 NavSidebar：状态自取 store，只有全屏回调经 emit） -->
+          <NavSidebar @enter-fullscreen="enterFullscreen" />
 
           <!-- 中栏 -->
           <main class="content">
             <template v-if="page === 'library'">
-              <!-- 工具栏：搜索 + 分类 chips + 计数 + 视图 segmented -->
-              <div class="toolbar">
-                <div class="search-box">
-                  <Search :size="14" class="search-ic" />
-                  <input
-                    v-model="library.keyword"
-                    class="search-input"
-                    :placeholder="library.searchRegex ? t('toolbar_search_regex_placeholder') : t('toolbar_search_placeholder')"
-                  />
-                  <button
-                    class="regex-toggle"
-                    :class="{ on: library.searchRegex }"
-                    :title="t('toolbar_regex')"
-                    :aria-pressed="library.searchRegex"
-                    @click="library.searchRegex = !library.searchRegex"
-                  >.*</button>
-                </div>
-
-                <div class="cat-chips">
-                  <button
-                    class="cat-chip"
-                    :class="{ active: library.categoryFilter === '' }"
-                    @click="library.categoryFilter = ''"
-                  >{{ t('toolbar_all') }}</button>
-                  <button
-                    v-for="c in categories"
-                    :key="c"
-                    class="cat-chip"
-                    :class="{ active: library.categoryFilter === c }"
-                    @click="library.categoryFilter = library.categoryFilter === c ? '' : c"
-                  >{{ c }}</button>
-                </div>
-
-                <!-- 智能列表（动态筛选，Playnite 式） -->
-                <select v-model="library.smartList" class="smart-select" :title="t('toolbar_smart')">
-                  <option v-for="l in SMART_LISTS" :key="l.id" :value="l.id">{{ l.label }}</option>
-                </select>
-
-                <button
-                  class="tool-btn"
-                  :class="{ active: library.favOnly }"
-                  :title="t('toolbar_fav')"
-                  :aria-pressed="library.favOnly"
-                  @click="library.favOnly = !library.favOnly"
-                ><Heart :size="15" /></button>
-
-                <button
-                  class="tool-btn"
-                  :class="{ active: library.selectMode }"
-                  :title="t('toolbar_select')"
-                  :aria-pressed="library.selectMode"
-                  @click="enterSelectMode(!library.selectMode)"
-                ><CheckSquare :size="15" /></button>
-
-                <div class="toolbar-count">{{ filteredCount }} {{ t('count_suffix') }}</div>
-
-                <!-- G14 导出：箭头按钮 + 小菜单（CSV / JSON） -->
-                <div class="export-wrap">
-                  <button
-                    class="tool-btn"
-                    :class="{ active: exportMenuOpen }"
-                    :title="t('toolbar_export')"
-                    :aria-pressed="exportMenuOpen"
-                    @click="exportMenuOpen = !exportMenuOpen"
-                  ><ArrowUpFromLine :size="15" /></button>
-                  <div v-if="exportMenuOpen" class="export-menu glass" @click.stop>
-                    <button class="export-item" @click="doExport('csv')">{{ t('toolbar_export_csv') }}</button>
-                    <button class="export-item" @click="doExport('json')">{{ t('toolbar_export_json') }}</button>
-                  </div>
-                </div>
-                <button v-if="library.metaKey" class="meta-chip" @click="library.metaKey = ''; library.metaValue = ''" :title="t('lib_clear')">
-                  <X :size="12" /> {{ library.metaKey === 'series' ? '系列：' : '开发商：' }}{{ library.metaValue }}
-                </button>
-
-                <div class="segmented">
-                  <button
-                    class="seg-btn"
-                    :class="{ active: library.view === 'grid' }"
-                    :title="t('toolbar_grid')"
-                    @click="library.view = 'grid'"
-                  ><LayoutGrid :size="16" /></button>
-                  <button
-                    class="seg-btn"
-                    :class="{ active: library.view === 'list' }"
-                    :title="t('toolbar_list')"
-                    @click="library.view = 'list'"
-                  ><List :size="16" /></button>
-                </div>
-              </div>
+              <!-- 工具栏（G17 拆出 LibraryToolbar：搜索/分类/智能列表/导出/视图） -->
+              <LibraryToolbar
+                :filtered-count="filteredCount"
+                :export-menu-open="exportMenuOpen"
+                @toggle-export="exportMenuOpen = !exportMenuOpen"
+                @export="doExport"
+                @clear-meta="clearMeta()"
+              />
 
               <div class="cover-wrap">
                 <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
@@ -407,7 +152,9 @@ onUnmounted(() => {
 
               <div v-if="library.error" class="error-banner glass">
                 {{ library.error }}
-                <button class="glass-btn" title="清除错误" @click="library.error = ''"><X :size="14" /></button>
+                <button class="glass-btn" :title="t('app_clear_error')" @click="library.error = ''">
+                  <X :size="14" />
+                </button>
               </div>
             </template>
 
@@ -426,12 +173,16 @@ onUnmounted(() => {
           </main>
 
           <!-- 右侧详情面板：只在游戏库页显示。收起时留竖条，点击展开 -->
-          <DetailPanel v-if="page === 'library' && !ui.detailCollapsed" class="detail" @collapse="ui.detailCollapsed = true" />
+          <DetailPanel
+            v-if="page === 'library' && !ui.detailCollapsed"
+            class="detail"
+            @collapse="ui.detailCollapsed = true"
+          />
           <button
             v-if="page === 'library' && ui.detailCollapsed"
             class="detail-collapsed"
-            title="展开详情"
-            :aria-label="'展开详情'"
+            :title="t('app_expand_detail')"
+            :aria-label="t('app_expand_detail')"
             @click="ui.detailCollapsed = false"
           >
             <ChevronLeft :size="14" />
@@ -448,11 +199,13 @@ onUnmounted(() => {
         <!-- 全屏模式：覆盖整个窗口，独立于普通布局 -->
         <FullscreenView v-if="ui.fullscreen" @exit="exitFullscreen" />
 
-        <DialogShell
-          v-model:open="downloads.addDialogOpen"
-          title="新建下载"
-          :width="540"
-        >
+        <!-- 快捷键帮助（? / F1 呼出）：放在最后，z-index 1000 压过一切内容 -->
+        <ShortcutHelp v-model:open="shortcutHelpOpen" />
+
+        <!-- 封面右键菜单（单例，Teleport 到 body；CoverGrid 经 inject 调 showAt） -->
+        <GameContextMenu ref="gameCtxMenu" />
+
+        <DialogShell v-model:open="downloads.addDialogOpen" :title="t('dl_new')" :width="540">
           <NewDownloadDialog
             v-if="downloads.settings"
             :key="addSubmitKey"
@@ -461,11 +214,7 @@ onUnmounted(() => {
           />
         </DialogShell>
 
-        <DialogShell
-          v-model:open="ui.settingsOpen"
-          title="偏好设置"
-          :width="680"
-        >
+        <DialogShell v-model:open="ui.settingsOpen" :title="t('app_prefs')" :width="680">
           <SettingsDialog v-if="downloads.settings" :settings="downloads.settings" @save="saveSettings" />
         </DialogShell>
       </div>
@@ -509,10 +258,26 @@ onUnmounted(() => {
   z-index: 1;
 }
 
-.logo { display: flex; align-items: center; gap: 6px; font-weight: 700; font-size: var(--hh-font-bodyLg-size); letter-spacing: 0.5px; }
-.logo-ic { color: var(--hh-color-accent); flex: none; }
-.tag { margin-left: 12px; font-size: var(--hh-font-caption-size); opacity: 0.55; }
-.titlebar-right { flex: 1; }
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+  font-size: var(--hh-font-bodyLg-size);
+  letter-spacing: 0.5px;
+}
+.logo-ic {
+  color: var(--hh-color-accent);
+  flex: none;
+}
+.tag {
+  margin-left: 12px;
+  font-size: var(--hh-font-caption-size);
+  opacity: 0.55;
+}
+.titlebar-right {
+  flex: 1;
+}
 
 .layout {
   flex: 1;
@@ -520,91 +285,6 @@ onUnmounted(() => {
   gap: 12px;
   padding: 0 12px 12px;
   min-height: 0;
-}
-
-.sidebar {
-  width: 208px;
-  padding: 12px;
-  position: relative;
-  /* .glass 的 backdrop-filter 会建立层叠上下文且 z-index 仍为 auto，
-     内容区里后绘制的封面（position:absolute 行项）会盖住悬出的 .more-menu。
-     抬到 2：压过内容区 z-index:auto 的定位子树，仍低于弹层 30/40。 */
-  z-index: 2;
-  display: flex;
-  flex-direction: column;
-  /* 不设 overflow-y:auto：overflow-x 会被算成 auto，把 .more-menu 伸出侧栏
-     右侧的浮层裁掉（「更多」入口点不到）。侧栏条目少，竖向本就不需要滚。 */
-  overflow: visible;
-}
-.nav-item {
-  display: flex;
-  justify-content: flex-start;
-  align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 10px;
-  border-radius: var(--hh-radius-sm);
-  margin-bottom: 2px;
-  cursor: pointer;
-  color: var(--hh-color-text-bright);
-  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
-  font-size: var(--hh-font-body-size);
-  position: relative;
-  /* button 重置：不加 border/背景，保持原玻璃观感 */
-  border: none;
-  background: transparent;
-  text-align: left;
-  width: 100%;
-  font-family: inherit;
-}
-.nav-item .nav-ic { flex: none; opacity: 0.8; }
-.nav-item:hover { background: var(--hh-color-surface-soft); color: var(--hh-color-text-glow); }
-/* 选中态：白底胶囊 + 深色文字，图标随文字压暗。此前用 12% 白底 + 近白字，浅色主题下几乎看不见 */
-.nav-item.active {
-  background: var(--hh-color-select-bg);
-  color: var(--hh-color-select-text);
-  font-weight: 600;
-}
-.nav-item.active .nav-ic { opacity: 1; color: var(--hh-color-select-icon); }
-/* 不再画左侧 2px 指示条：胶囊底色已表达选中，直线条压在圆角上反而读成脱出的杂线 */
-.nav-item .count {
-  margin-left: auto;
-  font-size: 11px;
-  background: var(--hh-color-surface-mid);
-  padding: 1px 7px;
-  border-radius: var(--hh-radius-md);
-  color: var(--hh-color-text-mid-high);
-}
-.nav-item.active .count {
-  background: var(--hh-color-select-bg);
-  color: var(--hh-color-select-text);
-  opacity: 0.75;
-}
-.nav-spacer { flex: 1; }
-
-/* P1-4 「更多」收纳菜单：侧栏底部浮层，条目与 nav-item 同观感 */
-.more-wrap { position: relative; }
-.more-menu {
-  position: absolute;
-  left: calc(100% + 8px);
-  bottom: 0;
-  min-width: 160px;
-  padding: 6px;
-  border-radius: var(--hh-radius-md);
-  border: 1px solid var(--hh-color-panel-glass-border);
-  z-index: 40;
-  display: flex;
-  flex-direction: column;
-}
-.more-menu .nav-item { margin-bottom: 0; }
-
-/* 极窄窗口：侧栏收成图标条（≤620px 时三列预算 208+12+12 也让内容区所剩无几）。
-   放在 .sidebar/.nav-item 定义之后，才能覆盖前面的 width:208px。 */
-@media (max-width: 620px) {
-  .sidebar { width: 56px; padding: 12px 8px; align-items: center; }
-  .nav-item { justify-content: center; padding: 0 6px; gap: 0; }
-  .nav-item span { display: none; }
-  .nav-item .count { display: flex; position: absolute; top: 3px; right: 2px; margin: 0; min-width: 16px; height: 16px; padding: 0 4px; align-items: center; justify-content: center; font-size: 9px; }
 }
 
 .content {
@@ -626,222 +306,9 @@ onUnmounted(() => {
   min-height: 0;
 }
 
-/* 工具栏：搜索 + 分类 chips + 计数 + segmented（§5.3）。
-   整条工具条收进一个卡片容器，与左右玻璃面板同层级——此前元素裸浮在玻璃上，
-   与两侧面板断层，是"粗糙感"的主要来源之一。 */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 8px 12px;
-  flex-wrap: wrap;
-  border-radius: var(--hh-radius-md);
-  border: 1px solid var(--hh-color-card-border);
-  background: var(--hh-color-surface-bright);
-  backdrop-filter: blur(12px) saturate(1.3);
-}
-.search-box {
-  position: relative;
-  display: flex;
-  align-items: center;
-  flex: 1;
-  min-width: 180px;
-  max-width: 320px;
-}
-.search-ic {
-  position: absolute;
-  left: 12px;
-  color: var(--hh-color-text-dim);
-  pointer-events: none;
-}
-.search-input {
-  width: 100%;
-  height: 32px;
-  border-radius: var(--hh-radius-md);
-  padding: 0 42px 0 34px;
-  border: 1px solid var(--hh-color-card-border);
-  background: var(--hh-color-surface-bright);
-  color: var(--hh-color-text-glow);
-  font-size: var(--hh-font-body-size);
-  outline: none;
-  transition: border-color var(--hh-motion-slow), box-shadow var(--hh-motion-slow);
-}
-.search-input:focus {
-  border-color: var(--hh-color-accent-focus-border);
-  box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
-}
-/* G19 正则切换按钮：贴在输入框右侧（.* 符号） */
-.regex-toggle {
-  position: absolute;
-  right: 6px;
-  height: 22px;
-  min-width: 30px;
-  padding: 0 6px;
-  border: none;
-  border-radius: var(--hh-radius-xs);
-  background: transparent;
-  color: var(--hh-color-text-dim);
-  font-family: ui-monospace, Consolas, monospace;
-  font-size: var(--hh-font-caption-size);
-  cursor: pointer;
-  transition: background var(--hh-motion-med), color var(--hh-motion-med);
-}
-.regex-toggle:hover {
-  background: var(--hh-color-surface-hover);
-  color: var(--hh-color-text-bright);
-}
-.regex-toggle.on {
-  background: var(--hh-color-accent-bg);
-  color: var(--hh-color-accent);
-}
-
-/* 分类 chip 行：横向滚动无滚动条 */
-.cat-chips {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  min-width: 0;
-  /* 容器充足时让猫 chips 吃掉剩余宽度；容器紧张时退回内容宽，
-     把位置让给计数与视图切换，避免被 flex:1 压成一缕 28px。 */
-  flex: 0 1 auto;
-  max-width: 420px;
-}
-.cat-chips::-webkit-scrollbar { display: none; }
-.cat-chip {
-  flex-shrink: 0;
-  height: 32px;
-  padding: 0 12px;
-  border-radius: var(--hh-radius-pill);
-  border: 1px solid var(--hh-color-card-border);
-  background: var(--hh-color-surface-bright);
-  color: var(--hh-color-text-mid-high);
-  font-size: var(--hh-font-caption-size);
-  cursor: pointer;
-  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
-}
-.cat-chip:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
-.cat-chip.active {
-  background: var(--hh-color-select-bg);
-  border-color: var(--hh-color-accent-ring);
-  color: var(--hh-color-select-text);
-  font-weight: 600;
-}
-.toolbar-count { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-tertiary); white-space: nowrap; }
-
-/* 智能列表下拉 + 收藏/多选工具按钮（与 seg-btn 同口径） */
-.smart-select {
-  height: 32px;
-  border-radius: var(--hh-radius-md);
-  padding: 0 10px;
-  border: 1px solid var(--hh-color-card-border);
-  background: var(--hh-color-surface-bright);
-  color: var(--hh-color-text-glow);
-  font-size: 12.5px;
-  cursor: pointer;
-  outline: none;
-  font-family: inherit;
-}
-.smart-select:focus {
-  border-color: var(--hh-color-accent-focus-border);
-  box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
-}
-.tool-btn {
-  width: 32px; height: 32px;
-  border: none;
-  border-radius: var(--hh-radius-md);
-  background: transparent;
-  color: var(--hh-color-text-mid);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
-}
-.tool-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
-.tool-btn.active {
-  background: var(--hh-color-select-bg);
-  color: var(--hh-color-select-text);
-}
-
-/* G14 导出：小菜单浮在按钮正下方（玻璃材质复用全局 .glass） */
-.export-wrap {
-  position: relative;
-  display: flex;
-  align-items: center;
-}
-.export-menu {
-  position: absolute;
-  top: calc(100% + 6px);
-  right: 0;
-  z-index: 30;
-  min-width: 132px;
-  padding: 6px;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.export-item {
-  display: flex;
-  align-items: center;
-  height: 30px;
-  padding: 0 10px;
-  border: none;
-  border-radius: var(--hh-radius-sm);
-  background: transparent;
-  color: var(--hh-color-text-bright);
-  font-size: var(--hh-font-body-size);
-  font-family: inherit;
-  cursor: pointer;
-  transition: background var(--hh-motion-med) ease;
-  text-align: left;
-}
-.export-item:hover { background: var(--hh-color-surface-mid); }
-
-/* 元数据聚合筛选提示条（G12）：激活时显示，一键清除 */
-.meta-chip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  height: 28px;
-  padding: 0 10px;
-  border-radius: var(--hh-radius-pill);
-  border: 1px solid var(--hh-color-accent-ring);
-  background: var(--hh-color-accent-soft);
-  color: var(--hh-color-accent-text);
-  font-size: var(--hh-font-caption-size);
-  cursor: pointer;
-  white-space: nowrap;
-  transition: background var(--hh-motion-med);
-}
-.meta-chip:hover { background: var(--hh-color-accent-chip-bg); }
-
-/* 视图 segmented：pill 容器 card 底 */
-.segmented {
-  display: flex;
-  gap: 2px;
-  padding: 2px;
-  border-radius: var(--hh-radius-pill);
-  background: var(--hh-color-surface-bright);
-  border: 1px solid var(--hh-color-card-border);
-}
-.seg-btn {
-  width: 32px; height: 32px;
-  border: none;
-  border-radius: var(--hh-radius-pill);
-  background: transparent;
-  color: var(--hh-color-text-mid);
-  cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  transition: background var(--hh-motion-med) ease, color var(--hh-motion-med) ease;
-}
-.seg-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
-.seg-btn.active {
-  background: var(--hh-color-select-bg);
-  color: var(--hh-color-select-text);
-}
-
 .glass-btn {
-  width: 36px; height: 36px;
+  width: 36px;
+  height: 36px;
   border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-float-border);
   background: var(--hh-color-panel-glass);
@@ -850,13 +317,19 @@ onUnmounted(() => {
   font-size: 15px;
   transition: all var(--hh-motion-med);
 }
-.glass-btn:hover { background: var(--hh-color-surface-strong); color: var(--hh-color-on-accent); }
+.glass-btn:hover {
+  background: var(--hh-color-surface-strong);
+  color: var(--hh-color-on-accent);
+}
 .glass-btn.active {
   background: var(--hh-color-select-bg);
   color: var(--hh-color-select-text);
 }
 
-.detail { width: 360px; position: relative; }
+.detail {
+  width: 360px;
+  position: relative;
+}
 
 .detail-collapsed {
   width: 28px;
@@ -871,7 +344,9 @@ onUnmounted(() => {
   align-items: flex-start;
   justify-content: center;
   padding-top: 12px;
-  transition: background var(--hh-motion-med), color var(--hh-motion-med);
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
   margin: 8px;
 }
 .detail-collapsed:hover {
@@ -881,13 +356,16 @@ onUnmounted(() => {
 
 .error-banner {
   position: absolute;
-  bottom: 16px; left: 50%;
+  bottom: 16px;
+  left: 50%;
   transform: translateX(-50%);
   padding: 10px 16px;
   border-radius: var(--hh-radius-lg);
   font-size: var(--hh-font-body-size);
   color: var(--hh-color-error-soft-text);
-  display: flex; gap: 10px; align-items: center;
+  display: flex;
+  gap: 10px;
+  align-items: center;
   z-index: 20;
 }
 </style>

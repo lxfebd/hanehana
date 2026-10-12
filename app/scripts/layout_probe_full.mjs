@@ -6,22 +6,42 @@ const VIEWPORTS = process.env.THEME_VIEWPORTS
   : [960, 1100, 1280, 1536]
 
 const pages = await (await fetch(`http://127.0.0.1:${PORT}/json`)).json()
-const page = pages.find((p) => p.type === 'page' && p.url.includes('localhost'))
+const page = pages.find((p) => p.type === 'page' && (p.url.includes('localhost') || p.url.startsWith('file://')))
 if (!page) throw new Error('no page target')
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 let msgId = 0
 const pending = new Map()
-ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } }
+ws.onmessage = (ev) => {
+  const m = JSON.parse(ev.data)
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m)
+    pending.delete(m.id)
+  }
+}
 await new Promise((r) => (ws.onopen = r))
-const send = (method, params = {}) => new Promise((res) => { const mid = ++msgId; pending.set(mid, res); ws.send(JSON.stringify({ id: mid, method, params })) })
+const send = (method, params = {}) =>
+  new Promise((res) => {
+    const mid = ++msgId
+    pending.set(mid, res)
+    ws.send(JSON.stringify({ id: mid, method, params }))
+  })
 const evalJs = async (expr) => {
   const res = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-  if (res.result?.exceptionDetails) return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
+  if (res.result?.exceptionDetails)
+    return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
   const v = res.result?.result?.value
   if (v === undefined) {
     // 大对象偶尔丢字段，用 JSON 通道兜底
-    const r2 = await send('Runtime.evaluate', { expression: `JSON.stringify(${expr.includes('=>') ? '(' + expr + ')()' : expr})`, awaitPromise: true, returnByValue: true })
-    try { return JSON.parse(r2.result?.result?.value) } catch { return undefined }
+    const r2 = await send('Runtime.evaluate', {
+      expression: `JSON.stringify(${expr.includes('=>') ? '(' + expr + ')()' : expr})`,
+      awaitPromise: true,
+      returnByValue: true,
+    })
+    try {
+      return JSON.parse(r2.result?.result?.value)
+    } catch {
+      return undefined
+    }
   }
   return v
 }
@@ -31,9 +51,16 @@ await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => 
 await send('Page.bringToFront').catch(() => {})
 await wait(600)
 
-let passed = 0, failed = 0
+let passed = 0,
+  failed = 0
 const check = (name, cond, detail = '') => {
-  if (cond) { passed++; console.log(`PASS  ${name}`) } else { failed++; console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`) }
+  if (cond) {
+    passed++
+    console.log(`PASS  ${name}`)
+  } else {
+    failed++
+    console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`)
+  }
 }
 
 const PROBE_FN = `(function(){
@@ -96,11 +123,18 @@ async function probe() {
     awaitPromise: true,
     returnByValue: true,
   })
-  if (res.result?.exceptionDetails) return { issues: [{ kind: 'err', el: 'probe', text: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }] }
+  if (res.result?.exceptionDetails)
+    return {
+      issues: [
+        { kind: 'err', el: 'probe', text: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') },
+      ],
+    }
   try {
     return JSON.parse(res.result?.result?.value)
   } catch {
-    return { issues: [{ kind: 'err', el: 'probe', text: 'parse fail: ' + String(res.result?.result?.value).slice(0, 200) }] }
+    return {
+      issues: [{ kind: 'err', el: 'probe', text: 'parse fail: ' + String(res.result?.result?.value).slice(0, 200) }],
+    }
   }
 }
 
@@ -117,24 +151,49 @@ async function runTheme(darkLabel) {
     check(`${darkLabel} @${w} 库页标题栏 40px`, titlebarOK, JSON.stringify(g.issues.find((i) => i.kind === 'titlebar')))
     const gBad = g.issues.filter((i) => i.kind !== 'titlebar')
     if (gBad.length) console.log(`  库页网格问题 ${gBad.length}:`, JSON.stringify(gBad).slice(0, 500))
-    check(`${darkLabel} @${w} 库页网格无溢出/截断`, gBad.length === 0, gBad.slice(0, 3).map((i) => `${i.kind}:${i.el}`).join(' | '))
+    check(
+      `${darkLabel} @${w} 库页网格无溢出/截断`,
+      gBad.length === 0,
+      gBad
+        .slice(0, 3)
+        .map((i) => `${i.kind}:${i.el}`)
+        .join(' | '),
+    )
 
     // 切列表视图
-    await evalJs(`(function(){ const b=[...document.querySelectorAll('button')].find(x=>x.title==='列表视图'||x.getAttribute('aria-label')==='列表'); if(b) b.click(); })()`)
+    await evalJs(
+      `(function(){ const b=[...document.querySelectorAll('button')].find(x=>x.title==='列表视图'||x.getAttribute('aria-label')==='列表'); if(b) b.click(); })()`,
+    )
     await wait(500)
     const l = await probe()
     const lBad = l.issues.filter((i) => i.kind !== 'titlebar')
     if (lBad.length) console.log(`  库页列表问题 ${lBad.length}:`, JSON.stringify(lBad).slice(0, 500))
-    check(`${darkLabel} @${w} 库页列表无溢出/截断`, lBad.length === 0, lBad.slice(0, 3).map((i) => `${i.kind}:${i.el}`).join(' | '))
+    check(
+      `${darkLabel} @${w} 库页列表无溢出/截断`,
+      lBad.length === 0,
+      lBad
+        .slice(0, 3)
+        .map((i) => `${i.kind}:${i.el}`)
+        .join(' | '),
+    )
 
     // 回网格 + 下载页
-    await evalJs(`(function(){ const b=[...document.querySelectorAll('button')].find(x=>x.title==='网格视图'||x.getAttribute('aria-label')==='网格'); if(b) b.click(); })()`)
+    await evalJs(
+      `(function(){ const b=[...document.querySelectorAll('button')].find(x=>x.title==='网格视图'||x.getAttribute('aria-label')==='网格'); if(b) b.click(); })()`,
+    )
     await evalJs(`[...document.querySelectorAll('.nav-item')].find(e => e.textContent.includes('下载任务'))?.click()`)
     await wait(600)
     const d = await probe()
     const dBad = d.issues.filter((i) => i.kind !== 'titlebar')
     if (dBad.length) console.log(`  下载页问题 ${dBad.length}:`, JSON.stringify(dBad).slice(0, 600))
-    check(`${darkLabel} @${w} 下载页无溢出/截断`, dBad.length === 0, dBad.slice(0, 3).map((i) => `${i.kind}:${i.el}`).join(' | '))
+    check(
+      `${darkLabel} @${w} 下载页无溢出/截断`,
+      dBad.length === 0,
+      dBad
+        .slice(0, 3)
+        .map((i) => `${i.kind}:${i.el}`)
+        .join(' | '),
+    )
 
     // 回库页
     await evalJs(`[...document.querySelectorAll('.nav-item')].find(e => e.textContent.includes('全部游戏'))?.click()`)
@@ -143,13 +202,17 @@ async function runTheme(darkLabel) {
 }
 
 // ===== 深色 =====
-await evalJs(`window.hh.getSettings().then(async (s) => { if (!s.dark) await window.hh.saveSettings({ ...s, dark: true }); return true })`)
+await evalJs(
+  `window.hh.getSettings().then(async (s) => { if (!s.dark) await window.hh.saveSettings({ ...s, dark: true }); return true })`,
+)
 await send('Page.reload', { ignoreCache: true })
 await wait(4000)
 await runTheme('深色')
 
 // ===== 浅色 =====
-await evalJs(`window.hh.getSettings().then(async (s) => { if (s.dark) await window.hh.saveSettings({ ...s, dark: false }); return true })`)
+await evalJs(
+  `window.hh.getSettings().then(async (s) => { if (s.dark) await window.hh.saveSettings({ ...s, dark: false }); return true })`,
+)
 await send('Page.reload', { ignoreCache: true })
 await wait(4000)
 await runTheme('浅色')

@@ -4,13 +4,24 @@
  * 序列化格式刻意固定（indent=2、不转义中文、原子替换），
  * 数据目录为 ~/.hanehana（HANEHANA_DATA_DIR 可覆盖）。
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, statSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { homedir } from 'node:os'
 import { basename, dirname, extname, join } from 'node:path'
 import { app } from 'electron'
-import type { ErrorParams, PlaySession, Settings, TaskDef, TaskState, ThemeMode, ThemePresetId } from '../shared/types'
-import { DEFAULT_SETTINGS, THEME_MODES, THEME_PRESETS } from '../shared/types'
+import { createJsonStore } from './jsonStore'
+import {
+  DEFAULT_SETTINGS,
+  THEME_MODES,
+  THEME_PRESETS,
+  type ErrorParams,
+  type PlaySession,
+  type Settings,
+  type TaskDef,
+  type TaskState,
+  type ThemeMode,
+  type ThemePresetId,
+} from '../shared/types'
 const TASK_STATES: readonly string[] = [
   'queued',
   'idle',
@@ -102,24 +113,6 @@ export function defaultDownloadDir(): string {
   return existsSync(d) ? d : dataDir()
 }
 
-/** 读 JSON，任何失败都返回 null（老文件损坏时优雅降级，不炸启动）。 */
-function readJson(path: string): unknown {
-  if (!existsSync(path)) return null
-  try {
-    return JSON.parse(readFileSync(path, 'utf8')) as unknown
-  } catch {
-    return null
-  }
-}
-
-/** 原子写：先写 .tmp 再 rename，避免中途断电留下半截文件。 */
-function writeJsonAtomic(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true })
-  const tmp = `${path}.tmp`
-  writeFileSync(tmp, JSON.stringify(value, null, 2), 'utf8')
-  renameSync(tmp, path)
-}
-
 /**
  * 逐字段校验设置。渲染层传回来的对象不可信（可能是半截 JSON、被改坏的字段，
  * 或者干脆是别的进程塞进来的东西），非法值一律回落到默认值而不是写进盘里。
@@ -132,7 +125,17 @@ export function normalizeSettings(raw: unknown): Settings {
     // 分片数上限 32 与设置页 InputNumber、IPC 入参校验同源：每一片是一条连接，
     // 放更大的值只会把目标站点打成拒绝服务，自己也不会更快。
     if (typeof d.threads === 'number') s.threads = clampInt(d.threads, 1, 32)
-    if (typeof d.download_dir === 'string' && d.download_dir) s.download_dir = d.download_dir
+    // download_dir：只收空串或「存在且是目录」的值。指向一个已存在的**文件**
+    // 是手改坏值（所有下载都会落在错误路径上），回落默认目录；
+    // 不存在的目录合法（首次下载时 engine/uniquePath 会建），不能像 backup_dir
+    // 那样只收存在的——用户可能先填一个还没建的目录。
+    if (typeof d.download_dir === 'string' && d.download_dir) {
+      if (existsSync(d.download_dir)) {
+        if (statSync(d.download_dir).isDirectory()) s.download_dir = d.download_dir
+      } else {
+        s.download_dir = d.download_dir
+      }
+    }
     if (typeof d.proxy === 'string') s.proxy = d.proxy
     if (typeof d.user_agent === 'string') s.user_agent = d.user_agent
     if (typeof d.max_concurrent === 'number') s.max_concurrent = clampInt(d.max_concurrent, 1, 16)
@@ -181,12 +184,18 @@ function clampInt(v: number, lo: number, hi: number): number {
 }
 
 export class Store {
+  // 三个持久化域各自一个 jsonStore：原子写 + 400ms 尾触发合并 + flush。
+  // 统一实现（jsonStore.ts），这里只声明文件与校验策略。
+  private tasksStore = createJsonStore<TaskDef[]>(taskFile())
+  private settingsStore = createJsonStore<Settings>(settingsFile())
+  private sessionsStore = createJsonStore<PlaySession[]>(playSessionsFile())
+
   constructor() {
     mkdirSync(dataDir(), { recursive: true })
   }
 
   loadTasks(): TaskDef[] {
-    const data = readJson(taskFile())
+    const data = this.tasksStore.load()
     if (!Array.isArray(data)) return []
     const out: TaskDef[] = []
     for (const item of data) {
@@ -221,32 +230,37 @@ export class Store {
     return out
   }
 
+  /** 合并写：进度回调 100ms 一次也不落盘风暴；退出前 flush() 兜底。 */
   saveTasks(tasks: TaskDef[]): void {
-    writeJsonAtomic(taskFile(), tasks)
+    this.tasksStore.save(tasks)
   }
 
   loadSettings(): Settings {
-    return normalizeSettings(readJson(settingsFile()))
+    return normalizeSettings(this.settingsStore.load())
   }
 
   saveSettings(s: Settings): void {
-    writeJsonAtomic(settingsFile(), normalizeSettings(s))
+    this.settingsStore.save(normalizeSettings(s))
   }
 
   // ---------------------------------------------------------------- 游玩会话
   // 统计报表的数据源。只追加不删改：每场会话一条，重放即可聚合。
   loadPlaySessions(): PlaySession[] {
-    const data = readJson(playSessionsFile())
+    const data = this.sessionsStore.load()
     if (!Array.isArray(data)) return []
     const out: PlaySession[] = []
     for (const item of data) {
       const d = item as Partial<PlaySession>
       if (
         d &&
-        typeof d.gameId === 'string' && d.gameId &&
-        typeof d.start === 'number' && Number.isFinite(d.start) &&
-        typeof d.end === 'number' && Number.isFinite(d.end) &&
-        typeof d.ms === 'number' && Number.isFinite(d.ms)
+        typeof d.gameId === 'string' &&
+        d.gameId &&
+        typeof d.start === 'number' &&
+        Number.isFinite(d.start) &&
+        typeof d.end === 'number' &&
+        Number.isFinite(d.end) &&
+        typeof d.ms === 'number' &&
+        Number.isFinite(d.ms)
       ) {
         out.push({
           gameId: d.gameId,
@@ -265,7 +279,14 @@ export class Store {
     const all = [...this.loadPlaySessions(), ...sessions]
     // 只保留最近 2 年：统计页只需日/周/月粒度，无上限增长没有意义
     const cutoff = Date.now() - 730 * 86400000
-    writeJsonAtomic(playSessionsFile(), all.filter((s) => s.end >= cutoff))
+    this.sessionsStore.save(all.filter((s) => s.end >= cutoff))
+  }
+
+  /** 把三个域待写的内容立即落盘（进程退出前调用），不丢合并窗口里的最后一批。 */
+  flush(): void {
+    this.tasksStore.flush()
+    this.settingsStore.flush()
+    this.sessionsStore.flush()
   }
 }
 
@@ -305,7 +326,10 @@ export function safeFileName(name: string): string {
   } catch {
     // 非法百分号编码（`%zz`）就用原串
   }
-  s = basename(s).replace(/[\\/]/g, '_').replace(/[<>:"|?*\x00-\x1f]/g, '_').trim()
+  s = basename(s)
+    .replace(/[\\/]/g, '_')
+    .replace(/[<>:"|?*\x00-\x1f]/g, '_')
+    .trim()
   while (s.startsWith('.')) s = `_${s.slice(1)}`
   return s || 'download'
 }

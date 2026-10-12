@@ -116,7 +116,7 @@ export function crBundleNote(
   shareName: string,
   total: number,
   extra: number,
-  failed: number
+  failed: number,
 ): { message: string; missing: number } {
   const note = extra > 0 ? `（还有 ${extra} 个文件未加入，可在分享页查看）` : ''
   const failNote = failed > 0 ? `（另有 ${failed} 个文件取直链失败）` : ''
@@ -145,9 +145,10 @@ async function resolveCloudreve(m: Mirror): Promise<ResolveOutcome> {
   const rootUri = `cloudreve://${shareId}@share`
 
   try {
-    const info = (await getJson(`${CR_BASE}/share/info/${shareId}`)) as
-      | { code?: number; data?: { name?: string } }
-      | null
+    const info = (await getJson(`${CR_BASE}/share/info/${shareId}`)) as {
+      code?: number
+      data?: { name?: string }
+    } | null
     const shareName = info?.data?.name ?? m.name
     if (info?.code !== 0) {
       return {

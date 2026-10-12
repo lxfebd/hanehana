@@ -131,12 +131,22 @@ pub fn truncated_err(written: u64, expect: u64) -> FetchErr {
 pub fn make_client(proxy: &str, user_agent: &str) -> Result<reqwest::Client, String> {
     let mut b = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
-        .http2_adaptive_window(true);
+        .http2_adaptive_window(true)
+        // 强制 https：下载源（含代理入口）都应是 https，放开明文会把
+        // Range 请求原样暴露在网络上，也防服务端用重定向把请求降级到 http。
+        .https_only(true)
+        // 默认重定向策略是「放行到任意主机」——一个 https 下载源可以把我们
+        // 重定向到内网/本地地址并带上 Range 头（SSRF 面）。限制为最多 10 跳、
+        // 且只允许同样的 https 协议（reqwest 对跨协议跳转默认已拒绝，这里显式化）。
+        .redirect(reqwest::redirect::Policy::limited(10));
     // 代理串解析不了必须当场报错，不能 `if let Ok(..)` 静默跳过：跳过等于用户填了
     // 代理却一路直连，失败时他会去怀疑站点，而真正的原因是那行配置根本没生效。
     if !proxy.is_empty() {
+        // 代理串可能带凭据（user:pass@host:port），报错时只回显去掉了凭据的部分，
+        // 免得密码跟着错误事件进界面和日志。
+        let readable = proxy.split('@').last().unwrap_or(&proxy);
         let p =
-            reqwest::Proxy::all(proxy).map_err(|e| format!("invalid proxy url: {proxy} ({e})"))?;
+            reqwest::Proxy::all(proxy).map_err(|e| format!("invalid proxy url: {readable} ({e})"))?;
         b = b.proxy(p);
     }
     let mut h = reqwest::header::HeaderMap::new();
@@ -153,15 +163,47 @@ pub fn make_client(proxy: &str, user_agent: &str) -> Result<reqwest::Client, Str
 /// 真正的病因（`tcp connect error` / `Connection refused`）藏在 source 链里。
 /// 界面是按这些关键词决定「连不上服务器」还是「网络传输中断，会自动重连」的：
 /// 代理地址填错时若只给外层，用户会以为站点在抽风，等一台根本没挂的站自愈。
+///
+/// reqwest 的 message 会带上完整 URL——下载源常带签名令牌（`?token=...`、
+/// `&sig=...`），直接透传会把临时凭据写进错误事件、日志和界面。这里在拼接
+/// 前先把 URL 里的 query 剥掉，`error sending request for url (https://…/file.zip)`
+/// 变成 `…/file.zip)`，令牌不落地。
 fn req_err(e: &reqwest::Error) -> String {
-    let mut msg = e.to_string();
+    let mut msg = redact_url(&e.to_string());
     let mut src = std::error::Error::source(e);
     while let Some(s) = src {
         msg.push_str(": ");
-        msg.push_str(&s.to_string());
+        msg.push_str(&redact_url(&s.to_string()));
         src = s.source();
     }
     msg
+}
+
+/// 把字符串里形如 `https?://host/path?query` 的 URL 的 query 段去掉。
+/// source 链里的 `url: https://host/file?token=abc` 也要脱敏，所以按
+/// `://` 之后第一个 `?` 切掉 query 即可（端口、路径里的 ? 少见且无害）。
+fn redact_url(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(pos) = rest.find("://") {
+        // 协议前的内容照抄
+        let head = &rest[..pos];
+        out.push_str(head);
+        let after = &rest[pos + 3..];
+        // 找主机/路径段的结尾（空格或结尾）
+        let end = after.find(|c: char| c.is_whitespace() || c == '(' || c == ')').unwrap_or(after.len());
+        let addr = &after[..end];
+        // 只剥 query：第一个 ? 之后到段尾
+        let addr_clean = match addr.find('?') {
+            Some(q) => &addr[..q],
+            None => addr,
+        };
+        out.push_str("://");
+        out.push_str(addr_clean);
+        rest = &after[end..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// 发请求并等响应头，单独封顶 `HEADERS_TIMEOUT`。
@@ -175,8 +217,12 @@ pub async fn send_headers(
 ) -> Result<reqwest::Response, FetchErr> {
     match tokio::time::timeout(deadline, req.send()).await {
         Ok(r) => r.map_err(|e| {
+            // 网络级错误（连不上/DNS/TLS/代理/超时）一律可重试：瞬时抖动会自愈，
+            // 标 fatal 会让 worker 一次尝试就永久终止下载，与 main.rs 的
+            // 「网络抖动无限重试自愈」注释直接矛盾。真正不可重试的是 HTTP 4xx
+            // 等确定性应答（由 is_fatal_status 判定），发送失败本身永远不在此列。
             let code = req_code(&e);
-            FetchErr::fatal(code, req_err(&e))
+            FetchErr::new(code, req_err(&e))
         }),
         Err(_) => Err(FetchErr::new(
             "no_reply",
@@ -329,7 +375,11 @@ pub fn expected_len(
             if first != from {
                 return Err(());
             }
-            return Ok(Some(last - first + 1));
+            // checked 运算：恶意/损坏的 Content-Range（如 first=u64::MAX, last=0）
+            // 会让 `last - first + 1` 在 debug 构建里直接 panic——worker 静默死亡、
+            // 任务卡死；release 里回绕成巨大的长度，截断检测跟着失效。
+            let n = last.checked_sub(first).and_then(|d| d.checked_add(1));
+            return Ok(n);
         }
     }
     Ok(content_length)

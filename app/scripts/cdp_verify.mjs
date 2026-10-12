@@ -46,7 +46,9 @@ async function main() {
   const navItems = await evalJs(`[...document.querySelectorAll('.nav-item')].map(e => e.textContent).join(',')`)
   const bootInfo = await evalJs(`document.querySelector('.hero .status')?.textContent ?? '(missing)'`)
   const bridge = await evalJs(`typeof window.hh`)
-  const hello = await evalJs(`(async () => { try { const r = await window.hh?.hello(); return r ? r.name + '@' + r.version : 'n/a' } catch (e) { return 'ERR:' + e.message } })()`)
+  const hello = await evalJs(
+    `(async () => { try { const r = await window.hh?.hello(); return r ? r.name + '@' + r.version : 'n/a' } catch (e) { return 'ERR:' + e.message } })()`,
+  )
 
   console.log('TITLE:', title)
   console.log('H1:', h1)

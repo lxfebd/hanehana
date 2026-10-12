@@ -114,9 +114,7 @@ export async function mirrors(detailUrl: string): Promise<SiteMirrorOutcome> {
     const title = extractTitle(html)
 
     // 2) ajax 拿 go 地址
-    const ajax = await withRetry(() =>
-      postForm(AJAX, { action: 'user_down_ajax', post_id: postId }, detailUrl),
-    )
+    const ajax = await withRetry(() => postForm(AJAX, { action: 'user_down_ajax', post_id: postId }, detailUrl))
     const msg = (ajax as { status?: number; msg?: string } | null)?.msg
     if (!msg) {
       return {
@@ -154,28 +152,56 @@ export async function mirrors(detailUrl: string): Promise<SiteMirrorOutcome> {
  * 跟随 go 地址。go 页可能 302，也可能只是包一层 JS 跳转：
  * <script>window.location='https://...'</script>，两跳都要处理。
  * 空响应或非 2xx（gamer520 的反爬占位）时不再死循环，直接返回让调用方决定回退方式。
+ *
+ * 跳转目标必须还在本站域内（gamer520.com / gamers520.com）：go 页的 JS 是
+ * 服务端返回的，被反爬插件/被攻陷页面改成 window.location='https://evil.com'
+ * 的话，这里会替攻击者向任意 https 地址发请求（SSRF 探测面）。只认本站跳转，
+ * 越域即停，把最终地址交给 UI 让用户在 webview 里自己决定要不要点。
  */
-async function followGo(goUrl: string): Promise<{ html: string; finalUrl: string }> {
-  let url = goUrl
-  for (let i = 0; i < 4; i++) {
-    const r = await fetchText(url)
-    const html = r.text.trim()
-    if (!r.ok || !html) return { html: '', finalUrl: r.url || url }
-    const jsUrl = /window\.location\s*=\s*['"]([^'"]+)['"]/.exec(html)
-    if (jsUrl) {
-      url = new URL(jsUrl[1], r.url || url).toString()
-      continue
-    }
-    return { html, finalUrl: r.url || url }
+const GAMER_DOMAINS = ['gamer520.com', 'gamers520.com']
+function isGamerDomain(url: string): boolean {
+  let host: string
+  try {
+    host = new URL(url).hostname.toLowerCase()
+  } catch {
+    return false
   }
-  return { html: '', finalUrl: url }
+  return GAMER_DOMAINS.some((d) => host === d || host.endsWith(`.${d}`))
+}
+
+function followGo(goUrl: string): Promise<{ html: string; finalUrl: string }> {
+  let url = goUrl
+  return (async () => {
+    for (let i = 0; i < 4; i++) {
+      const r = await fetchText(url)
+      const html = r.text.trim()
+      if (!r.ok || !html) return { html: '', finalUrl: r.url || url }
+      const jsUrl = /window\.location\s*=\s*['"]([^'"]+)['"]/.exec(html)
+      if (jsUrl) {
+        const next = new URL(jsUrl[1], r.url || url).toString()
+        // 越域跳转不再跟：把它当「到此为止」返回，UI 用 finalUrl 兜底
+        if (!isGamerDomain(next)) return { html: '', finalUrl: url }
+        url = next
+        continue
+      }
+      return { html, finalUrl: r.url || url }
+    }
+    return { html: '', finalUrl: url }
+  })()
 }
 
 /** 从镜像页抠网盘卡片。卡片结构（实测）：bdp-card bdp-{baidu,quark,xunlei,gofile}。 */
 export function parseMirrorPage(html: string): Mirror[] {
   const mirrors: Mirror[] = []
   const push = (kind: Mirror['kind'], name: string, url: string, note?: string): void => {
-    if (url && url.startsWith('http')) mirrors.push({ kind, name, url, note })
+    // 网盘/直链是 http(s) 开头；磁力是 magnet:? 开头。两类都要收——
+    // 老写法只认 http，把 216 行抓到的磁力链接整个过滤掉了，等于没抓。
+    // 网盘只收 https：明文 http 的链接放进列表，用户一旦点开 = 把整个
+    // 下载地址交给裸连接，站点若被加入黑名单或中间人即可篡改。
+    const okScheme = url.startsWith('https://') || url.startsWith('magnet:')
+    if (url && okScheme) {
+      mirrors.push({ kind, name, url, note })
+    }
   }
 
   // 百度：二维码 data 里藏 pan.baidu.com 分享链接，旁边有提取码
@@ -232,5 +258,8 @@ export function parseMirrorPage(html: string): Mirror[] {
 }
 
 function stripTags(s: string): string {
-  return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  return s
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

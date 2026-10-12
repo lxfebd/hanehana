@@ -236,15 +236,7 @@ export interface ScrapeCandidate {
  * ===== 下载引擎类型（迁移自 FastDrop）=====
  */
 
-export type TaskState =
-  | 'queued'
-  | 'idle'
-  | 'preparing'
-  | 'downloading'
-  | 'paused'
-  | 'done'
-  | 'error'
-  | 'cancelled'
+export type TaskState = 'queued' | 'idle' | 'preparing' | 'downloading' | 'paused' | 'done' | 'error' | 'cancelled'
 
 /** 单个分段的进度。字段直接来自 engine-rs 的 Segment::snapshot()。 */
 export interface SegmentInfo {
@@ -416,7 +408,7 @@ export const DEFAULT_SETTINGS: Settings = {
   confirm_delete: true,
   dark: true,
   theme_mode: 'dark',
-  theme_preset: 'sakura',
+  theme_preset: 'starnight',
   bg_image: '',
   notify_on_finish: true,
   notify_on_error: true,
@@ -557,8 +549,10 @@ export interface TrackHit {
   keyword: string
 }
 
-/** 检查请求结果：命中列表 + 是否有新作（新 = 不在上次 seen 里）。 */
-export type TrackCheckResult = { ok: true; hits: TrackHit[]; fresh: TrackHit[] } | { ok: false; error: string }
+/** 检查请求结果：命中列表 + 是否有新作（新 = 不在上次 seen 里）。
+ *  ok:true 时 error 可选携带「部分订阅词查询失败」的说明（其余词照常出结果）。 */
+export type TrackCheckResult =
+  { ok: true; hits: TrackHit[]; fresh: TrackHit[]; error?: string } | { ok: false; error: string }
 
 /**
  * 保存设置的结果。必须带成功/失败两种形状：代理地址填错时，主进程既写了盘又
@@ -568,14 +562,10 @@ export type TrackCheckResult = { ok: true; hits: TrackHit[]; fresh: TrackHit[] }
  * 「保存成功但没生效」，拖着不说等于下一个哑坑（用户填错 LE 路径后重启，
  * 发现还是老样子）。
  */
-export type SaveSettingsResult =
-  | { ok: true; settings: Settings; discarded?: string[] }
-  | { ok: false; error: string }
+export type SaveSettingsResult = { ok: true; settings: Settings; discarded?: string[] } | { ok: false; error: string }
 
 /** 新建任务的结果。duplicate=true 表示该链接已在列表里，没有重复建任务。 */
-export type AddResult =
-  | { ok: true; def: TaskDef; duplicate: boolean }
-  | { ok: false; error: string }
+export type AddResult = { ok: true; def: TaskDef; duplicate: boolean } | { ok: false; error: string }
 
 /**
  * 应用更新状态的渲染层可见投影。
@@ -603,4 +593,3 @@ export interface UpdateStatus {
 
 /** 空状态。渲染层拿不到任何推送时的初始值。 */
 export const IDLE_UPDATE_STATUS: UpdateStatus = { phase: 'idle' }
-

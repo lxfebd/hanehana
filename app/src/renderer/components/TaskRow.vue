@@ -14,6 +14,7 @@ import {
   CircleDot,
   CirclePause,
   CircleX,
+  FilePlay,
   FolderOpen,
   Loader2,
   PackagePlus,
@@ -28,6 +29,7 @@ import type { TaskDef, TaskSnapshot, TaskState } from '../../shared/types'
 import { dirName, fileName, fmtEta, fmtRange, fmtSize, fmtSpeed, fmtTime } from '../../shared/format'
 import { errorLine, explainError } from '../../shared/errors'
 import { percentText, progressRatio, statusBadge, totalBytes } from '../status'
+import { t, tf } from '../i18n'
 
 const props = defineProps<{
   def: TaskDef
@@ -45,7 +47,7 @@ const state = computed<TaskState>(() => props.snap?.state ?? (props.def.state ||
 
 const checksumAlg = computed(() => (props.def.checksum || '').split(':')[0])
 const verifiedDone = computed(() => state.value === 'done' && !!props.def.checksum)
-const verifyTip = computed(() => (verifiedDone.value ? `已按 ${checksumAlg.value} 校验通过` : ''))
+const verifyTip = computed(() => (verifiedDone.value ? tf('tr_verified', { alg: checksumAlg.value }) : ''))
 
 const icon: Component = computed(() => {
   if (state.value === 'downloading') return Loader2
@@ -93,62 +95,80 @@ const errFull = computed(() => {
 
 const sub = computed(() => {
   const got = fmtSize(downloaded.value)
-  const range = sizeKnown.value ? fmtRange(downloaded.value, total.value) : `已下 ${got}`
+  const range = sizeKnown.value ? fmtRange(downloaded.value, total.value) : tf('tr_dl_part', { n: got })
   if (state.value === 'done') {
     const size = sizeKnown.value ? fmtSize(total.value) : got
     // zip 完成不进系统通知前台 toast（mute 语义保留）——任务行自带「解压后扫描」指引
-    const zipHint = /\.zip$/i.test(props.def.dest) ? ' · 解压后用「扫描」导入游戏库' : ''
+    const zipHint = /\.zip$/i.test(props.def.dest) ? tf('tr_zip_hint') : ''
     return finishedAt.value
-      ? `${size} · 完成于 ${fmtTime(finishedAt.value)}${zipHint}`
-      : `${size} · ${segN.value} 线程${zipHint}`
+      ? `${size} · ${tf('tr_finished_at', { time: fmtTime(finishedAt.value) })}${zipHint}`
+      : `${size} · ${tf('tr_threads', { n: segN.value })}${zipHint}`
   }
   if (state.value === 'error') {
-    return errorLine(err.value.raw, err.value.code, err.value.params) || '下载失败'
+    return errorLine(err.value.raw, err.value.code, err.value.params) || t('tr_fail')
   }
   if (state.value === 'downloading' || state.value === 'preparing') {
     const s = props.snap
     const warn = s?.error ? ` · ${errorLine(s.error, s.error_code, s.error_params)}` : ''
-    if (verifying.value) return `已下完 ${got} · 正在核对校验和`
-    if (!sizeKnown.value) return `大小未知 · ${fmtSpeed(s?.speed ?? 0)} · 已下 ${got}${warn}`
-    return `${fmtSpeed(s?.speed ?? 0)} · 剩余 ${fmtEta(s?.eta ?? 0)} · ${range}${warn}`
+    if (verifying.value) return tf('tr_verifying', { n: got })
+    if (!sizeKnown.value) {
+      return `${tf('tr_unknown_size')} · ${fmtSpeed(s?.speed ?? 0)} · ${tf('tr_dl_part', { n: got })}${warn}`
+    }
+    return `${fmtSpeed(s?.speed ?? 0)} · ${tf('tr_remaining', { eta: fmtEta(s?.eta ?? 0) })} · ${range}${warn}`
   }
-  return `${range} · ${segN.value} 线程`
+  return `${range} · ${tf('tr_threads', { n: segN.value })}`
 })
 
 const canStart = computed(() => ['queued', 'paused', 'error', 'idle', 'cancelled'].includes(state.value))
 const canPause = computed(() => state.value === 'downloading' || state.value === 'preparing')
 const canOpen = computed(() => true)
+/** 打开产物本身（不是目录）：下载完就能直接装/直接解压。
+ *  只认常见产物后缀——没下完或产物不是文件（异常 dest）时不给按钮。 */
+const canOpenFile = computed(
+  () => state.value === 'done' && /\.(exe|zip|7z|rar|iso|msi|apk|dmg|torrent)$/i.test(props.def.dest),
+)
 /** 完成且产物是 exe → 一键入库（复用 GameAddOne；zip 等解压后走扫描，不给假按钮） */
 const canIngest = computed(() => state.value === 'done' && /\.exe$/i.test(props.def.dest))
 const needsRetry = computed(() => state.value === 'done')
 const primaryAction = computed(() => (needsRetry.value ? 'retry' : 'start'))
 const primaryTitle = computed(() => {
-  if (state.value === 'done') return '重新下载（会清掉现有文件）'
-  if (state.value === 'error' || state.value === 'cancelled') return '继续下载（从断点续传）'
-  if (state.value === 'paused') return '恢复下载'
-  return '开始下载'
+  if (state.value === 'done') return t('tr_redownload')
+  if (state.value === 'error' || state.value === 'cancelled') return t('tr_resume')
+  if (state.value === 'paused') return t('tr_restore')
+  return t('nd_start')
 })
 
 /** 状态色点颜色（真值在 tokens，经 CSS 变量引用） */
 const dotColor = computed(() => {
   switch (state.value) {
-    case 'downloading': return 'var(--hh-color-accent)'
-    case 'preparing': return 'var(--hh-color-warning)'
-    case 'done': return 'var(--hh-color-success)'
-    case 'error': return 'var(--hh-color-error)'
-    case 'paused': return 'var(--hh-color-neutral)'
-    default: return 'var(--hh-color-neutral-dim)'
+    case 'downloading':
+      return 'var(--hh-color-accent)'
+    case 'preparing':
+      return 'var(--hh-color-warning)'
+    case 'done':
+      return 'var(--hh-color-success)'
+    case 'error':
+      return 'var(--hh-color-error)'
+    case 'paused':
+      return 'var(--hh-color-neutral)'
+    default:
+      return 'var(--hh-color-neutral-dim)'
   }
 })
 
 /** 自绘状态 chip 颜色（dot+label） */
 const chipTone = computed(() => {
   switch (badge.value.tone) {
-    case 'success': return { dot: 'var(--hh-color-success)', text: 'var(--hh-color-success-text)' }
-    case 'error': return { dot: 'var(--hh-color-error)', text: 'var(--hh-color-error-text)' }
-    case 'warning': return { dot: 'var(--hh-color-warning)', text: 'var(--hh-color-warning)' }
-    case 'blue': return { dot: 'var(--hh-color-accent)', text: 'var(--hh-color-accent-text)' }
-    default: return { dot: 'var(--hh-color-neutral)', text: 'var(--hh-color-text-mid-high)' }
+    case 'success':
+      return { dot: 'var(--hh-color-success)', text: 'var(--hh-color-success-text)' }
+    case 'error':
+      return { dot: 'var(--hh-color-error)', text: 'var(--hh-color-error-text)' }
+    case 'warning':
+      return { dot: 'var(--hh-color-warning)', text: 'var(--hh-color-warning)' }
+    case 'blue':
+      return { dot: 'var(--hh-color-accent)', text: 'var(--hh-color-accent-text)' }
+    default:
+      return { dot: 'var(--hh-color-neutral)', text: 'var(--hh-color-text-mid-high)' }
   }
 })
 </script>
@@ -171,7 +191,7 @@ const chipTone = computed(() => {
     <span class="cell-tag">
       <span class="st-chip">
         <span class="st-dot" :style="{ background: chipTone.dot }"></span>
-        <span class="st-label" :style="{ color: chipTone.text }">{{ badge.label }}</span>
+        <span class="st-label" :style="{ color: chipTone.text }">{{ t(badge.labelKey) }}</span>
       </span>
     </span>
 
@@ -187,27 +207,36 @@ const chipTone = computed(() => {
     </div>
 
     <span class="cell-actions">
-      <button
-        v-if="needsRetry"
-        class="ibtn"
-        title="重新下载（会清掉现有进度）"
-        @click.stop="emit('action', 'retry')"
-      >
+      <button v-if="needsRetry" class="ibtn" :title="t('tr_redownload2')" @click.stop="emit('action', 'retry')">
         <RotateCw :size="14" />
       </button>
-      <button v-else class="ibtn" :disabled="!canStart" :title="primaryTitle" @click.stop="emit('action', primaryAction)">
+      <button
+        v-else
+        class="ibtn"
+        :disabled="!canStart"
+        :title="primaryTitle"
+        @click.stop="emit('action', primaryAction)"
+      >
         <Play :size="14" :fill="'currentColor'" />
       </button>
-      <button class="ibtn" :disabled="!canPause" title="暂停" @click.stop="emit('action', 'pause')">
+      <button class="ibtn" :disabled="!canPause" :title="t('tr_pause')" @click.stop="emit('action', 'pause')">
         <Pause :size="14" :fill="'currentColor'" />
       </button>
-      <button class="ibtn" :disabled="!canOpen" title="打开所在文件夹" @click.stop="emit('action', 'open')">
+      <button class="ibtn" :disabled="!canOpen" :title="t('tr_open_dir')" @click.stop="emit('action', 'open')">
         <FolderOpen :size="14" />
       </button>
-      <button v-if="canIngest" class="ibtn" title="导入游戏库" @click.stop="emit('action', 'ingest')">
+      <button
+        v-if="canOpenFile"
+        class="ibtn"
+        :title="t('tr_open_file')"
+        @click.stop="emit('action', 'openFile')"
+      >
+        <FilePlay :size="14" />
+      </button>
+      <button v-if="canIngest" class="ibtn" :title="t('tr_ingest')" @click.stop="emit('action', 'ingest')">
         <PackagePlus :size="14" />
       </button>
-      <button class="ibtn danger" title="移除任务（可选连文件一起删）" @click.stop="emit('action', 'remove')">
+      <button class="ibtn danger" :title="t('tr_remove')" @click.stop="emit('action', 'remove')">
         <Trash2 :size="14" />
       </button>
     </span>
@@ -227,7 +256,10 @@ const chipTone = computed(() => {
   background: var(--hh-color-card);
   border: 1px solid var(--hh-color-card-border);
   cursor: pointer;
-  transition: background var(--hh-motion-med) ease, border-color var(--hh-motion-med) ease, box-shadow var(--hh-motion-med) ease;
+  transition:
+    background var(--hh-motion-med) ease,
+    border-color var(--hh-motion-med) ease,
+    box-shadow var(--hh-motion-med) ease;
   overflow: hidden;
   box-sizing: border-box;
 }
@@ -255,8 +287,13 @@ const chipTone = computed(() => {
   animation: dot-pulse 1.6s ease-in-out infinite;
 }
 @keyframes dot-pulse {
-  0%, 100% { opacity: 0.45; }
-  50% { opacity: 1; }
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 1;
+  }
 }
 
 .cell-ic {
@@ -268,15 +305,25 @@ const chipTone = computed(() => {
   align-items: center;
   justify-content: center;
 }
-.cell-ic .spin { animation: ic-spin 1s linear infinite; }
+.cell-ic .spin {
+  animation: ic-spin 1s linear infinite;
+}
 @keyframes ic-spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
 /* 状态图标配色：真值在 tokens（--hh-color-*），状态类挂在 .task-row 根上 */
 .task-row.downloading .cell-ic,
-.task-row.preparing .cell-ic { color: var(--hh-color-accent); }
-.task-row.done .cell-ic { color: var(--hh-color-success); }
-.task-row.error .cell-ic { color: var(--hh-color-error); }
+.task-row.preparing .cell-ic {
+  color: var(--hh-color-accent);
+}
+.task-row.done .cell-ic {
+  color: var(--hh-color-success);
+}
+.task-row.error .cell-ic {
+  color: var(--hh-color-error);
+}
 
 .cell-lead {
   flex: 1;
@@ -316,7 +363,9 @@ const chipTone = computed(() => {
 }
 
 /* 自绘状态 chip */
-.cell-tag { flex: none; }
+.cell-tag {
+  flex: none;
+}
 .st-chip {
   display: inline-flex;
   align-items: center;
@@ -328,7 +377,8 @@ const chipTone = computed(() => {
   white-space: nowrap;
 }
 .st-dot {
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex: none;
 }
@@ -340,7 +390,9 @@ const chipTone = computed(() => {
 /* 进度条：absolute 行底 */
 .prog {
   position: absolute;
-  left: 16px; right: 16px; bottom: 0;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
   height: 3px;
   border-radius: var(--hh-radius-xs);
   overflow: hidden;
@@ -348,20 +400,26 @@ const chipTone = computed(() => {
 }
 .bar-fill {
   position: absolute;
-  top: 0; left: 0; bottom: 0;
-  background: linear-gradient(90deg, var(--hh-color-accent-grad-stop), var(--hh-color-accent));
+  top: 0;
+  left: 0;
+  bottom: 0;
+  /* 实色不用渐变：进度条做渐变是"AI 味"手法之一 */
+  background: var(--hh-color-accent);
   transition: width var(--hh-motion-med) linear;
   overflow: hidden;
 }
 .bar-fill.moving::after {
   content: '';
-  position: absolute; inset: 0;
+  position: absolute;
+  inset: 0;
   background: linear-gradient(100deg, transparent 30%, var(--hh-color-shine-sweep) 50%, transparent 70%);
   transform: translateX(-100%);
   animation: bar-shine 1.2s linear infinite;
 }
 @keyframes bar-shine {
-  to { transform: translateX(100%); }
+  to {
+    transform: translateX(100%);
+  }
 }
 .bar-fill.full {
   background: linear-gradient(90deg, var(--hh-color-success-deep), var(--hh-color-success));
@@ -371,8 +429,12 @@ const chipTone = computed(() => {
   animation: indet-slide 1.3s ease-in-out infinite alternate;
 }
 @keyframes indet-slide {
-  from { transform: translateX(-20%); }
-  to { transform: translateX(310%); }
+  from {
+    transform: translateX(-20%);
+  }
+  to {
+    transform: translateX(310%);
+  }
 }
 
 /* hover 右上浮现操作按钮 */
@@ -402,7 +464,9 @@ const chipTone = computed(() => {
   cursor: pointer;
   font-size: var(--hh-font-bodyLg-size);
   padding: 0;
-  transition: background var(--hh-motion-med), color var(--hh-motion-med);
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
 }
 .ibtn:hover:not(:disabled) {
   background: var(--hh-color-surface-hover);

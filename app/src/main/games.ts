@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
 import { shell } from 'electron'
 import { addGames, findGameByExe, getGame, getGames, removeGame, updateGame } from './gameStore'
+import { backfillLocalCovers, adoptLocalCover } from './localCover'
 import { scanDir, isValidDir } from './scanner'
 import type { Game, GameVariant, PlaySession, SteamImportResult } from '../shared/types'
 
@@ -29,6 +30,34 @@ export interface BatchPatch {
   patch: Partial<Game>
 }
 
+/**
+ * 从目录/exe 名提炼干净标题：去掉版本号、DLC、汉化/整合包后缀、小黑盒噪音。
+ * 例：妹相随1.4.5+DLC+…（全部使用daseson上色） → 妹相随
+ */
+export function cleanTitle(raw: string): string {
+  let t = raw.trim()
+  // 括号备注整段先砍（含全角）
+  t = t.replace(/[（(][^）)]*[）)]/g, ' ')
+  // 版本号 / +DLC / 整合包尾巴
+  t = t.replace(/[+\s]*\d+(?:\.\d+){1,}(?:\s*[+\-–].*)?$/i, ' ')
+  t = t.replace(/[+\s]*v?\d+(?:\.\d+)+/gi, ' ')
+  // 常见分发噪音（中文）
+  t = t.replace(
+    /(汉化(?:补丁)?(?:全[面们]?|版)?|整合包|完整版|绿色版|免安装|硬盘版|简体中文|繁体中文|步兵|骑兵|fff?mod|小黑盒|叮卜|上色|白[色版]|DLC\+.*|全\.? unlock.*|ver\s*\d+(?:\.\d+)*)/gi,
+    ' ',
+  )
+  // 版本+说明连在一起的尾巴：1.4.5+DLC+…
+  t = t.replace(/\s*\d+(?:\.\d+)+(?:[+-][^ ]*)+/g, ' ')
+  // 多余分隔符（保留词内连字符：Yog-Sothoth）
+  t = t
+    .replace(/[+_…_/\\|,;:：，、]+/g, ' ')
+    .replace(/\s*-\s*/g, '-')
+    .replace(/\s+/g, ' ')
+    .trim()
+  // 仍空则退回原名
+  return t || raw.trim()
+}
+
 export async function handleScan(root: string): Promise<ScanResult> {
   if (!(await isValidDir(root))) {
     throw new Error('目录不存在或不可读：' + root)
@@ -37,7 +66,14 @@ export async function handleScan(root: string): Promise<ScanResult> {
   // 已入库的 exe 自动去重（addGames 内部按 exe 去重），这里统计跳过数
   const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
   const fresh = hits.filter((h) => !existing.has(h.exePath.toLowerCase()))
-  const added = addGames(fresh.map((h) => ({ dir: h.dir, exePath: h.exePath, rawTitle: h.rawTitle, title: h.rawTitle, useLE: false, useMagpie: false })))
+  const added = addGames(
+    fresh.map((h) => {
+      const title = cleanTitle(h.rawTitle)
+      return { dir: h.dir, exePath: h.exePath, rawTitle: h.rawTitle, title, useLE: false, useMagpie: false }
+    }),
+  )
+  // 本地封面：目录里有 cover/folder 等图就直接挂上并生成缩略图（不联网）
+  backfillLocalCovers(added)
   return { added, hits, skipped: hits.length - fresh.length }
 }
 
@@ -46,30 +82,43 @@ export function handleAddOne(exePath: string): { ok: true; game: Game } | { ok: 
   if (!existsSync(exePath)) return { ok: false, error: '文件不存在：' + exePath }
   const dir = dirname(exePath)
   const rawTitle = basename(exePath).replace(/\.[^.]+$/, '')
-  const added = addGames([{ dir, exePath, rawTitle, title: rawTitle, useLE: false, useMagpie: false }])
+  const title = cleanTitle(rawTitle)
+  const added = addGames([{ dir, exePath, rawTitle, title, useLE: false, useMagpie: false }])
   if (added.length === 0) {
     const ex = findGameByExe(exePath)
     return { ok: false, error: `该 exe 已在库中：${ex?.title ?? exePath}` }
   }
-  return { ok: true, game: added[0] }
+  adoptLocalCover(added[0]!)
+  return { ok: true, game: added[0]! }
 }
 
 /** Steam 导入（G4）：把选中的 Steam 候选入库。 */
-export function handleSteamImport(candidates: { dir: string; exePath: string; rawTitle: string; appid?: string }[]): SteamImportResult {  const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
+export function handleSteamImport(
+  candidates: { dir: string; exePath: string; rawTitle: string; appid?: string }[],
+): SteamImportResult {
+  const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
   const fresh = candidates.filter((c) => !existing.has(c.exePath.toLowerCase()))
   const added = addGames(
-    fresh.map((c) => ({
-      dir: c.dir,
-      exePath: c.exePath,
-      rawTitle: c.rawTitle,
-      title: c.rawTitle,
-      useLE: false,
-      useMagpie: false,
-    })),
+    fresh.map((c) => {
+      const title = cleanTitle(c.rawTitle)
+      return {
+        dir: c.dir,
+        exePath: c.exePath,
+        rawTitle: c.rawTitle,
+        title,
+        useLE: false,
+        useMagpie: false,
+      }
+    }),
   )
   // appid 记进 tags，方便识别 Steam 来源（不建新字段，只增字段原则）
   for (const g of added) {
-    if (g) updateGame(g.id, { tags: [...(g.tags ?? []), `steam:${candidates.find((c) => c.exePath === g.exePath)?.appid ?? ''}`].filter(Boolean) })
+    if (g)
+      updateGame(g.id, {
+        tags: [...(g.tags ?? []), `steam:${candidates.find((c) => c.exePath === g.exePath)?.appid ?? ''}`].filter(
+          Boolean,
+        ),
+      })
   }
   return { added: added.length, skipped: candidates.length - fresh.length }
 }
@@ -304,24 +353,37 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
     if (g.useLE) {
       // 设置里显式配置的路径优先；没配才回退环境变量与常见安装位置
       const cfgLe = toolPathsFn?.().le.trim() ?? ''
-      const le = cfgLe && existsSync(cfgLe)
-        ? cfgLe
-        : process.env.HANEHANA_LE_PATH && existsSync(process.env.HANEHANA_LE_PATH)
-          ? process.env.HANEHANA_LE_PATH
-          : detectToolPath([
-            // 常见安装位置：安装版默认目录 + 绿色版常见根
-            'C:\\Program Files\\Locale Emulator\\LEProc.exe',
-            'C:\\Program Files (x86)\\Locale Emulator\\LEProc.exe',
-            'D:\\Tools\\LocaleEmulator\\LEProc.exe',
-            'D:\\Tools\\Locale Emulator\\LEProc.exe',
-            'C:\\LocaleEmulator\\LEProc.exe',
-          ])
+      const le =
+        cfgLe && existsSync(cfgLe)
+          ? cfgLe
+          : process.env.HANEHANA_LE_PATH && existsSync(process.env.HANEHANA_LE_PATH)
+            ? process.env.HANEHANA_LE_PATH
+            : detectToolPath([
+                // 常见安装位置：安装版默认目录 + 绿色版常见根
+                'C:\\Program Files\\Locale Emulator\\LEProc.exe',
+                'C:\\Program Files (x86)\\Locale Emulator\\LEProc.exe',
+                'D:\\Tools\\LocaleEmulator\\LEProc.exe',
+                'D:\\Tools\\Locale Emulator\\LEProc.exe',
+                'C:\\LocaleEmulator\\LEProc.exe',
+              ])
       if (le) {
         cmd = le
         args = [exe]
       } else {
-        return { ok: false, error: '游戏启用了 LE 转区，但找不到 Locale Emulator（请到设置→工具里指定 LEProc.exe 路径）' }
+        return {
+          ok: false,
+          error: '游戏启用了 LE 转区，但找不到 Locale Emulator（请到设置→工具里指定 LEProc.exe 路径）',
+        }
       }
+    }
+    // spawn 前同步预检：cmd 存在性 + cwd 有效性。spawn 的 ENOENT 走异步 error
+    // 事件，handleLaunch 已经返回 ok:true，用户看到「已启动」但游戏根本没起来——
+    // 这里把最常见的两种失败提前拦截成同步返回，错误立刻可见。
+    if (!existsSync(cmd)) {
+      return { ok: false, error: `启动失败：可执行文件不存在（${cmd}）` }
+    }
+    if (g.dir && !existsSync(g.dir)) {
+      return { ok: false, error: '启动失败：游戏目录不存在' }
     }
     const proc = spawn(cmd, args, {
       cwd: g.dir,
@@ -336,7 +398,17 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
     // spawn 的失败（ENOENT/EACCES/cwd 无效）走异步 error 事件；
     // 没有监听器就是 uncaughtException 直接带走主进程
     proc.on('error', (err) => {
-      console.error('[launch] 启动失败:', id, err.message, 'path=', cmd, 'cwd=', g.dir, 'code=', (err as NodeJS.ErrnoException).code)
+      console.error(
+        '[launch] 启动失败:',
+        id,
+        err.message,
+        'path=',
+        cmd,
+        'cwd=',
+        g.dir,
+        'code=',
+        (err as NodeJS.ErrnoException).code,
+      )
       runningProc.delete(id)
       runningSince.delete(id)
     })
@@ -362,16 +434,17 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
     // Magpie 用命令行动态缩放模式：Magpie.exe --launch <exePath>（<1.0 同义）。
     if (g.useMagpie) {
       const cfgMg = toolPathsFn?.().magpie.trim() ?? ''
-      const magpie = cfgMg && existsSync(cfgMg)
-        ? cfgMg
-        : process.env.HANEHANA_MAGPIE_PATH && existsSync(process.env.HANEHANA_MAGPIE_PATH)
-          ? process.env.HANEHANA_MAGPIE_PATH
-          : detectToolPath([
-            'C:\\Program Files\\Magpie\\Magpie.exe',
-            'C:\\Program Files (x86)\\Magpie\\Magpie.exe',
-            'D:\\Tools\\Magpie\\Magpie.exe',
-            'C:\\Magpie\\Magpie.exe',
-          ])
+      const magpie =
+        cfgMg && existsSync(cfgMg)
+          ? cfgMg
+          : process.env.HANEHANA_MAGPIE_PATH && existsSync(process.env.HANEHANA_MAGPIE_PATH)
+            ? process.env.HANEHANA_MAGPIE_PATH
+            : detectToolPath([
+                'C:\\Program Files\\Magpie\\Magpie.exe',
+                'C:\\Program Files (x86)\\Magpie\\Magpie.exe',
+                'D:\\Tools\\Magpie\\Magpie.exe',
+                'C:\\Magpie\\Magpie.exe',
+              ])
       if (magpie) {
         // 等 1s 让游戏窗口出现，再让 Magpie 接管（太早会抓不到目标窗口）
         setTimeout(() => {

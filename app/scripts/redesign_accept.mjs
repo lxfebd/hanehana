@@ -15,20 +15,28 @@ mkdirSync(DATA_DIR, { recursive: true })
 mkdirSync(OUT, { recursive: true })
 
 // 用 layout seed 生成真实形态的游戏库（渐变封面 + 主色调）与六态下载任务
-const seed = spawn(process.execPath, [join(here, 'seed_layout.mjs'), DATA_DIR], { stdio: ['ignore', 'inherit', 'inherit'] })
+const seed = spawn(process.execPath, [join(here, 'seed_layout.mjs'), DATA_DIR], {
+  stdio: ['ignore', 'inherit', 'inherit'],
+})
 await new Promise((res) => seed.on('exit', res))
 if (seed.exitCode !== 0) throw new Error('seed_layout failed')
 
 const exe = join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
-// --disable-gpu：软件合成路径，避免 GPU 表面陈旧导致的截图重影（多份画面叠加）
-const proc = spawn(exe, ['--disable-gpu', '.'], {
+// Electron 44 不接受 --disable-gpu（bad option 直接拒启动）；ELECTRON_RUN_AS_NODE
+// 继承下来会让 electron 走 node 模式，拿不到 BrowserWindow。都要在 spawn 前剥掉。
+const env = { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR }
+delete env.ELECTRON_RUN_AS_NODE
+const proc = spawn(exe, ['.'], {
   cwd: APP_ROOT,
-  env: { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR },
+  env,
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: true,
 })
 let stderr = ''
-proc.stderr.on('data', (d) => { stderr += d.toString(); process.stdout.write('[app] ' + d.toString().trim().slice(0, 200) + '\n') })
+proc.stderr.on('data', (d) => {
+  stderr += d.toString()
+  process.stdout.write('[app] ' + d.toString().trim().slice(0, 200) + '\n')
+})
 
 async function getWsUrl() {
   for (let i = 0; i < 60; i++) {
@@ -43,8 +51,14 @@ function connectWs(url, timeoutSec) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url)
     const to = setTimeout(() => reject(new Error('browser ws open timeout')), timeoutSec * 1000)
-    ws.onopen = () => { clearTimeout(to); resolve(ws) }
-    ws.onerror = (e) => { clearTimeout(to); reject(new Error('ws error ' + (e?.message || 'unknown'))) }
+    ws.onopen = () => {
+      clearTimeout(to)
+      resolve(ws)
+    }
+    ws.onerror = (e) => {
+      clearTimeout(to)
+      reject(new Error('ws error ' + (e?.message || 'unknown')))
+    }
   })
 }
 
@@ -54,16 +68,28 @@ async function main() {
   const ws = await connectWs(wsUrl, 10)
   let msgId = 0
   const pending = new Map()
-  ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } }
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data)
+    if (m.id && pending.has(m.id)) {
+      pending.get(m.id)(m)
+      pending.delete(m.id)
+    }
+  }
   let sessionId = null
-  const sendRaw = (method, params = {}) => new Promise((res, rej) => {
-    const mid = ++msgId
-    pending.set(mid, res)
-    const msg = { id: mid, method, params }
-    if (sessionId) msg.sessionId = sessionId // sessionId 必须在消息顶层，否则被当作普通 params 忽略
-    ws.send(JSON.stringify(msg))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error('cdp timeout: ' + method)) } }, 12000)
-  })
+  const sendRaw = (method, params = {}) =>
+    new Promise((res, rej) => {
+      const mid = ++msgId
+      pending.set(mid, res)
+      const msg = { id: mid, method, params }
+      if (sessionId) msg.sessionId = sessionId // sessionId 必须在消息顶层，否则被当作普通 params 忽略
+      ws.send(JSON.stringify(msg))
+      setTimeout(() => {
+        if (pending.has(mid)) {
+          pending.delete(mid)
+          rej(new Error('cdp timeout: ' + method))
+        }
+      }, 12000)
+    })
   const targets = await sendRaw('Target.getTargets')
   const page = (targets.result?.targetInfos || []).find((t) => t.type === 'page')
   if (!page) throw new Error('no page target')
@@ -73,7 +99,8 @@ async function main() {
   const send = (method, params = {}) => sendRaw(method, params)
   const evalJs = async (expr) => {
     const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-    if (r.result?.exceptionDetails) return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
+    if (r.result?.exceptionDetails)
+      return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
     return r.result?.result?.value
   }
   const evalJsT = async (tag, expr) => {
@@ -139,16 +166,27 @@ async function main() {
   // 4 张基准图：库网格 / 详情（选中第一张卡）/ 下载页 / 设置
   await wait(500)
   await shot('01-library-grid')
-  await evalJsT('detail-click', `document.querySelector('.cover-card')?.click()`); await wait(700)
+  await evalJsT('detail-click', `document.querySelector('.cover-card')?.click()`)
+  await wait(700)
   await shot('02-detail')
-  await evalJsT('nav-download', `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('下载任务'))?.click()`); await wait(600)
+  await evalJsT(
+    'nav-download',
+    `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('下载任务'))?.click()`,
+  )
+  await wait(600)
   await shot('03-downloads')
-  await evalJsT('nav-settings', `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('设置'))?.click()`); await wait(700)
+  await evalJsT(
+    'nav-settings',
+    `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('设置'))?.click()`,
+  )
+  await wait(700)
   await shot('04-settings')
 
   // 主题切换验收：浅色库页 + 浅色下载页（seed 的 settings.json 默认 dark:true）
   await evalJs(`document.querySelector('.ant-modal-close')?.click()`)
-  await evalJs(`window.hh.getSettings().then(async (s) => { if (s.dark) await window.hh.saveSettings({ ...s, dark: false }); return true })`)
+  await evalJs(
+    `window.hh.getSettings().then(async (s) => { if (s.dark) await window.hh.saveSettings({ ...s, dark: false }); return true })`,
+  )
   await send('Page.reload', { ignoreCache: true })
   await wait(3000)
   const lightOv = await evalJs(`(() => {
@@ -161,8 +199,16 @@ async function main() {
   if (lightOv?.bad) throw new Error('light horizontal overflow: ' + JSON.stringify(lightOv))
   await wait(500)
   await shot('05-sakura-light')
-  await evalJsT('nav-settings-light', `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('设置'))?.click()`); await wait(600)
-  await evalJsT('tab-appearance', `[...document.querySelectorAll('.ant-tabs-tab')].find(t => t.textContent.includes('外观'))?.click()`); await wait(400)
+  await evalJsT(
+    'nav-settings-light',
+    `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('设置'))?.click()`,
+  )
+  await wait(600)
+  await evalJsT(
+    'tab-appearance',
+    `[...document.querySelectorAll('.ant-tabs-tab')].find(t => t.textContent.includes('外观'))?.click()`,
+  )
+  await wait(400)
   await shot('06-settings-appearance')
 
   // 多主题验收（T7）：切到星海套件（深色），CSS 变量 accent 应变为星青、布局侧栏加宽
@@ -239,7 +285,11 @@ try {
   console.error('FAIL', e.message)
   process.exitCode = 1
 } finally {
-  try { proc.kill() } catch {}
-  try { rmSync(DATA_DIR, { recursive: true, force: true }) } catch {}
+  try {
+    proc.kill()
+  } catch {}
+  try {
+    rmSync(DATA_DIR, { recursive: true, force: true })
+  } catch {}
   console.log(ok ? 'ACCEPT OK' : 'ACCEPT FAIL')
 }

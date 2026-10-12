@@ -15,14 +15,17 @@ import { computed } from 'vue'
 import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import { theme } from 'ant-design-vue'
 import { ui } from '../stores/ui'
-import { colorState, themePresets } from './tokens'
-import type { TokenColors } from './tokens'
+import { colorState, themePresets, type TokenColors } from './tokens'
 
 /** RGB 元组 → 实色 hex（antd seed 只收实色，§0-3）。 */
 const seedHex = (c: readonly [number, number, number]): string =>
   '#' +
   c
-    .map((v) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0'))
+    .map((v) =>
+      Math.max(0, Math.min(255, Math.round(v)))
+        .toString(16)
+        .padStart(2, '0'),
+    )
     .join('')
 
 /** 深浅主题的组件级覆盖（Modal/Select/Input/Button/Tabs 等） */
@@ -81,9 +84,7 @@ export const antdTheme = computed<ThemeConfig>(() => {
   const bodyText = seedHex(seeds.textBase)
   // 边框 = 底色向文字色混一小段：深浅两态各固定比例，六套 preset 同源跟随
   const t = dark ? 0.22 : 0.15
-  const border = seedHex(
-    seeds.night.map((v, i) => v + (seeds.textBase[i] - v) * t) as [number, number, number],
-  )
+  const border = seedHex(seeds.night.map((v, i) => v + (seeds.textBase[i] - v) * t) as [number, number, number])
   return {
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     token: {

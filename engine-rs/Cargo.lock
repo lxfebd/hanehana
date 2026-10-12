@@ -151,7 +151,6 @@ version = "1.0.0"
 dependencies = [
  "futures-util",
  "md-5",
- "percent-encoding",
  "reqwest",
  "serde",
  "serde_json",

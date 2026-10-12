@@ -9,8 +9,7 @@
  *   页面结构仍未实测确认，抓取通了但解析不出结果时会明确说「选择器未验证」。
  */
 import type { SiteMirrorOutcome, SiteSearchOutcome } from '../../shared/sites'
-import type { FetchText } from './http'
-import { fetchText, httpFailureMessage, networkLayerHint } from './http'
+import { fetchText, httpFailureMessage, networkLayerHint, type FetchText } from './http'
 
 export const SITE_ID = 'playzip'
 const HOME = 'https://playzip.com'
@@ -21,7 +20,11 @@ export async function search(keyword: string): Promise<SiteSearchOutcome> {
   try {
     r = await fetchText(url, { timeoutMs: 20000 })
   } catch (e) {
-    return { ok: false, siteId: SITE_ID, message: `playzip 连不上：${networkLayerHint(e)}。这是本机到站点的网络层故障，换网络或稍后再试。` }
+    return {
+      ok: false,
+      siteId: SITE_ID,
+      message: `playzip 连不上：${networkLayerHint(e)}。这是本机到站点的网络层故障，换网络或稍后再试。`,
+    }
   }
   const http = httpFailureMessage(r)
   if (http) return { ok: false, siteId: SITE_ID, message: `playzip ${http}` }

@@ -15,15 +15,22 @@ const DATA_DIR = join(APP_ROOT, '.batch22-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(DATA_DIR, { recursive: true })
 
-const seed = spawn(process.execPath, [join(here, 'seed_layout.mjs'), DATA_DIR], { stdio: ['ignore', 'inherit', 'inherit'] })
+const seed = spawn(process.execPath, [join(here, 'seed_layout.mjs'), DATA_DIR], {
+  stdio: ['ignore', 'inherit', 'inherit'],
+})
 await new Promise((r) => seed.on('exit', r))
 if (seed.exitCode !== 0) throw new Error('seed_layout failed')
 
 let passed = 0
 let failed = 0
 function assert(name, cond, extra = '') {
-  if (cond) { passed++; console.log('PASS ' + name) }
-  else { failed++; console.log('FAIL ' + name + (extra ? ' :: ' + extra : '')) }
+  if (cond) {
+    passed++
+    console.log('PASS ' + name)
+  } else {
+    failed++
+    console.log('FAIL ' + name + (extra ? ' :: ' + extra : ''))
+  }
 }
 
 function walkVue(dir, out = []) {
@@ -90,9 +97,15 @@ function walkVue(dir, out = []) {
 
   const indexSrc = readFileSync(join(APP_ROOT, 'src/main/index.ts'), 'utf8')
   const registers = [
-    'registerSettingsHandlers', 'registerWinHandlers', 'registerScanHandlers',
-    'registerSteamHandlers', 'registerBackupHandlers', 'registerGamesHandlers',
-    'registerScrapeHandlers', 'registerTasksHandlers', 'registerStatsHandlers',
+    'registerSettingsHandlers',
+    'registerWinHandlers',
+    'registerScanHandlers',
+    'registerSteamHandlers',
+    'registerBackupHandlers',
+    'registerGamesHandlers',
+    'registerScrapeHandlers',
+    'registerTasksHandlers',
+    'registerStatsHandlers',
   ]
   const missingReg = registers.filter((r) => !indexSrc.includes(r))
   assert('wireIpc 组装九域 register*', missingReg.length === 0, missingReg.join(', '))
@@ -118,20 +131,28 @@ function walkVue(dir, out = []) {
   // 通道名未改：shared/ipc.ts 的键集合未被本批修改 —— 抽查关键键仍在
   const sharedIpc = readFileSync(join(APP_ROOT, 'src/shared/ipc.ts'), 'utf8')
   for (const key of ['Hello', 'GameList', 'TasksAdd', 'SettingsGet', 'BackupDelete', 'FullscreenSet']) {
-    assert(`Ipc.${key} 通道名仍在`, new RegExp(`\\b${key}\\s*:`).test(sharedIpc) || sharedIpc.includes(`${key} =`) || sharedIpc.includes(`${key}:`))
+    assert(
+      `Ipc.${key} 通道名仍在`,
+      new RegExp(`\\b${key}\\s*:`).test(sharedIpc) || sharedIpc.includes(`${key} =`) || sharedIpc.includes(`${key}:`),
+    )
   }
 }
 
 // ---- 运行时 CDP ----
 const exe = join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
-const proc = spawn(exe, ['--disable-gpu', '.'], {
+// Electron 44 不接受 --disable-gpu；ELECTRON_RUN_AS_NODE 继承会让 electron 走 node 模式
+const env = { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR }
+delete env.ELECTRON_RUN_AS_NODE
+const proc = spawn(exe, ['.'], {
   cwd: APP_ROOT,
-  env: { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR },
+  env,
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: true,
 })
 let stderr = ''
-proc.stderr.on('data', (d) => { stderr += d.toString() })
+proc.stderr.on('data', (d) => {
+  stderr += d.toString()
+})
 
 async function getWsUrl() {
   for (let i = 0; i < 60; i++) {
@@ -146,7 +167,10 @@ function connectWs(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url)
     const to = setTimeout(() => reject(new Error('ws timeout')), 10000)
-    ws.onopen = () => { clearTimeout(to); resolve(ws) }
+    ws.onopen = () => {
+      clearTimeout(to)
+      resolve(ws)
+    }
     ws.onerror = () => reject(new Error('ws error'))
   })
 }
@@ -162,24 +186,39 @@ async function main() {
       const list = await (await fetch(`http://127.0.0.1:${port}/json`)).json()
       lastJson = JSON.stringify(list.map((t) => ({ type: t.type, url: t.url })))
       pageJson = list.find((t) => t.type === 'page' && t.webSocketDebuggerUrl) ?? null
-    } catch (e) { lastJson = 'fetch fail: ' + e }
+    } catch (e) {
+      lastJson = 'fetch fail: ' + e
+    }
     if (!pageJson) await new Promise((r) => setTimeout(r, 500))
   }
   if (!pageJson) throw new Error('no page target via /json | ' + lastJson)
   const ws = await connectWs(pageJson.webSocketDebuggerUrl)
   let msgId = 0
   const pending = new Map()
-  ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } }
-  const sendRaw = (method, params = {}) => new Promise((res, rej) => {
-    const mid = ++msgId
-    pending.set(mid, res)
-    ws.send(JSON.stringify({ id: mid, method, params: params || {} }))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error('cdp timeout: ' + method)) } }, 15000)
-  })
+  ws.onmessage = (ev) => {
+    const m = JSON.parse(ev.data)
+    if (m.id && pending.has(m.id)) {
+      pending.get(m.id)(m)
+      pending.delete(m.id)
+    }
+  }
+  const sendRaw = (method, params = {}) =>
+    new Promise((res, rej) => {
+      const mid = ++msgId
+      pending.set(mid, res)
+      ws.send(JSON.stringify({ id: mid, method, params: params || {} }))
+      setTimeout(() => {
+        if (pending.has(mid)) {
+          pending.delete(mid)
+          rej(new Error('cdp timeout: ' + method))
+        }
+      }, 15000)
+    })
   const send = (method, params = {}) => sendRaw(method, params)
   const evalJs = async (expr) => {
     const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-    if (r.result?.exceptionDetails) return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
+    if (r.result?.exceptionDetails)
+      return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
     return r.result?.result?.value
   }
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -197,30 +236,59 @@ async function main() {
       tag: document.querySelector('.tag')?.textContent ?? '',
     }))()`)
     console.log('BOOT:', JSON.stringify(boot))
-    assert('渲染层已挂载', boot?.hasHh === true && (boot?.tag || boot?.libCount || boot?.coverCards !== undefined), JSON.stringify(boot))
+    assert(
+      '渲染层已挂载',
+      boot?.hasHh === true && (boot?.tag || boot?.libCount || boot?.coverCards !== undefined),
+      JSON.stringify(boot),
+    )
 
     // P2-4 抽测：跨域 IPC 在拆分后仍通
     const hello = await evalJs(`window.hh.hello()`)
-    console.log('HELLO:', JSON.stringify(hello && { ok: hello.ok, keys: hello && typeof hello === 'object' ? Object.keys(hello).slice(0, 8) : hello }))
+    console.log(
+      'HELLO:',
+      JSON.stringify(
+        hello && { ok: hello.ok, keys: hello && typeof hello === 'object' ? Object.keys(hello).slice(0, 8) : hello },
+      ),
+    )
     assert('Hello 通道可用', hello && !hello.__err && hello.ok !== false, JSON.stringify(hello))
 
     const games = await evalJs(`window.hh.listGames()`)
     console.log('GAMES:', Array.isArray(games) ? `len=${games.length}` : JSON.stringify(games))
-    assert('GameList 返回数组', Array.isArray(games) && games.length >= 1, JSON.stringify(Array.isArray(games) ? games.length : games))
+    assert(
+      'GameList 返回数组',
+      Array.isArray(games) && games.length >= 1,
+      JSON.stringify(Array.isArray(games) ? games.length : games),
+    )
 
     const settings = await evalJs(`window.hh.getSettings()`)
     console.log('SETTINGS:', settings && typeof settings === 'object' ? Object.keys(settings).slice(0, 6) : settings)
-    assert('SettingsGet 返回对象', settings && typeof settings === 'object' && !settings.__err && typeof settings.download_dir === 'string', JSON.stringify(settings && typeof settings === 'object' ? { download_dir: settings.download_dir, dark: settings.dark } : settings))
+    assert(
+      'SettingsGet 返回对象',
+      settings && typeof settings === 'object' && !settings.__err && typeof settings.download_dir === 'string',
+      JSON.stringify(
+        settings && typeof settings === 'object'
+          ? { download_dir: settings.download_dir, dark: settings.dark }
+          : settings,
+      ),
+    )
 
     // 非法 dest/url：err 形状（TasksAdd 在 ipc/tasks）
     const addBad = await evalJs(`window.hh.addTask({ url: 'not-a-url', dest: '', threads: 2 })`)
     console.log('ADD_BAD:', JSON.stringify(addBad))
-    assert('TasksAdd 非法 url 返 {ok:false,error}', addBad && addBad.ok === false && typeof addBad.error === 'string', JSON.stringify(addBad))
+    assert(
+      'TasksAdd 非法 url 返 {ok:false,error}',
+      addBad && addBad.ok === false && typeof addBad.error === 'string',
+      JSON.stringify(addBad),
+    )
 
     // GameScan 非法 root：err 形状（在 ipc/scan）
     const scanBad = await evalJs(`window.hh.scanDir('')`)
     console.log('SCAN_BAD:', JSON.stringify(scanBad))
-    assert('GameScan 空串返 {ok:false,error}', scanBad && scanBad.ok === false && typeof scanBad.error === 'string', JSON.stringify(scanBad))
+    assert(
+      'GameScan 空串返 {ok:false,error}',
+      scanBad && scanBad.ok === false && typeof scanBad.error === 'string',
+      JSON.stringify(scanBad),
+    )
 
     // DialogShell：打开设置 → .ds-mask → Esc 关
     await evalJs(`(() => {
@@ -235,11 +303,31 @@ async function main() {
       title: document.querySelector('.ds-title')?.textContent?.trim() ?? '',
     }))()`)
     console.log('DS_OPEN:', JSON.stringify(maskOpen))
-    assert('设置弹层走 DialogShell(.ds-mask)', maskOpen?.hasMask === true && maskOpen?.hasPanel === true, JSON.stringify(maskOpen))
-    assert('DialogShell 标题为偏好设置', String(maskOpen?.title || '').includes('偏好设置') || String(maskOpen?.title || '').includes('设置'), JSON.stringify(maskOpen))
+    assert(
+      '设置弹层走 DialogShell(.ds-mask)',
+      maskOpen?.hasMask === true && maskOpen?.hasPanel === true,
+      JSON.stringify(maskOpen),
+    )
+    assert(
+      'DialogShell 标题为偏好设置',
+      String(maskOpen?.title || '').includes('偏好设置') || String(maskOpen?.title || '').includes('设置'),
+      JSON.stringify(maskOpen),
+    )
 
-    await send('Input.dispatchKeyEvent', { type: 'keyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 })
-    await send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 })
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyDown',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    })
+    await send('Input.dispatchKeyEvent', {
+      type: 'keyUp',
+      key: 'Escape',
+      code: 'Escape',
+      windowsVirtualKeyCode: 27,
+      nativeVirtualKeyCode: 27,
+    })
     await wait(400)
     const maskClosed = await evalJs(`(() => ({ hasMask: !!document.querySelector('.ds-mask') }))()`)
     console.log('DS_ESC:', JSON.stringify(maskClosed))
@@ -256,6 +344,10 @@ main().catch((e) => {
   console.error(e)
   console.error('--- stderr tail ---')
   console.error(stderr.slice(-2000))
-  try { proc.kill() } catch { /* ignore */ }
+  try {
+    proc.kill()
+  } catch {
+    /* ignore */
+  }
   process.exit(1)
 })

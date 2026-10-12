@@ -7,6 +7,7 @@ import { FolderOpen } from 'lucide-vue-next'
 import { Button, Form, Input, InputNumber } from 'ant-design-vue'
 import type { Settings } from '../../shared/types'
 import { normalizeChecksum } from '../../shared/types'
+import { t } from '../i18n'
 
 const props = defineProps<{ settings: Settings }>()
 const emit = defineEmits<{
@@ -22,11 +23,7 @@ const form = reactive({
 })
 
 /** 校验和当场判，不等主进程回错误：一串读不懂的东西存进任务，代价是十几个 GB 下完才报错。 */
-const checksumError = computed(() =>
-  normalizeChecksum(form.checksum) === null
-    ? '读不懂这串校验和：需要 32 位（MD5）、40 位（SHA-1）或 64 位（SHA-256）十六进制，也可以写成 sha256:… 的形式'
-    : '',
-)
+const checksumError = computed(() => (normalizeChecksum(form.checksum) === null ? t('nd_sum_err') : ''))
 
 const canSubmit = computed(() => form.url.trim().length > 0 && !checksumError.value)
 
@@ -55,8 +52,13 @@ function submit(e?: Event): void {
 <template>
   <div class="dlg">
     <div class="dlg-card">
-      <Form layout="horizontal" :label-col="{ style: { width: 84 } }" :wrapper-col="{ flex: 1 }" @keydown.enter="submit">
-        <Form.Item label="下载链接" required>
+      <Form
+        layout="horizontal"
+        :label-col="{ style: { width: 84 } }"
+        :wrapper-col="{ flex: 1 }"
+        @keydown.enter="submit"
+      >
+        <Form.Item :label="t('nd_url')" required>
           <Input
             v-model:value="form.url"
             placeholder="https://example.com/file.zip"
@@ -66,44 +68,39 @@ function submit(e?: Event): void {
           />
         </Form.Item>
 
-        <Form.Item label="保存到">
+        <Form.Item :label="t('nd_save_to')">
           <div class="row">
             <Input v-model:value="form.dest" class="mono" />
             <Button @click="browse">
               <template #icon><FolderOpen :size="14" /></template>
-              浏览
+              {{ t('common_browse') }}
             </Button>
           </div>
         </Form.Item>
 
-        <Form.Item label="分片数">
+        <Form.Item :label="t('nd_threads')">
           <div class="row">
             <InputNumber v-model:value="form.threads" :min="1" :max="32" style="width: 90px" />
-            <span class="hint">越多越快，但小文件与不支持 Range 的站点会自动降为 1</span>
+            <span class="hint">{{ t('nd_threads_hint') }}</span>
           </div>
         </Form.Item>
 
-        <Form.Item label="校验和" :validate-status="checksumError ? 'error' : ''">
+        <Form.Item :label="t('nd_checksum')" :validate-status="checksumError ? 'error' : ''">
           <div class="cs-wrap">
-            <Input
-              v-model:value="form.checksum"
-              placeholder="可选：粘贴站点给的 md5 / sha1 / sha256"
-              class="mono"
-              allow-clear
-            />
+            <Input v-model:value="form.checksum" :placeholder="t('nd_checksum_ph')" class="mono" allow-clear />
             <span v-if="checksumError" class="cs-error">{{ checksumError }}</span>
-            <span v-else class="hint">留空 = 不校验。只贴十六进制串也能认，按长度判断算法。</span>
+            <span v-else class="hint">{{ t('nd_checksum_hint') }}</span>
           </div>
         </Form.Item>
 
-        <Form.Item label="备注">
-          <Input v-model:value="form.note" placeholder="可选" />
+        <Form.Item :label="t('nd_note')">
+          <Input v-model:value="form.note" :placeholder="t('nd_note_ph')" />
         </Form.Item>
       </Form>
     </div>
 
     <div class="dlg-foot">
-      <Button @click="submit" :disabled="!canSubmit" type="primary">开始下载</Button>
+      <Button @click="submit" :disabled="!canSubmit" type="primary">{{ t('nd_start') }}</Button>
     </div>
   </div>
 </template>

@@ -11,8 +11,7 @@
  */
 import { app } from 'electron'
 import { autoUpdater } from 'electron-updater'
-import type { UpdateStatus } from '../shared/types'
-import { IDLE_UPDATE_STATUS } from '../shared/types'
+import { IDLE_UPDATE_STATUS, type UpdateStatus } from '../shared/types'
 
 let push: (s: UpdateStatus) => void = () => {}
 let checking = false

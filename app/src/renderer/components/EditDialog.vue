@@ -9,6 +9,7 @@ import { ref, watch } from 'vue'
 import { Input, InputNumber, Select } from 'ant-design-vue'
 import DialogShell from './DialogShell.vue'
 import { library, saveManualEdit } from '../stores/library'
+import { t } from '../i18n'
 import type { Game, GameVariant } from '../../shared/types'
 
 const open = defineModel<boolean>('open')
@@ -84,16 +85,20 @@ async function save(): Promise<void> {
   const g = target.value
   if (!g) return
   if (!title.value.trim()) {
-    library.error = '标题不能为空'
+    library.error = t('ed_title_empty')
     return
   }
-  if (rating.value !== undefined && rating.value !== null && (Number.isNaN(rating.value) || rating.value < 0 || rating.value > 10)) {
-    library.error = '评分需在 0 – 10 之间'
+  if (
+    rating.value !== undefined &&
+    rating.value !== null &&
+    (Number.isNaN(rating.value) || rating.value < 0 || rating.value > 10)
+  ) {
+    library.error = t('ed_rating_range')
     return
   }
   const rd = releaseDate.value.trim()
   if (rd && !/^\d{4}-\d{2}-\d{2}$/.test(rd)) {
-    library.error = '发行日期格式应为 yyyy-mm-dd'
+    library.error = t('ed_date_format')
     return
   }
   // 先算「存盘后实际生效」的变体列表（与主进程 variants 的过滤一致：
@@ -138,97 +143,97 @@ async function save(): Promise<void> {
 </script>
 
 <template>
-  <DialogShell v-model:open="open" title="编辑游戏信息" :width="560">
+  <DialogShell v-model:open="open" :title="t('ed_title')" :width="560">
     <div class="edit-body">
       <label class="field">
-        <span class="label">标题</span>
-        <Input v-model:value="title" placeholder="主标题" />
+        <span class="label">{{ t('ed_lb_title') }}</span>
+        <Input v-model:value="title" :placeholder="t('ed_ph_title')" />
       </label>
       <div class="field">
-        <span class="label">启动路径</span>
+        <span class="label">{{ t('ed_lb_exe') }}</span>
         <div class="exe-row">
-          <Input v-model:value="exePath" placeholder="启动 exe 绝对路径" class="exe-main" />
-          <button type="button" class="mini-btn" @click="pickMainExe">浏览</button>
+          <Input v-model:value="exePath" :placeholder="t('ed_ph_exe')" class="exe-main" />
+          <button type="button" class="mini-btn" @click="pickMainExe">{{ t('common_browse') }}</button>
         </div>
-        <span class="hint">文件被移动/改名后启动会报「文件不存在」——在这里重新指向存在的 exe 即可修复</span>
+        <span class="hint">{{ t('ed_exe_hint') }}</span>
       </div>
       <label class="field">
-        <span class="label">原文名</span>
-        <Input v-model:value="titleNative" placeholder="日文原名（可选）" />
+        <span class="label">{{ t('ed_lb_native') }}</span>
+        <Input v-model:value="titleNative" :placeholder="t('ed_ph_native')" />
       </label>
       <label class="field">
-        <span class="label">发行日期</span>
-        <Input v-model:value="releaseDate" placeholder="yyyy-mm-dd（可选）" />
+        <span class="label">{{ t('ed_lb_date') }}</span>
+        <Input v-model:value="releaseDate" :placeholder="t('ed_ph_date')" />
       </label>
       <label class="field">
-        <span class="label">开发商</span>
-        <Input v-model:value="developer" placeholder="开发/制作公司（可选）" />
+        <span class="label">{{ t('ed_lb_dev') }}</span>
+        <Input v-model:value="developer" :placeholder="t('ed_ph_dev')" />
       </label>
       <div class="field-row">
         <label class="field">
-          <span class="label">评分</span>
+          <span class="label">{{ t('ed_lb_rating') }}</span>
           <InputNumber v-model:value="rating" :min="0" :max="10" :step="0.1" :precision="1" style="width: 120px" />
         </label>
         <label class="field">
-          <span class="label">通关时长（分钟）</span>
+          <span class="label">{{ t('ed_lb_length') }}</span>
           <InputNumber v-model:value="lengthMinutes" :min="0" :max="100000" :step="30" style="width: 140px" />
         </label>
       </div>
       <label class="field">
-        <span class="label">系列</span>
-        <Select v-model:value="series" mode="tags" placeholder="所属系列（可选）" :open="false" />
+        <span class="label">{{ t('ed_lb_series') }}</span>
+        <Select v-model:value="series" mode="tags" :placeholder="t('ed_ph_series')" :open="false" />
       </label>
       <label class="field">
-        <span class="label">别名</span>
-        <Select v-model:value="aliases" mode="tags" placeholder="别名（可选）" :open="false" />
+        <span class="label">{{ t('ed_lb_aliases') }}</span>
+        <Select v-model:value="aliases" mode="tags" :placeholder="t('ed_ph_aliases')" :open="false" />
       </label>
       <label class="field">
-        <span class="label">标签</span>
-        <Select v-model:value="tags" mode="tags" placeholder="回车添加标签" :open="false" />
+        <span class="label">{{ t('ed_lb_tags') }}</span>
+        <Select v-model:value="tags" mode="tags" :placeholder="t('ed_ph_tags')" :open="false" />
       </label>
       <label class="field">
-        <span class="label">分类</span>
-        <Select v-model:value="categories" mode="tags" placeholder="回车添加分类" :open="false" />
+        <span class="label">{{ t('ed_lb_cats') }}</span>
+        <Select v-model:value="categories" mode="tags" :placeholder="t('ed_ph_cats')" :open="false" />
       </label>
       <label class="field">
-        <span class="label">启动前命令</span>
-        <Input v-model:value="preLaunchCmd" placeholder="留空＝直接启动。如: D:\tools\enable_patch.cmd {dir}" />
+        <span class="label">{{ t('ed_lb_pre') }}</span>
+        <Input v-model:value="preLaunchCmd" :placeholder="t('ed_ph_pre')" />
       </label>
       <label class="field">
-        <span class="label">启动后命令</span>
-        <Input v-model:value="postLaunchCmd" placeholder="留空＝不挂接。如: D:\tools\LunaTranslator.exe" />
+        <span class="label">{{ t('ed_lb_post') }}</span>
+        <Input v-model:value="postLaunchCmd" :placeholder="t('ed_ph_post')" />
       </label>
       <div class="field-row">
-        <span class="label hint">占位符：{exe} = 游戏 exe 路径，{dir} = 游戏目录；命令按空格拆分，含空格路径用双引号包裹</span>
+        <span class="label hint">{{ t('ed_ph_tip') }}</span>
       </div>
 
       <!-- G13+G17 多版本/语言包：同一游戏的另一个启动目标 + 点播切换 -->
       <div class="variants-section">
         <div class="variants-head">
-          <span class="label">版本 / 语言包</span>
-          <button class="mini-btn" @click="addVariant">+ 添加变体</button>
+          <span class="label">{{ t('ed_variants') }}</span>
+          <button class="mini-btn" @click="addVariant">{{ t('ed_add_variant') }}</button>
         </div>
         <div v-for="(v, i) in variants" :key="i" class="variant-row">
           <div class="variant-fields">
-            <Input v-model:value="v.label" placeholder="标签（如 汉化整合版）" class="variant-label" />
-            <Input v-model:value="v.exePath" placeholder="启动 exe 绝对路径" class="variant-exe" />
-            <button class="mini-btn" @click="pickVariantExe(v)">浏览</button>
+            <Input v-model:value="v.label" :placeholder="t('ed_ph_vlabel')" class="variant-label" />
+            <Input v-model:value="v.exePath" :placeholder="t('ed_ph_exe')" class="variant-exe" />
+            <button class="mini-btn" @click="pickVariantExe(v)">{{ t('common_browse') }}</button>
             <button class="mini-btn danger" @click="removeVariant(i)">×</button>
           </div>
-          <Input v-model:value="v.preLaunchCmd" placeholder="该变体专属启动前命令（可选，如先打补丁）" />
+          <Input v-model:value="v.preLaunchCmd" :placeholder="t('ed_ph_vpre')" />
         </div>
         <div class="field-row">
-          <span class="label hint">启动时若选中变体，将使用变体 exe 启动；变体专属命令在游戏级启动前命令之后执行</span>
+          <span class="label hint">{{ t('ed_variant_hint') }}</span>
         </div>
       </div>
 
       <label class="field">
-        <span class="label">简介</span>
-        <Input.TextArea v-model:value="description" :rows="4" placeholder="游戏简介（可选）" />
+        <span class="label">{{ t('ed_lb_desc') }}</span>
+        <Input.TextArea v-model:value="description" :rows="4" :placeholder="t('ed_ph_desc')" />
       </label>
       <div class="actions">
-        <button class="btn ghost" @click="open = false">取消</button>
-        <button class="btn primary" @click="save">保存</button>
+        <button class="btn ghost" @click="open = false">{{ t('common_cancel') }}</button>
+        <button class="btn primary" @click="save">{{ t('common_save') }}</button>
       </div>
     </div>
   </DialogShell>
@@ -282,11 +287,24 @@ async function save(): Promise<void> {
   gap: 6px;
   align-items: center;
 }
-.variant-label { width: 150px; flex-shrink: 0; }
-.variant-exe { flex: 1; min-width: 0; }
+.variant-label {
+  width: 150px;
+  flex-shrink: 0;
+}
+.variant-exe {
+  flex: 1;
+  min-width: 0;
+}
 /* 主启动路径行：输入 + 浏览并排 */
-.exe-row { display: flex; gap: 6px; align-items: center; }
-.exe-main { flex: 1; min-width: 0; }
+.exe-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.exe-main {
+  flex: 1;
+  min-width: 0;
+}
 .mini-btn {
   height: 30px;
   padding: 0 10px;
@@ -300,9 +318,18 @@ async function save(): Promise<void> {
   font-family: inherit;
   transition: background var(--hh-motion-med);
 }
-.mini-btn:hover { background: var(--hh-color-surface-mid); color: var(--hh-color-text-glow); }
-.mini-btn.danger { color: var(--hh-color-danger-text); }
-.hint { font-size: 11.5px; color: var(--hh-color-text-dim); line-height: 1.5; }
+.mini-btn:hover {
+  background: var(--hh-color-surface-mid);
+  color: var(--hh-color-text-glow);
+}
+.mini-btn.danger {
+  color: var(--hh-color-danger-text);
+}
+.hint {
+  font-size: 11.5px;
+  color: var(--hh-color-text-dim);
+  line-height: 1.5;
+}
 .actions {
   display: flex;
   justify-content: flex-end;
@@ -318,7 +345,7 @@ async function save(): Promise<void> {
   border: none;
 }
 .btn.primary {
-  background-image: var(--hh-color-accent-grad);
+  background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
   font-weight: 600;
 }

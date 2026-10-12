@@ -27,9 +27,7 @@ export async function applyChromiumProxy(raw: string): Promise<void> {
   const bad = proxyFormatError(raw)
   if (bad) throw new Error(bad)
   const proxy = normalizeProxy(raw)
-  const config = proxy
-    ? { mode: 'fixed_servers' as const, proxyRules: proxy }
-    : { mode: 'system' as const }
+  const config = proxy ? { mode: 'fixed_servers' as const, proxyRules: proxy } : { mode: 'system' as const }
   for (const ses of chromiumSessions()) await ses.setProxy(config)
 }
 
@@ -66,7 +64,18 @@ export function chromiumProxyToUrl(line: string): string {
     const kind = (parts[0] ?? '').toUpperCase()
     const host = parts[1] ?? ''
     if (!host || kind === 'DIRECT' || kind === 'NONE') continue
-    const scheme = kind === 'PROXY' ? 'http' : kind === 'SOCKS4' ? 'socks4' : kind === 'SOCKS5' ? 'socks5' : kind.toLowerCase()
+    const scheme =
+      kind === 'PROXY'
+        ? 'http'
+        : kind === 'SOCKS4'
+          ? 'socks4'
+          : kind === 'SOCKS5'
+            ? 'socks5'
+            : // 裸 SOCKS：Chromium 对「SOCKS 代理」的决策串不区分版本时给这个，
+              // 归为 socks5（reqwest 只认 socks4/socks5，socks:// 直接解析失败）
+              kind === 'SOCKS'
+              ? 'socks5'
+              : kind.toLowerCase()
     return `${scheme}://${host}`
   }
   return ''

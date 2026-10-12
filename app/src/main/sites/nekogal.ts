@@ -80,7 +80,9 @@ export async function mirrors(detailUrl: string): Promise<SiteMirrorOutcome> {
     const http = httpFailureMessage(r)
     if (http) return { ok: false, siteId: SITE_ID, message: http }
     const html = r.text
-    const title = extractTitle(html).replace(/-NekoGAL\s*-\s*Galgame传递者\s*$/, '').trim()
+    const title = extractTitle(html)
+      .replace(/-NekoGAL\s*-\s*Galgame传递者\s*$/, '')
+      .trim()
 
     // .file-download-btn 的 href 是 ?golink=<base64>&nonce=... ，可以直接取绝对地址
     const btn = /class="[^"]*file-download-btn[^"]*"[^>]*href="([^"]+)"/i.exec(html)
@@ -114,7 +116,14 @@ function decodeGolink(golinkUrl: string, title: string): Mirror[] {
     if (/pan\.nekogal\.top\/s\//i.test(link)) {
       return [{ kind: 'cloudreve', name: 'NekoGAL 网盘', url: link, note: title }]
     }
-    if (/pan\.|\/s\/|mega\.nz|drive\.google|123pan|alipan|aliyundrive|quark\.cn/i.test(link)) {
+    // 网盘判定只看域名，不用路径子串：`/s/` 在 Cloudreve 分享页里有语义，
+    // 但裸匹配会把「https://cdn.xxx/s/release.zip」这种直链误判成网盘链接，
+    // 用户就点不出「直接下载」了。pan.nekogal.top/s/ 已由上一分支接住。
+    if (
+      /pan\.(baidu|quark|xunlei)\.|mega\.nz|drive\.google|123pan|123684|alipan|aliyundrive|pan\.nekogal\.top/i.test(
+        link,
+      )
+    ) {
       return [{ kind: 'pan', name: '网盘链接', url: link }]
     }
     return [{ kind: 'direct', name: '直链', url: link }]
@@ -124,5 +133,8 @@ function decodeGolink(golinkUrl: string, title: string): Mirror[] {
 }
 
 function stripTags(s: string): string {
-  return s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim()
+  return s
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
 }

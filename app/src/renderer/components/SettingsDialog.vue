@@ -12,7 +12,7 @@ import type { Settings, TrackEntry, UpdateStatus } from '../../shared/types'
 import { proxyFormatError } from '../../shared/proxy'
 import { fmtSpeed } from '../../shared/format'
 import { THEME_PRESET_IDS } from '../design/tokens'
-import { t } from '../i18n'
+import { t, tf } from '../i18n'
 
 import { themePresets } from '../design/tokens'
 
@@ -20,6 +20,20 @@ const props = defineProps<{ settings: Settings }>()
 const emit = defineEmits<{ save: [s: Settings] }>()
 
 const form = reactive<Settings>({ ...props.settings })
+
+/**
+ * 未保存角标（INTERACTION-SPEC Task 3）：打开时的快照 vs 当前 form。
+ * dirty 为真时保存按钮加「●」、弹窗标题旁给提示，避免「改了不点保存=白改」。
+ * 对比用键序无关的规范化序列化：form 与快照可能来自不同来源（主进程
+ * settings.json / save() payload），键序不同会让 JSON 字符串对比恒为 dirty。
+ */
+function stableSettingsJson(s: Settings): string {
+  return JSON.stringify(
+    Object.fromEntries([...Object.keys(s)].sort().map((k) => [k, (s as unknown as Record<string, unknown>)[k]])),
+  )
+}
+const original = ref(stableSettingsJson(props.settings))
+const dirty = computed(() => stableSettingsJson(form) !== original.value)
 
 function presetName(id: (typeof THEME_PRESET_IDS)[number]): string {
   return themePresets[id].name
@@ -44,33 +58,15 @@ async function pickBg(): Promise<void> {
  */
 const engine = ref<{ ok: boolean; path: string; hint: string } | null>(null)
 
-onMounted(async () => {
-  try {
-    const info = await window.hh.hello()
-    engine.value = { ok: info.engine_ok, path: info.engine_path, hint: info.engine_hint }
-  } catch {
-    engine.value = null
-  }
-})
-
 /** 代理形状的校验与主进程同源（shared/proxy），免得出现「界面放行、主进程拒绝」。 */
 const proxyError = computed(() => proxyFormatError(form.proxy))
 
 /** 关于页展示：默认保存目录（与数据目录同源可读） */
-const dataDirText = computed(() => form.download_dir || '（未设置）')
+const dataDirText = computed(() => form.download_dir || t('set_dir_unset'))
 
 /** G15 便携模式：主进程算好的真实数据目录 + 是否便携（exe 旁有 PORTABLE 标记） */
 const realDataDir = ref('')
 const portable = ref(false)
-onMounted(async () => {
-  try {
-    const info = await window.hh.hello()
-    realDataDir.value = info.data_dir ?? ''
-    portable.value = !!info.portable
-  } catch {
-    // hello 拿不到就不显示，不影响其他设置
-  }
-})
 
 /** 构建期注入的版本号（app/package.json） */
 const appVersion: string = __APP_VERSION__
@@ -79,11 +75,16 @@ const appVersion: string = __APP_VERSION__
 const updater = ref<UpdateStatus>({ phase: 'idle' })
 const updaterBusy = ref(false)
 
+// hello() 一次拿全：引擎自检 / 真实数据目录 / 便携标记（三条信息同源，
+// 原来是三个 onMounted 各调一次 hello，等于同一请求发三遍）。
 onMounted(async () => {
   try {
     const info = await window.hh.hello()
     engine.value = { ok: info.engine_ok, path: info.engine_path, hint: info.engine_hint }
+    realDataDir.value = info.data_dir ?? ''
+    portable.value = !!info.portable
   } catch {
+    // hello 拿不到就不显示，不影响其他设置
     engine.value = null
   }
   window.hh.onUpdateStatus((s) => {
@@ -99,7 +100,7 @@ async function checkUpdateClick(): Promise<void> {
   const r = await window.hh.checkUpdate()
   // 主进程的推送会接管后续状态；invoke 返回不代表已结束
   if (!r?.ok) {
-    updater.value = { phase: 'idle', error: r?.error ?? '检查失败' }
+    updater.value = { phase: 'idle', error: r?.error ?? t('set_check_fail') }
     updaterBusy.value = false
   }
 }
@@ -155,7 +156,7 @@ async function loadTracks(): Promise<void> {
 async function addTrack(): Promise<void> {
   const kw = trackKeyword.value.trim()
   if (!kw) {
-    trackMsg.value = '请输入要追踪的关键词（开发商 / 系列名）'
+    trackMsg.value = t('set_track_kw')
     return
   }
   trackMsg.value = ''
@@ -163,9 +164,9 @@ async function addTrack(): Promise<void> {
   if (r?.ok && r.entry) {
     trackKeyword.value = ''
     await loadTracks()
-    trackMsg.value = `已订阅「${r.entry.keyword}」`
+    trackMsg.value = tf('set_tracked', { kw: r.entry.keyword })
   } else {
-    trackMsg.value = r?.error ?? '订阅失败'
+    trackMsg.value = r?.error ?? t('set_sub_fail')
   }
 }
 
@@ -182,11 +183,11 @@ async function checkNow(): Promise<void> {
   try {
     const r = await window.hh.trackCheck()
     if (!r?.ok) {
-      trackMsg.value = r?.error ?? '检查失败'
+      trackMsg.value = r?.error ?? t('set_check_fail')
     } else if (r.fresh.length) {
-      trackMsg.value = `发现 ${r.fresh.length} 部新作，已通知`
+      trackMsg.value = tf('set_fresh_n', { n: r.fresh.length })
     } else {
-      trackMsg.value = '暂无新作'
+      trackMsg.value = t('set_no_fresh')
     }
   } catch (e) {
     trackMsg.value = e instanceof Error ? e.message : String(e)
@@ -200,7 +201,7 @@ onMounted(() => {
 })
 
 function save(): void {
-  emit('save', {
+  const payload: Settings = {
     threads: form.threads,
     max_concurrent: form.max_concurrent,
     download_dir: form.download_dir.trim(),
@@ -217,9 +218,7 @@ function save(): void {
     keep_awake: form.keep_awake,
     // 输入框允许清空（value 变 null），空/负数一律按「不限速」发出去
     rate_limit_kbps:
-      Number.isFinite(form.rate_limit_kbps) && form.rate_limit_kbps > 0
-        ? Math.floor(form.rate_limit_kbps)
-        : 0,
+      Number.isFinite(form.rate_limit_kbps) && form.rate_limit_kbps > 0 ? Math.floor(form.rate_limit_kbps) : 0,
     auto_update_check: form.auto_update_check,
     // 存档备份（G1）
     backup_dir: form.backup_dir.trim(),
@@ -233,7 +232,10 @@ function save(): void {
     magpie_path: form.magpie_path.trim(),
     // 界面语言（G18）
     language: form.language === 'en' ? 'en' : 'zh',
-  })
+  }
+  emit('save', payload)
+  // 保存成功后快照对齐（角标消失）
+  original.value = stableSettingsJson(payload)
 }
 </script>
 
@@ -266,14 +268,10 @@ function save(): void {
               <Checkbox v-model:checked="form.confirm_delete">{{ t('set_confirm_delete') }}</Checkbox>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <Checkbox v-model:checked="form.close_to_tray">
-                关闭主窗口时缩到托盘（后台继续下载）
-              </Checkbox>
+              <Checkbox v-model:checked="form.close_to_tray">{{ t('set_close_tray') }}</Checkbox>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <Checkbox v-model:checked="form.keep_awake">
-                有任务在跑时阻止电脑休眠
-              </Checkbox>
+              <Checkbox v-model:checked="form.keep_awake">{{ t('set_keep_awake') }}</Checkbox>
             </Form.Item>
           </Form>
         </div>
@@ -282,15 +280,13 @@ function save(): void {
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label=" " :colon="false">
-              <Checkbox v-model:checked="form.notify_on_finish">下载完成时弹系统通知</Checkbox>
+              <Checkbox v-model:checked="form.notify_on_finish">{{ t('set_notify_finish') }}</Checkbox>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <Checkbox v-model:checked="form.notify_on_error">下载失败时弹系统通知</Checkbox>
+              <Checkbox v-model:checked="form.notify_on_error">{{ t('set_notify_error') }}</Checkbox>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                通知只在窗口失去焦点时弹（窗口就在面前还弹通知是骚扰）。点通知会跳回并选中那条任务。
-              </span>
+              <span class="hint">{{ t('set_notify_hint') }}</span>
             </Form.Item>
           </Form>
         </div>
@@ -309,15 +305,12 @@ function save(): void {
               <span v-if="proxyError" class="hint hint-err">{{ proxyError }}</span>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                代理对下载与站点抓取同时生效。填 http://127.0.0.1:7890
-                或 socks5://127.0.0.1:7891 这种形式；留空则跟随系统代理（含 PAC 自动配置）。
-              </span>
+              <span class="hint">{{ t('set_proxy_hint') }}</span>
             </Form.Item>
             <Form.Item label="User-Agent">
-              <Input v-model:value="form.user_agent" placeholder="留空使用内置 UA" class="mono" />
+              <Input v-model:value="form.user_agent" :placeholder="t('set_ua_ph')" class="mono" />
             </Form.Item>
-            <Form.Item label="限速">
+            <Form.Item :label="t('set_ratelimit')">
               <div class="row">
                 <InputNumber
                   v-model:value="form.rate_limit_kbps"
@@ -330,10 +323,7 @@ function save(): void {
               </div>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                0 = 不限速。每个下载任务各拿一份额度，1 MiB/s 填 1024。
-                改完点保存就立刻生效，正在跑的任务不用重下。
-              </span>
+              <span class="hint">{{ t('set_ratelimit_hint') }}</span>
             </Form.Item>
           </Form>
         </div>
@@ -342,12 +332,10 @@ function save(): void {
         <div class="card">
           <div class="lbl" style="margin-bottom: 8px">{{ t('set_language') }}</div>
           <Radio.Group v-model:value="form.language">
-            <Radio.Button value="zh">中文</Radio.Button>
-            <Radio.Button value="en">English</Radio.Button>
+            <Radio.Button value="zh">{{ t('set_lang_zh') }}</Radio.Button>
+            <Radio.Button value="en">{{ t('set_lang_en') }}</Radio.Button>
           </Radio.Group>
-          <div class="hint" style="margin-top: 8px">
-            界面语言（骨架：导航与核心按钮已接入，设置页长文案仍为中文）。
-          </div>
+          <div class="hint" style="margin-top: 8px">{{ t('set_lang_hint') }}</div>
         </div>
 
         <div class="card">
@@ -357,10 +345,7 @@ function save(): void {
             <Radio.Button value="dark">{{ t('set_theme_dark') }}</Radio.Button>
             <Radio.Button value="light">{{ t('set_theme_light') }}</Radio.Button>
           </Radio.Group>
-          <div class="hint" style="margin-top: 8px">
-            跟随系统 = 随 Windows 深浅色自动切换；固定深/浅 = 不随系统变化。
-            切换立即生效，无需保存。
-          </div>
+          <div class="hint" style="margin-top: 8px">{{ t('set_theme_hint') }}</div>
         </div>
 
         <div class="card">
@@ -384,7 +369,7 @@ function save(): void {
           <div class="row-between">
             <div>
               <div class="lbl">{{ t('set_bg_image') }}</div>
-              <div class="hint">选择一张图片铺满窗口背景（无选中游戏封面时也生效）。留空 = 默认动态封面底。</div>
+              <div class="hint">{{ t('set_bg_hint') }}</div>
             </div>
             <div class="row">
               <Button @click="pickBg">
@@ -404,17 +389,17 @@ function save(): void {
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label=" " :colon="false">
-              <Checkbox v-model:checked="form.backup_on_exit">游戏退出时自动备份存档</Checkbox>
+              <Checkbox v-model:checked="form.backup_on_exit">{{ t('set_backup_on_exit') }}</Checkbox>
             </Form.Item>
-            <Form.Item label="本地保留">
+            <Form.Item :label="t('set_keep_n')">
               <div class="row">
                 <InputNumber v-model:value="form.backup_keep" :min="1" :max="100" style="width: 110px" />
-                <span class="lbl">份</span>
+                <span class="lbl">{{ t('set_keep_unit') }}</span>
               </div>
             </Form.Item>
-            <Form.Item label="自定义目录">
+            <Form.Item :label="t('set_backup_dir')">
               <div class="row">
-                <Input v-model:value="form.backup_dir" placeholder="留空＝数据目录 backups\ 下" class="mono" />
+                <Input v-model:value="form.backup_dir" :placeholder="t('set_backup_dir_ph')" class="mono" />
                 <Button @click="browseBackupDir">
                   <template #icon><FolderOpen :size="14" /></template>
                   {{ t('common_browse') }}
@@ -422,35 +407,29 @@ function save(): void {
               </div>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                每款游戏独立子目录存放快照，保留最近 N 份，超出自动轮转删除。
-                详情面板里可对单款游戏手动备份 / 恢复。
-              </span>
+              <span class="hint">{{ t('set_backup_hint') }}</span>
             </Form.Item>
-            <Form.Item label="WebDAV 地址">
-              <Input v-model:value="form.webdav_url" class="mono" placeholder="https://dav.example.com/hanehana（留空＝仅本地备份）" />
+            <Form.Item :label="t('set_webdav_url')">
+              <Input v-model:value="form.webdav_url" class="mono" :placeholder="t('set_webdav_url_ph')" />
             </Form.Item>
-            <Form.Item label="WebDAV 账号">
-              <Input v-model:value="form.webdav_user" class="mono" placeholder="用户名（可选）" />
+            <Form.Item :label="t('set_webdav_user')">
+              <Input v-model:value="form.webdav_user" class="mono" :placeholder="t('set_webdav_user_ph')" />
             </Form.Item>
-            <Form.Item label="WebDAV 密码">
-              <Input.Password v-model:value="form.webdav_pass" placeholder="密码（可选）" />
+            <Form.Item :label="t('set_webdav_pass')">
+              <Input.Password v-model:value="form.webdav_pass" :placeholder="t('set_webdav_pass_ph')" />
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                配置后快照可一键同步到云端（新者胜，同刻冲突保留两端），换电脑时可拉回。
-                协议用原生 fetch 实现，无需额外依赖。
-              </span>
+              <span class="hint">{{ t('set_webdav_hint') }}</span>
             </Form.Item>
           </Form>
         </div>
       </TabPane>
-            <TabPane key="tools" :tab="t('set_tab_tools')">
+      <TabPane key="tools" :tab="t('set_tab_tools')">
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
-            <Form.Item label="LE 执行器">
+            <Form.Item :label="t('set_le_exe')">
               <div class="row">
-                <Input v-model:value="form.le_path" placeholder="留空＝自动探测常见安装位置" class="mono" />
+                <Input v-model:value="form.le_path" :placeholder="t('set_le_ph')" class="mono" />
                 <Button @click="pickExe('le')">
                   <template #icon><FolderOpen :size="14" /></template>
                   {{ t('common_browse') }}
@@ -458,14 +437,11 @@ function save(): void {
               </div>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                Locale Emulator（LEProc.exe）用于日文游戏转区启动。勾了「LE 转区」的游戏启动时
-                会经它包装；找不到会明确报错，而不是静默用本机区域运行。
-              </span>
+              <span class="hint">{{ t('set_le_hint') }}</span>
             </Form.Item>
             <Form.Item label="Magpie">
               <div class="row">
-                <Input v-model:value="form.magpie_path" placeholder="留空＝自动探测常见安装位置" class="mono" />
+                <Input v-model:value="form.magpie_path" :placeholder="t('set_le_ph')" class="mono" />
                 <Button @click="pickExe('magpie')">
                   <template #icon><FolderOpen :size="14" /></template>
                   {{ t('common_browse') }}
@@ -473,9 +449,7 @@ function save(): void {
               </div>
             </Form.Item>
             <Form.Item label=" " :colon="false">
-              <span class="hint">
-                Magpie 负责老游戏窗口放大/缩放渲染。勾了「Magpie」的游戏启动后会自动拉起它接管窗口。
-              </span>
+              <span class="hint">{{ t('set_magpie_hint') }}</span>
             </Form.Item>
           </Form>
         </div>
@@ -483,20 +457,28 @@ function save(): void {
       <TabPane key="track" :tab="t('set_tab_track')">
         <div class="card">
           <div class="track-add">
-            <Input v-model:value="trackKeyword" placeholder="开发商 / 系列名（如 柚子社、Yuzusoft）" @press-enter="addTrack" />
-            <Button type="primary" :loading="trackBusy" @click="addTrack"><template #icon><Plus :size="14" /></template>订阅</Button>
-            <Button :loading="trackBusy" @click="checkNow"><template #icon><RefreshCw :size="14" /></template>立即检查</Button>
+            <Input v-model:value="trackKeyword" :placeholder="t('set_track_ph')" @press-enter="addTrack" />
+            <Button type="primary" :loading="trackBusy" @click="addTrack"
+              ><template #icon><Plus :size="14" /></template>{{ t('set_subscribe') }}</Button
+            >
+            <Button :loading="trackBusy" @click="checkNow"
+              ><template #icon><RefreshCw :size="14" /></template>{{ t('set_check_now') }}</Button
+            >
           </div>
           <div v-if="trackMsg" class="track-msg">{{ trackMsg }}</div>
           <div class="track-list">
             <div v-for="track in trackList" :key="track.id" class="track-item">
               <span class="track-kw" :title="track.keyword">{{ track.keyword }}</span>
-              <span class="track-meta">上次检查 {{ new Date(track.lastCheck).toLocaleDateString('zh-CN') }}</span>
-              <Button type="text" danger size="small" @click="removeTrack(track.id)"><template #icon><Trash2 :size="13" /></template></Button>
+              <span class="track-meta">{{
+                tf('set_track_last', { date: new Date(track.lastCheck).toLocaleDateString('zh-CN') })
+              }}</span>
+              <Button type="text" danger size="small" @click="removeTrack(track.id)"
+                ><template #icon><Trash2 :size="13" /></template
+              ></Button>
             </div>
-            <div v-if="!trackList.length" class="track-empty">还没有订阅。加一个开发商或系列名，VNDB 有新品时会收到系统通知。</div>
+            <div v-if="!trackList.length" class="track-empty">{{ t('set_track_empty') }}</div>
           </div>
-          <div class="hint track-hint">检查基于 VNDB 发行日期（released ≥ 上次检查时间）；每款游戏只通知一次。数据存本地 tracking.json。</div>
+          <div class="hint track-hint">{{ t('set_track_hint') }}</div>
         </div>
       </TabPane>
       <TabPane key="about" :tab="t('set_tab_about')">
@@ -510,14 +492,16 @@ function save(): void {
             <span class="about-val mono">{{ dataDirText }}</span>
           </div>
           <div class="about-row" v-if="realDataDir">
-            <span class="about-key">{{ portable ? '便携数据目录' : '配置与存档' }}</span>
+            <span class="about-key">{{ portable ? t('set_about_portable') : t('set_about_config') }}</span>
             <span class="about-val mono" :title="realDataDir">{{ realDataDir }}</span>
           </div>
           <div class="about-row">
             <span class="about-key">{{ t('set_about_engine') }}</span>
             <span class="about-val">
-              Rust 多线程下载引擎（FastDrop）·
-              {{ engine === null ? t('set_engine_checking') : engine.ok ? t('set_engine_ready') : t('set_engine_missing') }}
+              {{ t('set_about_engine_desc') }}·
+              {{
+                engine === null ? t('set_engine_checking') : engine.ok ? t('set_engine_ready') : t('set_engine_missing')
+              }}
             </span>
           </div>
           <div v-if="engine" class="about-row">
@@ -525,20 +509,20 @@ function save(): void {
             <span class="about-val mono" :title="engine.path">{{ engine.path }}</span>
           </div>
           <div v-if="engine && !engine.ok" class="hint hint-err about-warn">{{ engine.hint }}</div>
-          <div class="about-hint">问题反馈与更新公告见项目仓库 README。</div>
+          <div class="about-hint">{{ t('set_about_hint') }}</div>
           <div class="about-row updater">
             <span class="about-key">{{ t('set_auto_update') }}</span>
             <span class="about-val updater-val">
               <template v-if="updater.phase === 'checking'">{{ t('set_update_checking') }}</template>
               <template v-else-if="updater.phase === 'available'">
-                发现新版本 {{ updater.version }}，正在下载…
+                {{ tf('set_update_downloading', { v: updater.version ?? '' }) }}
               </template>
               <template v-else-if="updater.phase === 'downloading'">
-                下载更新 {{ updaterPct }}%
+                {{ tf('set_update_pct', { pct: updaterPct }) }}
                 <span v-if="updater.total">{{ fmtSpeed(updater.transferred || 0) }}/{{ fmtSpeed(updater.total) }}</span>
               </template>
               <template v-else-if="updater.phase === 'downloaded'">
-                新版本 {{ updater.version }} 已就绪
+                {{ tf('set_update_ready', { v: updater.version ?? '' }) }}
               </template>
               <template v-else-if="updater.phase === 'installing'">{{ t('set_update_installing') }}</template>
               <template v-else-if="updater.error">{{ updater.error }}</template>
@@ -558,8 +542,12 @@ function save(): void {
     </Tabs>
 
     <div class="dlg-foot">
-      <Button type="primary" :disabled="!!proxyError" @click="save">{{ t('common_save') }}</Button>
-      <span v-if="proxyError" class="save-hint">代理格式不正确，无法保存</span>
+      <Button type="primary" :disabled="!!proxyError" @click="save">
+        <template v-if="dirty" #icon><span class="save-dot" aria-hidden="true"></span></template>
+        {{ t('common_save') }}
+      </Button>
+      <span v-if="dirty" class="save-hint dirty-hint">{{ t('set_unsaved_hint') }}</span>
+      <span v-if="proxyError" class="save-hint">{{ t('set_proxy_invalid') }}</span>
     </div>
   </div>
 </template>
@@ -580,8 +568,12 @@ function save(): void {
   margin-bottom: 12px;
   border-color: var(--hh-color-error);
 }
-.card-warn .lbl { color: var(--hh-color-error); }
-.about-warn { margin-top: 8px; }
+.card-warn .lbl {
+  color: var(--hh-color-error);
+}
+.about-warn {
+  margin-top: 8px;
+}
 .row {
   display: flex;
   gap: 8px;
@@ -609,6 +601,17 @@ function save(): void {
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-error-text);
 }
+.save-hint.dirty-hint {
+  color: var(--hh-color-accent-text);
+}
+.save-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hh-color-accent);
+  box-shadow: 0 0 0 2px var(--hh-color-accent-soft);
+}
 .mono {
   font-family: ui-monospace, 'Cascadia Code', Consolas, monospace;
 }
@@ -630,7 +633,9 @@ function save(): void {
   background: var(--hh-color-card);
   color: var(--hh-color-text);
   cursor: pointer;
-  transition: border-color var(--hh-motion-fast) var(--hh-motion-ease-move), box-shadow var(--hh-motion-fast) var(--hh-motion-ease-move);
+  transition:
+    border-color var(--hh-motion-fast) var(--hh-motion-ease-move),
+    box-shadow var(--hh-motion-fast) var(--hh-motion-ease-move);
 }
 .preset-card:hover {
   border-color: var(--hh-color-accent-focus-border);
@@ -670,7 +675,10 @@ function save(): void {
   font-size: var(--hh-font-body-size);
   border-bottom: 1px solid var(--hh-color-border-faint);
 }
-.about-key { color: var(--hh-color-text-tertiary); flex-shrink: 0; }
+.about-key {
+  color: var(--hh-color-text-tertiary);
+  flex-shrink: 0;
+}
 .about-val {
   color: var(--hh-color-text-stronger);
   text-align: right;

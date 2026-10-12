@@ -6,6 +6,7 @@
  */
 import { onBeforeUnmount, onMounted, watch } from 'vue'
 import { X } from 'lucide-vue-next'
+import { t } from '../i18n'
 
 const open = defineModel<boolean>('open')
 const props = withDefaults(
@@ -59,7 +60,13 @@ onMounted(() => {
           <div class="ds-title">
             <slot name="title">{{ title }}</slot>
           </div>
-          <button class="ds-close" type="button" title="关闭" aria-label="关闭" @click="close">
+          <button
+            class="ds-close"
+            type="button"
+            :title="t('common_close')"
+            :aria-label="t('common_close')"
+            @click="close"
+          >
             <X :size="16" />
           </button>
         </header>

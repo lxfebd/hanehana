@@ -275,11 +275,7 @@ function decodeBody(bytes: Uint8Array, contentType: string): string {
 }
 
 /** 简单文本 POST（form 编码）。返回解析后的 JSON（失败返回 null）。 */
-export async function postForm(
-  url: string,
-  fields: Record<string, string>,
-  referer?: string,
-): Promise<unknown> {
+export async function postForm(url: string, fields: Record<string, string>, referer?: string): Promise<unknown> {
   const body = new URLSearchParams(fields).toString()
   const res = await fetchText(url, {
     method: 'POST',
@@ -379,11 +375,20 @@ export async function withRetry<T>(fn: () => Promise<T>, attempts = 3): Promise<
  */
 const CHROMIUM_ERROR_HINTS: Array<[RegExp, string]> = [
   [/ERR_NAME_NOT_RESOLVED|ERR_DNS/, 'DNS 解析失败（域名解不出来：该地址在本机网络被屏蔽，或需要代理）'],
-  [/ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_ADDRESS_UNREACHABLE/, '本机当前没有到该地址的网络通路（网卡断开/切网/内网地址不可达）'],
+  [
+    /ERR_INTERNET_DISCONNECTED|ERR_NETWORK_CHANGED|ERR_ADDRESS_UNREACHABLE/,
+    '本机当前没有到该地址的网络通路（网卡断开/切网/内网地址不可达）',
+  ],
   [/ERR_ADDRESS_INVALID|ERR_INVALID_URL/, '地址本身不合法'],
-  [/ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED|ERR_SOCKS_CONNECTION_FAILED|ERR_PROXY_CERTIFICATE_INVALID|ERR_PROXY_UNSUPPORTED|ERR_INVALID_AUTHENTICATION/, '代理连不上（设置里的代理地址/端口对不对？代理软件是否在运行）'],
+  [
+    /ERR_PROXY_CONNECTION_FAILED|ERR_TUNNEL_CONNECTION_FAILED|ERR_SOCKS_CONNECTION_FAILED|ERR_PROXY_CERTIFICATE_INVALID|ERR_PROXY_UNSUPPORTED|ERR_INVALID_AUTHENTICATION/,
+    '代理连不上（设置里的代理地址/端口对不对？代理软件是否在运行）',
+  ],
   [/ERR_CONNECTION_REFUSED/, 'TCP 连接被拒绝（对方端口没在听）'],
-  [/ERR_CONNECTION_RESET|ERR_CONNECTION_ABORTED|ERR_CONNECTION_TIMED_OUT|ERR_EMPTY_RESPONSE|ERR_SOCKET_NOT_CONNECTED/, '连上了但连接被重置（按域名/SNI 阻断的典型表现：换网络或配置代理可解）'],
+  [
+    /ERR_CONNECTION_RESET|ERR_CONNECTION_ABORTED|ERR_CONNECTION_TIMED_OUT|ERR_EMPTY_RESPONSE|ERR_SOCKET_NOT_CONNECTED/,
+    '连上了但连接被重置（按域名/SNI 阻断的典型表现：换网络或配置代理可解）',
+  ],
   [/ERR_SSL|ERR_CERT|ERR_BAD_SSL/, 'TLS 握手失败（证书或协议问题；按 SNI 阻断也会表现成这样）'],
   [/ERR_TOO_MANY_REDIRECTS/, '重定向次数过多（站点登录态或跳转配置有问题）'],
   [/ERR_TIMED_OUT/, '连接超时（未到 HTTP 层）'],
@@ -400,7 +405,8 @@ export function networkLayerHint(e: unknown): string {
   for (const [re, hint] of CHROMIUM_ERROR_HINTS) if (re.test(detail)) return hint
   if (/ENOTFOUND|EAI_AGAIN|getaddrinfo/i.test(detail)) return 'DNS 解析失败（域名解不出来）'
   if (/ECONNREFUSED/i.test(detail)) return 'TCP 连接被拒绝（对方端口没在听）'
-  if (/ECONNRESET|ECONNABORTED|EOF|ILLEGAL_MESSAGE|handshake/i.test(detail)) return '连上了但连接被重置（可能被按域名阻断）'
+  if (/ECONNRESET|ECONNABORTED|EOF|ILLEGAL_MESSAGE|handshake/i.test(detail))
+    return '连上了但连接被重置（可能被按域名阻断）'
   if (/SSL|TLS|certificate|alert/i.test(detail)) return 'TLS 层报错'
   if (/ETIMEDOUT|timed out/i.test(detail)) return '读取超时'
   return `${err?.name ?? 'Error'}: ${err?.message ?? ''}`.trim()

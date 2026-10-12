@@ -211,11 +211,15 @@ async function main() {
 
     // 2. 等任务 done
     let lastRows = null
-    const doneRow = await waitFor(async () => {
-      lastRows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      const r = (lastRows || []).find((x) => x.id === `${taskId}`)
-      return r && r.snap?.state === 'done' ? r : null
-    }, 60_000, '下载完成').catch((e) => {
+    const doneRow = await waitFor(
+      async () => {
+        lastRows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        const r = (lastRows || []).find((x) => x.id === `${taskId}`)
+        return r && r.snap?.state === 'done' ? r : null
+      },
+      60_000,
+      '下载完成',
+    ).catch((e) => {
       console.log('[diag] rows =', JSON.stringify(lastRows).slice(0, 800))
       throw e
     })
@@ -252,7 +256,9 @@ async function main() {
     check('settings 落盘生效', s2 === 2, `threads=${s2}`)
 
     // 6. 重复添加去重
-    const dup = await evalJs(`(async () => (await window.hh.addTask({ url: '${addUrl}', dest: '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}', threads: 4 })))()`)
+    const dup = await evalJs(
+      `(async () => (await window.hh.addTask({ url: '${addUrl}', dest: '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}', threads: 4 })))()`,
+    )
     check('重复链接返回 duplicate', dup?.ok === true && dup?.duplicate === true, JSON.stringify(dup))
 
     // 7. removeTask 只删记录（文件保留）
@@ -287,12 +293,16 @@ async function main() {
       })()`)
       conIds.push(r?.def?.id ?? '')
     }
-    const conAllDone = await waitFor(async () => {
-      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      const acts = conIds.filter((id) => activeStates.includes(stateOf(rows, id))).length
-      if (acts > maxActive) maxActive = acts
-      return conIds.every((id) => stateOf(rows, id) === 'done') ? rows : null
-    }, 120_000, '3 个并发任务全 done').catch((e) => {
+    const conAllDone = await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        const acts = conIds.filter((id) => activeStates.includes(stateOf(rows, id))).length
+        if (acts > maxActive) maxActive = acts
+        return conIds.every((id) => stateOf(rows, id) === 'done') ? rows : null
+      },
+      120_000,
+      '3 个并发任务全 done',
+    ).catch((e) => {
       console.log('[diag] maxActive=', maxActive, 'conIds=', conIds)
       throw e
     })
@@ -301,19 +311,29 @@ async function main() {
 
     // 7b. pause 期间流量停：限速下下载到中途，pause 后确认已下字节不再增长
     const pauseUrl = `${addUrl}?p=1`
-    const pauseRow = await evalJs(`(async () => (await window.hh.addTask({ url: '${pauseUrl}', dest: '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}/pause.bin', threads: 2 })))()`)
+    const pauseRow = await evalJs(
+      `(async () => (await window.hh.addTask({ url: '${pauseUrl}', dest: '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}/pause.bin', threads: 2 })))()`,
+    )
     const pauseId = pauseRow?.def?.id ?? ''
-    const pauseStarted = await waitFor(async () => {
-      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      const st = stateOf(rows, pauseId)
-      const down = (rows || []).find((x) => x.id === pauseId)?.snap?.downloaded || 0
-      return st === 'downloading' && down > 0 ? down : null
-    }, 30_000, 'pause 任务开始下载且有进度')
+    const pauseStarted = await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        const st = stateOf(rows, pauseId)
+        const down = (rows || []).find((x) => x.id === pauseId)?.snap?.downloaded || 0
+        return st === 'downloading' && down > 0 ? down : null
+      },
+      30_000,
+      'pause 任务开始下载且有进度',
+    )
     await evalJs(`(async () => (await window.hh.action('${pauseId}', 'pause')))()`)
-    await waitFor(async () => {
-      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      return stateOf(rows, pauseId) === 'paused' ? true : null
-    }, 15_000, 'pause 后进入 paused 状态')
+    await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        return stateOf(rows, pauseId) === 'paused' ? true : null
+      },
+      15_000,
+      'pause 后进入 paused 状态',
+    )
     await wait(500) // 让引擎把 in-flight 的 socket 掐掉、服务端字节入账
     const pausedDown = await evalJs(`(async () => {
       const rows = await window.hh.listTasks()
@@ -338,17 +358,29 @@ async function main() {
     const hadPart = existsSync(partPath)
     check('pause 期间 .part 存在', hadPart, partPath)
     await evalJs(`(async () => (await window.hh.action('${pauseId}', 'retry')))()`)
-    const retryDownloaded = await waitFor(async () => {
-      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      const r = (rows || []).find((x) => x.id === pauseId)
-      return r?.snap?.state === 'downloading' && (r.snap?.downloaded || 0) > 0 ? r.snap.downloaded : null
-    }, 30_000, 'retry 后重新开始下载')
-    check('retry 后 downloaded 从 0 重新计', retryDownloaded > 0 && retryDownloaded < FILE_SIZE, `downloaded=${retryDownloaded}`)
+    const retryDownloaded = await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        const r = (rows || []).find((x) => x.id === pauseId)
+        return r?.snap?.state === 'downloading' && (r.snap?.downloaded || 0) > 0 ? r.snap.downloaded : null
+      },
+      30_000,
+      'retry 后重新开始下载',
+    )
+    check(
+      'retry 后 downloaded 从 0 重新计',
+      retryDownloaded > 0 && retryDownloaded < FILE_SIZE,
+      `downloaded=${retryDownloaded}`,
+    )
     // 收尾：等它下完，恢复默认设置
-    await waitFor(async () => {
-      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      return stateOf(rows, pauseId) === 'done' ? true : null
-    }, 120_000, 'retry 任务最终 done')
+    await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        return stateOf(rows, pauseId) === 'done' ? true : null
+      },
+      120_000,
+      'retry 任务最终 done',
+    )
     const finalPart = existsSync(partPath)
     const finalMeta = existsSync(metaPath)
     check('done 后 .part 已清理', !finalPart, partPath)
@@ -371,15 +403,21 @@ async function main() {
     })()`)
     const persistId = add2?.def?.id ?? ''
     check('持久化任务 add ok', add2?.ok === true, JSON.stringify(add2))
-    await waitFor(async () => {
-      const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
-      const r = (rows || []).find((x) => x.id === persistId)
-      return r && r.snap?.state === 'done' ? r : null
-    }, 60_000, '持久化任务下载完成')
+    await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        const r = (rows || []).find((x) => x.id === persistId)
+        return r && r.snap?.state === 'done' ? r : null
+      },
+      60_000,
+      '持久化任务下载完成',
+    )
     console.log('[persist] 重启前任务已完成，准备重启 Electron…')
 
     // 关闭当前实例，再用同一 DATA_DIR 重启
-    try { ws?.close() } catch {}
+    try {
+      ws?.close()
+    } catch {}
     electronProc?.kill()
     await wait(1200)
     await launchElectron()
@@ -389,9 +427,13 @@ async function main() {
     const rowsAfterRestart = await evalJs(`(async () => (await window.hh.listTasks()))()`)
     const pRow = (rowsAfterRestart || []).find((x) => x.id === persistId)
     check('重启后任务记录还在', !!pRow, JSON.stringify(pRow)?.slice(0, 200))
-    check('重启后状态为 done', pRow?.snap?.state === 'done' || pRow?.def?.state === 'done', JSON.stringify(pRow?.snap?.state))
+    check(
+      '重启后状态为 done',
+      pRow?.snap?.state === 'done' || pRow?.def?.state === 'done',
+      JSON.stringify(pRow?.snap?.state),
+    )
     check('重启后文件仍在', existsSync(pRow?.snap?.dest ?? pRow?.def?.dest ?? ''), pRow?.snap?.dest ?? '')
-    check('重启后 hello 仍可用', await evalJs(`(async () => (await window.hh.hello()).name)()`) === 'hanehana')
+    check('重启后 hello 仍可用', (await evalJs(`(async () => (await window.hh.hello()).name)()`)) === 'hanehana')
 
     console.log(`\n==== ${passed} passed, ${failed} failed ====`)
     if (failed > 0) process.exitCode = 1
@@ -405,6 +447,10 @@ async function main() {
     electronProc?.kill()
     srv.close()
     await wait(500)
+    // 每次运行开头都会重建，测试结束清掉隔离数据目录
+    try {
+      rmSync(DATA_DIR, { recursive: true, force: true })
+    } catch {}
   }
 }
 

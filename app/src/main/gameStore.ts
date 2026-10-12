@@ -9,10 +9,20 @@
  * 留下半个文件。单实例锁已保证同一时刻只有一个写入者。
  */
 import { app } from 'electron'
-import { mkdirSync, readFileSync, renameSync, writeFileSync, existsSync, copyFileSync, readdirSync, statSync } from 'node:fs'
+import {
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  existsSync,
+  copyFileSync,
+  readdirSync,
+  statSync,
+  unlinkSync,
+} from 'node:fs'
 import { join, resolve, sep, dirname } from 'node:path'
 import type { Game, GameVariant } from '../shared/types'
 import { dataDir as storeDataDir } from './store'
+import { createJsonStore } from './jsonStore'
 
 /**
  * 游戏库数据目录：与任务/设置同一真值源（~/.hanehana），
@@ -35,7 +45,12 @@ function migrateFromLegacyDir(): void {
   // - 目标已有数据（含 HANEHANA_DATA_DIR 隔离的测试 seed）绝不能被 legacy 覆盖；
   // - HANEHANA_DATA_DIR 是测试/隔离通道，任何情况下都不得触发迁移，
   //   否则本机旧库会悄悄渗进隔离目录，测试断言看到的不是 seed 而是旧数据。
-  if (process.env.HANEHANA_DATA_DIR || legacy === dataDir || !existsSync(join(legacy, 'games.json')) || existsSync(gamesPath)) {
+  if (
+    process.env.HANEHANA_DATA_DIR ||
+    legacy === dataDir ||
+    !existsSync(join(legacy, 'games.json')) ||
+    existsSync(gamesPath)
+  ) {
     return
   }
   console.log(`[hanehana] 检测到旧版游戏库目录 ${legacy}，迁移到 ${dataDir}`)
@@ -55,10 +70,14 @@ function migrateFromLegacyDir(): void {
 }
 
 let games: Game[] = []
+// 显式的「已加载」标志：不能用 games.length 判断——空库时 length===0 会让
+// 每次 loadGames() 都重新读盘（且 migrate 反复跑）。加载过就是加载过。
+let gamesLoaded = false
 
 /** 启动时加载；文件不存在就是全新开始。 */
 export function loadGames(): Game[] {
-  if (games.length > 0) return games
+  if (gamesLoaded) return games
+  gamesLoaded = true
   migrateFromLegacyDir()
   try {
     if (existsSync(gamesPath)) {
@@ -85,7 +104,9 @@ export function findGameByExe(exePath: string): Game | undefined {
   return games.find((g) => g.exePath.toLowerCase() === norm)
 }
 
-export function addGames(entries: Omit<Game, 'id' | 'addedAt' | 'playMs' | 'tags' | 'categories' | 'sources' | 'favorite'>[]): Game[] {
+export function addGames(
+  entries: Omit<Game, 'id' | 'addedAt' | 'playMs' | 'tags' | 'categories' | 'sources' | 'favorite'>[],
+): Game[] {
   const now = Date.now()
   const added: Game[] = []
   for (const e of entries) {
@@ -103,7 +124,7 @@ export function addGames(entries: Omit<Game, 'id' | 'addedAt' | 'playMs' | 'tags
     games.push(g)
     added.push(g)
   }
-  if (added.length > 0) persist()
+  if (added.length > 0) persistCoalesced()
   return added
 }
 
@@ -111,7 +132,7 @@ export function updateGame(id: string, patch: Partial<Game>): Game | undefined {
   const g = getGame(id)
   if (!g) return undefined
   Object.assign(g, patch)
-  persist()
+  persistCoalesced()
   return g
 }
 
@@ -123,13 +144,22 @@ export function updateGame(id: string, patch: Partial<Game>): Game | undefined {
 // existsSync 存在性校验（见 case 'exePath'，与 variants.exePath 同闸）：
 // 渲染层只能指向磁盘上真实存在的 exe，「点启动即执行任意程序」的面不放开。
 
-/** 图片路径只准落在 covers/ 与 thumbs/ 内：hh:// 协议照着这两个字段读文件。 */
+/** 图片路径只准落在 covers/ 与 thumbs/ 内：hh:// 协议照着这两个字段读文件。
+ *  用 realpathSync 解真实路径再校验：resolve 只做字符串归一，symlink 仍可能
+ *  指向缓存目录之外（例如把 /etc/passwd 的软链放进 covers 再当 coverPath 传）；
+ *  realpath 后链接已被解开，逃不出这两个目录。存在性由调用方保证（保存时
+ *  只收真实存在的路径），realpath 抛错（不存在/断链）一律拒绝。 */
 export function isImageCachePath(p: unknown): p is string {
   if (typeof p !== 'string' || !p) return false
-  const norm = resolve(p)
+  let real: string
+  try {
+    real = realpathSync(p)
+  } catch {
+    return false
+  }
   for (const dir of [coversDir, thumbsDir]) {
     const root = resolve(dir)
-    if (norm === root || norm.startsWith(root + sep)) return true
+    if (real === root || real.startsWith(root + sep)) return true
   }
   return false
 }
@@ -215,7 +245,8 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
         break
       }
       case 'lengthMinutes':
-        if (typeof v === 'number' && Number.isFinite(v)) out.lengthMinutes = Math.min(100000, Math.max(0, Math.floor(v)))
+        if (typeof v === 'number' && Number.isFinite(v))
+          out.lengthMinutes = Math.min(100000, Math.max(0, Math.floor(v)))
         break
       case 'variants': {
         // G13+G17 多版本/语言包：数组，每项 {label, exePath, preLaunchCmd?}，exePath 必须存在
@@ -225,10 +256,20 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
           if (!item || typeof item !== 'object') continue
           const it = item as Record<string, unknown>
           if (typeof it.label !== 'string' || !it.label.trim()) continue
-          if (typeof it.exePath !== 'string' || !it.exePath.trim() || !existsSync(it.exePath)) continue
+          // 与主 exePath 同闸：必须是已存在的**文件**，目录/空串/带控制符一律不收。
+          // 老写法只 existsSync，目录也能过——变体 exePath 指向目录时，启动侧
+          // spawn 会在 error 事件里才炸，用户看到的是「点了没反应」。
+          if (typeof it.exePath !== 'string' || !it.exePath.trim()) continue
+          const vp = it.exePath.trim()
+          if (vp.length > 4000 || /[\x00-\x1f]/.test(vp)) continue
+          try {
+            if (!existsSync(vp) || !statSync(vp).isFile()) continue
+          } catch {
+            continue
+          }
           list.push({
             label: it.label.trim().slice(0, 64),
-            exePath: resolve(it.exePath),
+            exePath: resolve(vp),
             preLaunchCmd: typeof it.preLaunchCmd === 'string' ? it.preLaunchCmd.slice(0, 4000) : undefined,
           })
         }
@@ -255,16 +296,45 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
 }
 
 export function removeGame(id: string): void {
+  const gone = games.find((g) => g.id === id)
   games = games.filter((g) => g.id !== id)
-  persist()
+  if (gone) dropGameCache(gone)
+  persistCoalesced()
 }
 
-/** 全量原子写。 */
-function persist(): void {
-  mkdirSync(dataDir, { recursive: true })
-  const tmp = gamesPath + '.tmp'
-  writeFileSync(tmp, JSON.stringify(games, null, 2), 'utf8')
-  renameSync(tmp, gamesPath)
+/** 删游戏时把它的封面/缩略图缓存文件一并清掉，不留孤儿（与 heal 同口径）。 */
+function dropGameCache(g: Game): void {
+  for (const p of [g.coverPath, g.thumbPath]) {
+    if (!p || !isImageCachePath(p)) continue
+    try {
+      if (existsSync(p)) unlinkSync(p)
+    } catch {
+      // 被占用/无权限：删不掉就留着，字段已从库移除，文件等下次手动清
+    }
+  }
+}
+
+// ---------------------------------------------------------------- 持久化
+// 统一走 jsonStore（原子写 + 400ms 尾触发合并 + flush），不再各写一套。
+// 为什么用宏任务定时器而不是 queueMicrotask：微任务队列在每个 await 边界
+// 都会被排空，回填/自愈是「逐个 await」的循环——每次 await 都会把微任务
+// 跑掉，于是每张图仍然各写一次全量 games.json（千级库首轮回填 = 上千次
+// pretty 序列化 + 上千次 rename）。宏任务窗口拉到真正的一批。
+// save 收到的是 `games` 数组引用，定时器到期序列化时读的是当时的最新内容
+// ——这正是尾触发合并的语义：连续更新只落盘一次、落的是最新快照。
+const gamesStore = createJsonStore<Game[]>(gamesPath)
+
+/** 合并写入（尾触发 debounce）：连续多次 updateGame 只落盘一次。 */
+function persistCoalesced(): void {
+  gamesStore.save(games)
+}
+
+/**
+ * 立即把待写内容落盘（进程退出前调用）。返回是否真的写了。
+ * 没有它，退出时可能正好卡在合并窗口里，丢掉最后一批更新。
+ */
+export function flushPersist(): boolean {
+  return gamesStore.flush()
 }
 
 /** 封面目录确保存在，返回其绝对路径。 */

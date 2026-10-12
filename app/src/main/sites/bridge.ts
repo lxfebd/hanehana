@@ -13,21 +13,12 @@
  * 而引擎拿不到 webview 会话里的 Cookie，于是页面里明明下得动的东西进了
  * FastDrop 就变成 http 403（实测：站点服务器记到 3 次 denied-no-cookie）。
  */
-import {
-  ipcMain,
-  session,
-  shell,
-  type BrowserWindow,
-  type DownloadItem,
-  type WebContents,
-} from 'electron'
+import { ipcMain, session, shell, type BrowserWindow, type DownloadItem, type WebContents } from 'electron'
 import { mkdirSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { Mirror } from '../../shared/sites'
-import { GAMESITES_PARTITION } from '../../shared/sites'
+import { GAMESITES_PARTITION, type Mirror } from '../../shared/sites'
 import type { AddOutcome } from '../manager'
-import type { SiteDownloadPush } from '../../shared/ipc'
-import { Ipc } from '../../shared/ipc'
+import { Ipc, type SiteDownloadPush } from '../../shared/ipc'
 import { listSites, mirrorsOf, searchSite, siteIdForUrl } from './registry'
 import { resolveMirror } from './resolver'
 import { probeHead } from './http'
@@ -36,12 +27,7 @@ export interface BridgeDeps {
   /** 拿主窗口，用来推送事件 */
   getWindow: () => BrowserWindow | null
   /** 复用 Manager.add 建任务 */
-  addTask: (input: {
-    url: string
-    dest: string
-    threads?: number
-    note?: string
-  }) => AddOutcome
+  addTask: (input: { url: string; dest: string; threads?: number; note?: string }) => AddOutcome
   /** 渲染层当前选中的下载目录 */
   getDownloadDir: () => string
   /** 渲染层当前线程数设置 */
@@ -54,12 +40,8 @@ export function wireSites(deps: BridgeDeps): () => void {
   }
 
   ipcMain.handle(Ipc.SitesList, () => listSites())
-  ipcMain.handle(Ipc.SitesSearch, (_e, siteId: string, keyword: string) =>
-    searchSite(siteId, keyword),
-  )
-  ipcMain.handle(Ipc.SitesMirrors, (_e, siteId: string, detailUrl: string) =>
-    mirrorsOf(siteId, detailUrl),
-  )
+  ipcMain.handle(Ipc.SitesSearch, (_e, siteId: string, keyword: string) => searchSite(siteId, keyword))
+  ipcMain.handle(Ipc.SitesMirrors, (_e, siteId: string, detailUrl: string) => mirrorsOf(siteId, detailUrl))
   ipcMain.handle(Ipc.SitesResolve, (_e, mirror: Mirror) => resolveMirror(mirror))
 
   ipcMain.handle(Ipc.SitesAddTask, (_e, input: { url: string; filename?: string }) => {
@@ -78,11 +60,7 @@ export function wireSites(deps: BridgeDeps): () => void {
   // ----------------------------------------------------------- 捕获桥
 
   const ses = session.fromPartition(GAMESITES_PARTITION)
-  const onWillDownload = (
-    _e: { preventDefault: () => void },
-    item: DownloadItem,
-    _webContents: WebContents,
-  ): void => {
+  const onWillDownload = (_e: { preventDefault: () => void }, item: DownloadItem, _webContents: WebContents): void => {
     const url = item.getURL()
     if (!url || !/^https?:\/\//i.test(url)) return
     const filename = safeFileName(item.getFilename() || guessName(url) || '')
@@ -174,10 +152,23 @@ async function isPubliclyDownloadable(url: string): Promise<boolean> {
       timeoutMs: 6000,
     })
     if (!r.ok) return false
-    try {
-      if (new URL(r.url).origin !== new URL(url).origin) return false
-    } catch {
-      return false
+    // 探测跟随重定向，最终 origin 必须与起始一致才算「同一条链接」。
+    // 用 siteIdForUrl 归一而不是字符串相等：www.gamer520.com → gamers520.com 这类
+    // 同站子域跳转是正常的，严格相等会把它们误判成「跳到别处去了」而拒掉直链。
+    if (siteIdForUrl(r.url) !== siteIdForUrl(url)) {
+      // 两边都是同一站（含未知站）才算同源：未知站 null === null 会误放行，
+      // 所以未知站退回 origin 严格比较兜底。
+      const a = siteIdForUrl(r.url)
+      const b = siteIdForUrl(url)
+      if (a === undefined || b === undefined) {
+        try {
+          if (new URL(r.url).origin !== new URL(url).origin) return false
+        } catch {
+          return false
+        }
+      } else if (a !== b) {
+        return false
+      }
     }
     // 返回 HTML 说明被弹回登录页/中间页，不是文件
     if (r.contentType.toLowerCase().includes('text/html')) return false

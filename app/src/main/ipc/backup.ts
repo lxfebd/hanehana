@@ -52,7 +52,7 @@ export function registerBackupHandlers(ctx: IpcCtx): void {
   ipcMain.handle(Ipc.BackupDelete, (_e, id: unknown, snapshotDir: unknown) => {
     if (!isId(id)) return err('游戏不存在')
     if (!validSnapshotDir(id, snapshotDir)) return err('快照路径无效')
-    return deleteSnapshot(id, snapshotDir) ? ({ ok: true as const }) : err('删除快照失败')
+    return deleteSnapshot(id, snapshotDir) ? { ok: true as const } : err('删除快照失败')
   })
 
   ipcMain.handle(Ipc.BackupSync, async (_e, id: unknown, snapshotDir: unknown) => {

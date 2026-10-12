@@ -12,8 +12,9 @@ export const ui = reactive({
   page: 'library' as 'library' | 'downloads' | 'games' | 'stats',
   settingsOpen: false,
   dark: true,
-  /** 主题套件 id（settings.theme_preset） */
-  preset: 'sakura' as 'sakura' | 'starnight' | 'mint',
+  /** 主题套件 id（settings.theme_preset）。默认星海：
+      樱夜的紫夜底 + 樱花粉是典型"AI 紫"配色，用户明确不接受，故换夜蓝+星青。 */
+  preset: 'starnight' as 'sakura' | 'starnight' | 'mint',
   /** 右侧详情面板收起（只留竖条，点竖条展开） */
   detailCollapsed: false,
   /** Steam 导入对话框 */

@@ -13,14 +13,13 @@
  * 校验和），打包后随 extraResources 一起分发，不进 asar。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
-import { appendFileSync, existsSync, mkdirSync } from 'node:fs'
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
 import type { EngineCommand, EngineEvent, ErrorParams, TaskSnapshot } from '../shared/types'
 import { engineProxyFor } from './netConfig'
 import { dataDir } from './store'
-
-const CHUNK = 64 * 1024
+import { consumeLines } from './engineLines'
 
 /** 暂停/停止命令的确认等待上限。超时按「引擎没听见」处理，见 pause()/discard()。 */
 const PAUSE_ACK_MS = 1500
@@ -210,8 +209,19 @@ export class EngineTask {
     this.draining = false
 
     // Rust 引擎的 stderr 是诊断信息（HTTP 错误、panic），收集起来便于排错。
+    // 用 appendFileSync 逐块写会无限膨胀（长跑任务断线重试一次能刷出几百条）；
+    // 这里每块先过 logAppend 的长度闸门——超上限只保留尾部，日志文件有界。
     proc.stderr?.on('data', (d: Buffer) => {
-      appendFileSync(logPath(), `[engine ${this.url.slice(0, 80)}] ${d.toString('utf8')}`)
+      // 日志里只记 host+pathname，不记 URL query：Cloudreve 预签名直链、
+      // 站点跳转链接的 query 段可能携带一次性签名/令牌，落盘等于泄漏可复用凭证。
+      let hostPath = this.url
+      try {
+        const u = new URL(this.url)
+        hostPath = u.host + u.pathname
+      } catch {
+        hostPath = this.url.slice(0, 80)
+      }
+      logAppend(`[engine ${hostPath}] ${d.toString('utf8')}`)
     })
 
     proc.stdout?.setEncoding('utf8')
@@ -244,9 +254,20 @@ export class EngineTask {
       if (this.drainCb) {
         this.drainCb = null
       }
-      // 子进程意外退出（非 stop 触发）视为失败
+      // 子进程意外退出（非 stop 触发）视为失败。必须把 error 原文/码写进快照
+      // 再改状态——否则用户只看到「失败」两个字，没有病因可查（此前只
+      // setState('error')，快照里 error 是空的，界面报不出为什么）。
       if (this.state !== 'done' && this.state !== 'cancelled') {
-        this.setState('error')
+        const reason = '引擎进程意外退出，请重试'
+        this.setError(reason, 'engine_exited')
+        this.snap = {
+          ...(this.snap ?? emptySnap(this.url, this.dest, 'error')),
+          error: reason,
+          error_code: 'engine_exited',
+          error_params: null,
+        }
+        this.forceState('error')
+        this.emitProgress()
       }
     })
   }
@@ -284,10 +305,7 @@ export class EngineTask {
     try {
       this.effectiveProxy = await engineProxyFor(this.url, this.proxySetting)
     } catch (e) {
-      this.setError(
-        `代理配置没能生效：${e instanceof Error ? e.message : String(e)}`,
-        'proxy_resolve_failed',
-      )
+      this.setError(`代理配置没能生效：${e instanceof Error ? e.message : String(e)}`, 'proxy_resolve_failed')
       this.setState('error')
       return
     }
@@ -334,7 +352,9 @@ export class EngineTask {
       // 期间用户在设置里改过限速，只靠 probe 那条就把新值漏掉了。
       this.sendRun()
     } catch (e) {
-      this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
+      // 刚 spawn 完连 probe 都写不出去：进程没真正起来，归为「启动失败」，
+      // 而不是「进程已退出」（后者的 hint 是重试——这里重试没用，得先修启动）。
+      this.setError(e instanceof Error ? e.message : String(e), 'engine_spawn_failed')
       this.setState('error')
     }
   }
@@ -410,11 +430,7 @@ export class EngineTask {
       // 只有还停在准备中才判死：这段时间用户可能已经点了暂停/取消，
       // 那些路径都自带了状态迁移，不该被这里覆盖。
       if (this.state !== 'preparing') return
-      this.fail(
-        'engine process hung during probe/run; try resume',
-        'engine_hang',
-        {},
-      )
+      this.fail('engine process hung during probe/run; try resume', 'engine_hang', {})
     }, PROBE_TIMEOUT_MS)
   }
 
@@ -573,18 +589,15 @@ export class EngineTask {
     }
   }
 
-  /** 消费 stdout 的 JSON 事件，转成内存快照。 */
+  /** 消费 stdout 的 JSON 事件，转成内存快照。切行逻辑在 engineLines（纯函数，有契约测试）。 */
   private onStdout(chunk: string): void {
     this.stdoutBuf += chunk
-    let idx: number
-    while ((idx = this.stdoutBuf.indexOf('\n')) >= 0) {
-      const line = this.stdoutBuf.slice(0, idx).trim()
-      this.stdoutBuf = this.stdoutBuf.slice(idx + 1)
+    const { lines, rest } = consumeLines(this.stdoutBuf)
+    this.stdoutBuf = rest
+    for (const raw of lines) {
+      // 引擎的诊断输出可能有空行/纯空白行；trim 后为空的不当作事件
+      const line = raw.trim()
       if (line) this.handleEvent(line)
-    }
-    // 防止进程退出前未 flush 的尾部
-    if (this.stdoutBuf.length > CHUNK * 8) {
-      this.stdoutBuf = this.stdoutBuf.slice(-CHUNK)
     }
   }
 
@@ -632,8 +645,7 @@ export class EngineTask {
           // probe 回来的快照状态是 idle。但这一瞬我们其实正卡在「等主进程放行 run」
           // 上：状态要是退成排队中，用户在这毫秒级窗口点暂停会被 pause() 直接 return
           // 掉，命令却照样发出去——所以这一段对外一律显示准备中。
-          let ns: TaskSnapshot['state'] =
-            this.pendingRun && data.state === 'idle' ? 'preparing' : data.state
+          let ns: TaskSnapshot['state'] = this.pendingRun && data.state === 'idle' ? 'preparing' : data.state
           // 迟到的暂停确认不算数：pause() 先置 paused 再发命令，用户紧接着点
           // 「继续」会连带发 run；引擎处理完 pause 才回的 {"state":"paused"} 到达
           // 时任务已经在恢复途中，拿它改状态会把「正在跑」打回「已暂停」，
@@ -782,6 +794,36 @@ function logPath(): string {
     // 忽略
   }
   return join(dir, '.engine-stderr.log')
+}
+
+/** 单条 stderr 日志块的上限；日志文件总长由 MAX_LOG_BYTES 限制。 */
+const MAX_LOG_BYTES = 4 * 1024 * 1024
+/** 截断后的保留尾部长度。 */
+const LOG_KEEP_TAIL = 512 * 1024
+/** 已截断标志：日志超过上限后每块 append 前不再 statSync + 整文件读改写。 */
+let logTruncated = false
+
+/**
+ * 有上限的 stderr 追加：文件超过 4 MiB 时先截断成 512 KiB 尾部再追加新块。
+ * 长跑任务的引擎诊断是无限产生的（断线重试、分段报错），不设闸门的话
+ * 这个文件会一路涨到占满磁盘——`.engine-stderr.log` 只是排错用的，
+ * 永远不该成为磁盘杀手。截断是粗粒度（整块替换 + 保留尾部），日志本身
+ * 就是尽力而为的排错材料，丢一点历史可以接受。
+ */
+function logAppend(text: string): void {
+  const path = logPath()
+  try {
+    // 只在「不知道是否超限」时检查一次；超限截断后置标志，之后纯 append，
+    // 避免断线重试期每秒几十条 stderr 都触发 statSync + 整文件读改写（热点）。
+    if (!logTruncated && existsSync(path) && statSync(path).size > MAX_LOG_BYTES) {
+      const prev = readFileSync(path, 'utf8').slice(-LOG_KEEP_TAIL)
+      writeFileSync(path, prev, 'utf8')
+      logTruncated = true
+    }
+    appendFileSync(path, text, 'utf8')
+  } catch {
+    // 日志写不进去不影响下载本身
+  }
 }
 
 /** 数据目录（G15 便携模式后与 store.ts 同源）：日志落盘位置与下载引擎无关，仅复用目录。 */

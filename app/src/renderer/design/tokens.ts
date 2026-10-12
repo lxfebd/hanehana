@@ -197,8 +197,8 @@ function deriveDark(s: DarkSeeds) {
     scrim: 'linear-gradient(to top, rgba(0,0,0,0.85), rgba(0,0,0,0))',
     scrimSoft: 'linear-gradient(to top, rgba(0,0,0,0.65), rgba(0,0,0,0))',
     onAccent: s.onAccent,
-    accentGrad: `linear-gradient(135deg, ${mix(s.accent, 1, 0.28)}, ${mix(s.accent, -1, 0.12)})`,
-    accentGradStop: mix(s.accent, -1, 0.12),
+    accentGrad: s.accent,
+    accentGradStop: s.accent,
     accentText: mix(s.accent, 1, 0.35),
     accentSoft: rgba(hexToRgb(s.accent), 0.1),
     accentCardBg: rgba(hexToRgb(s.accent), 0.1),
@@ -246,9 +246,12 @@ function deriveDark(s: DarkSeeds) {
     errorHoverBg: rgba(hexToRgb(s.error), 0.18),
     warningSoftBg: rgba(hexToRgb(s.warning), 0.16),
     link: mix(s.accent, 1, 0.3),
-    selectBg: s.accent,
-    selectText: s.onAccent,
-    selectIcon: s.onAccent,
+    // 选中态：低透明 accent 底 + accent 亮字（Playnite/Steam 式）。
+    // 不用 accent 实色铺满——高饱和色大面积填充是"AI 味"的主要来源，
+    // 粉色只做点缀（图标/边框/文字），面积让给中性色。
+    selectBg: rgba(hexToRgb(s.accent), 0.16),
+    selectText: mix(s.accent, 1, 0.45),
+    selectIcon: mix(s.accent, 1, 0.3),
     neutral: mix(s.accent, 1, 0.45),
     neutralDim: mix(s.accent, 1, 0.3),
     surfaceSoft: 'rgba(255,255,255,0.05)',
@@ -295,7 +298,7 @@ function deriveLight(s: LightSeeds) {
     scrim: `linear-gradient(to top, rgba(${rgbCss(tb)},0.85), rgba(${rgbCss(tb)},0))`,
     scrimSoft: `linear-gradient(to top, rgba(${rgbCss(tb)},0.65), rgba(${rgbCss(tb)},0))`,
     onAccent: s.onAccent,
-    accentGrad: `linear-gradient(135deg, ${mix(s.accent, 1, 0.18)}, ${s.accent})`,
+    accentGrad: s.accent,
     accentGradStop: s.accent,
     accentText: mix(s.accent, -1, 0.25),
     accentSoft: rgba(hexToRgb(s.accent), 0.08),
@@ -344,9 +347,10 @@ function deriveLight(s: LightSeeds) {
     errorHoverBg: rgba(hexToRgb(s.error), 0.12),
     warningSoftBg: rgba(hexToRgb(s.warning), 0.12),
     link: mix(s.accent, -1, 0.18),
-    selectBg: s.accent,
-    selectText: s.onAccent,
-    selectIcon: s.onAccent,
+    // 选中态（浅色）：低透明 accent 底 + 深 accent 字（对比度足够）
+    selectBg: rgba(hexToRgb(s.accent), 0.14),
+    selectText: mix(s.accent, -1, 0.3),
+    selectIcon: mix(s.accent, -1, 0.15),
     neutral: mix(s.accent, 1, 0.55),
     neutralDim: mix(s.accent, 1, 0.35),
     surfaceSoft: rgba(tb, 0.04),
@@ -413,15 +417,16 @@ const SAKURA_LIGHT: LightSeeds = {
 }
 
 const STARNIGHT_DARK: DarkSeeds = {
-  night: [9, 14, 28],
-  nightPanel: [18, 26, 46],
-  float: [16, 23, 42],
-  input: [12, 19, 36],
-  textBase: [232, 242, 255],
-  textHot: [250, 253, 255],
-  accent: '#63D3FF',
-  accentHover: '#8BE1FF',
-  onAccent: '#04212F',
+  night: [9, 13, 20],
+  nightPanel: [16, 22, 34],
+  float: [14, 20, 32],
+  input: [12, 17, 28],
+  textBase: [222, 230, 240],
+  textHot: [246, 250, 255],
+  // 钢青（不是荧光青）：低饱和的蓝灰青，避免"AI 荧光"感
+  accent: '#5FA8C4',
+  accentHover: '#7CBFD8',
+  onAccent: '#06222E',
   star: '#FFD94E',
   coverFallback: '#10233F',
   bannerBase: '#0B1626',
@@ -435,13 +440,13 @@ const STARNIGHT_DARK: DarkSeeds = {
   errorDanger: '#EF4444',
 }
 const STARNIGHT_LIGHT: LightSeeds = {
-  night: [243, 247, 252],
+  night: [243, 246, 250],
   float: [255, 255, 255],
   input: [255, 255, 255],
-  textBase: [23, 37, 58],
-  textHot: [23, 37, 58],
-  accent: '#0E7FB8',
-  accentHover: '#1292D2',
+  textBase: [23, 35, 48],
+  textHot: [23, 35, 48],
+  accent: '#2E7A9E',
+  accentHover: '#3A90B8',
   onAccent: '#FFFFFF',
   star: '#B45309',
   coverFallback: '#E3EDF7',
@@ -552,7 +557,7 @@ export const FS_COLORS = {
 } as const
 
 // 默认套件（樱夜，向后兼容组件 import { tokens }）
-const DEFAULT_PRESET: ThemePresetId = 'sakura'
+const DEFAULT_PRESET: ThemePresetId = 'starnight'
 const defaultColorsDark = deriveDark(themePresets[DEFAULT_PRESET].dark)
 const defaultColorsLight = deriveLight(themePresets[DEFAULT_PRESET].light)
 
@@ -631,7 +636,12 @@ export function applyCssVars(
         // 不加单位会让 `border-radius: var(--hh-radius-panel)` 变成非法的 `16` 被丢弃——圆角/模糊全失效。
         // coverRatio 是比率。
         let out = String(v)
-        if ((group === 'layout' || group === 'space' || group === 'glass' || group === 'radius') && typeof v === 'number' && k !== 'coverRatio') out = `${v}px`
+        if (
+          (group === 'layout' || group === 'space' || group === 'glass' || group === 'radius') &&
+          typeof v === 'number' &&
+          k !== 'coverRatio'
+        )
+          out = `${v}px`
         set(`--hh-${group}-${kebab(k)}`, out)
       }
       continue

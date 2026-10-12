@@ -10,6 +10,7 @@ import { applyChromiumProxy } from '../netConfig'
 import { proxyFormatError } from '../../shared/proxy'
 import { checkUpdate, installUpdate, updateEnabled } from '../updater'
 import { addTrack, checkTracks, loadTracking, removeTrack } from '../tracking'
+import { webdavUrlError } from '../saveRules'
 import { err, type IpcCtx } from './shared'
 
 export function registerSettingsHandlers(ctx: IpcCtx): void {
@@ -48,11 +49,28 @@ export function registerSettingsHandlers(ctx: IpcCtx): void {
     return r
   })
 
-  ipcMain.handle(Ipc.SettingsGet, () => s().loadSettings())
+  // 设置读取脱敏：webdav_pass 只在设置页回显时清空，免得任何能拿 IPC 的对象
+  // 都能读到明文密码。渲染层密码框留空 = 不修改（SettingsSave 里空串保留原值），
+  // 用户填了新密码才覆盖。proxy 原样回显：代理串是用户自己填的，编辑时需要看到
+  // 完整值（含 user:pass@host 这类内嵌凭据），脱敏会让「清空代理」和「未修改」
+  // 无法区分，反而更容易误清。
+  ipcMain.handle(Ipc.SettingsGet, () => {
+    const full = s().loadSettings()
+    return { ...full, webdav_pass: '' }
+  })
   ipcMain.handle(Ipc.SettingsSave, async (_e, next) => {
     const prev = s().loadSettings()
     const raw = (next && typeof next === 'object' ? next : {}) as Partial<Settings>
-    const saved = normalizeSettings(next)
+    // webdav_pass 是脱敏返回的（SettingsGet 永远给空串），渲染层密码框留空
+    // 有两种可能：用户没改（保留原密码）/ 用户清空了（少见，密码不是必填）。
+    // 按「空 = 不修改」处理：想清空密码可以直接清 webdav_user，密码留空
+    // 只是不更新。真需要清时把 webdav_user 也清掉即可。
+    if (typeof raw.webdav_pass === 'string' && raw.webdav_pass === '') {
+      ;(raw as Record<string, unknown>).webdav_pass = prev.webdav_pass
+    }
+    // 必须喂 raw 而不是 next：上面的回填只在 raw 上生效，normalizeSettings
+    // 拿 next 的话 webdav_pass 还是空串，密码照样被清掉。
+    const saved = normalizeSettings(raw)
     if (saved.theme_mode !== 'system') {
       const modeChanged = typeof raw.theme_mode === 'string' && raw.theme_mode !== prev.theme_mode
       const darkChanged = typeof raw.dark === 'boolean' && raw.dark !== prev.dark
@@ -62,6 +80,12 @@ export function registerSettingsHandlers(ctx: IpcCtx): void {
     }
     const bad = proxyFormatError(saved.proxy)
     if (bad) return err(bad)
+    // WebDAV 地址协议闸：Basic 凭据明文，http:// 不允许（本机回环测试豁免）。
+    // 在保存时就拒绝，避免用户配好后才在每次同步时报错。
+    if (saved.webdav_url) {
+      const wdErr = webdavUrlError(saved.webdav_url)
+      if (wdErr) return err(wdErr)
+    }
     try {
       await applyChromiumProxy(saved.proxy)
     } catch (e) {

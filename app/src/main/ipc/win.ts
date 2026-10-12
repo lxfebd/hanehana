@@ -31,7 +31,7 @@ export function registerWinHandlers(ctx: IpcCtx): void {
     }
     const win = ctx.win()
     const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    const picked = r.canceled ? '' : r.filePaths[0] ?? ''
+    const picked = r.canceled ? '' : (r.filePaths[0] ?? '')
     // 用户手选的目录 = 授权写入点，下载路径沙箱认它
     if (picked) ctx.approvedDirs().add(resolve(picked).toLowerCase())
     return picked
@@ -48,19 +48,17 @@ export function registerWinHandlers(ctx: IpcCtx): void {
     }
     const win = ctx.win()
     const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    return r.canceled ? '' : r.filePaths[0] ?? ''
+    return r.canceled ? '' : (r.filePaths[0] ?? '')
   })
 
   ipcMain.handle(Ipc.PickBgImage, async () => {
     const opts: Electron.OpenDialogOptions = {
       properties: ['openFile'],
       title: '选择背景图',
-      filters: [
-        { name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] },
-      ],
+      filters: [{ name: '图片', extensions: ['png', 'jpg', 'jpeg', 'webp', 'bmp', 'gif'] }],
     }
     const win = ctx.win()
     const r = win && !win.isDestroyed() ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
-    return r.canceled ? '' : r.filePaths[0] ?? ''
+    return r.canceled ? '' : (r.filePaths[0] ?? '')
   })
 }

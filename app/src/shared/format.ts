@@ -49,9 +49,7 @@ export function fmtRange(a: number, b: number, digits = 1): string {
   const ia = sa.indexOf(' ')
   const ib = sb.indexOf(' ')
   if (ia < 0 || ib < 0) return `${sa} / ${sb}`
-  return sa.slice(ia) === sb.slice(ib)
-    ? `${sa.slice(0, ia)} / ${sb}`
-    : `${sa} / ${sb}`
+  return sa.slice(ia) === sb.slice(ib) ? `${sa.slice(0, ia)} / ${sb}` : `${sa} / ${sb}`
 }
 
 export function fmtProgress(p: number | null | undefined): string {

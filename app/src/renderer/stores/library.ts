@@ -47,7 +47,7 @@ export const library = reactive({
 // ---------------------------------------------------------------- 智能列表预设
 // 静态分类要人维护，智能列表是动态规则集（Playnite 式 smart filter）：规则随
 // 库状态实时求值，用户零维护。「收藏」单独放在 favOnly（侧栏一键切）。
-export type SmartListId = '' | 'recent30' | 'played10h' | 'unrated' | 'unplayed'
+export type SmartListId = '' | 'recentPlayed' | 'recent30' | 'played10h' | 'unrated' | 'unplayed'
 
 export interface SmartListDef {
   id: SmartListId
@@ -59,6 +59,9 @@ const DAY = 86400000
 
 export const SMART_LISTS: SmartListDef[] = [
   { id: '', label: '全部游戏', test: () => true },
+  // 最近游玩放第一位：日常最高频的入口是「昨天玩到哪」，不是「全部」。
+  // 只收 30 天内玩过的，避免列表里混着一年前的单次记录。
+  { id: 'recentPlayed', label: '最近玩过', test: (g) => !!g.lastPlayed && Date.now() - g.lastPlayed <= 30 * DAY },
   { id: 'recent30', label: '近 30 天入库', test: (g) => Date.now() - g.addedAt <= 30 * DAY },
   { id: 'played10h', label: '攻略中（>10h）', test: (g) => g.playMs > 10 * 3600000 },
   { id: 'unrated', label: '未评分', test: (g) => !g.rating },
@@ -94,7 +97,9 @@ watch(
  * 索引随 games 数组更新；只在 refreshGames/applyScrapeResult 之后重算一次。
  * 去除首尾空白以便精确匹配；字段分开存，按字段搜索（G19）直接查对应项。
  */
-const searchIndex = shallowRef<{ title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string }[]>([])
+const searchIndex = shallowRef<
+  { title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string }[]
+>([])
 
 function rebuildIndex(): void {
   searchIndex.value = library.games.map((g) => ({
@@ -135,7 +140,10 @@ const fieldKeys = {
  *  - 普通模式：空格分词，词序无关（每词命中任一字段即算）；`tag:`/`dev:`/`series:`/`name:`/`orig:` 字段前缀限定字段
  *  - 正则模式：整条输入当作正则编译，匹配任一字段；语法错误返回 false（UI 已提示）
  */
-function matchSearch(s: { title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string }, kw: string): boolean {
+function matchSearch(
+  s: { title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string },
+  kw: string,
+): boolean {
   const fields = [s.title, s.raw, s.native, s.tags, s.extra, s.dev, s.series]
   // 正则模式：不加任何前缀包裹，直接编译
   if (library.searchRegex) {
@@ -167,7 +175,7 @@ export const filteredGames = computed(() => {
   const smart = library.smartList
   const meta = library.metaKey
   const metaV = library.metaValue
-  return library.games.filter((g, i) => {
+  const out = library.games.filter((g, i) => {
     if (cat && !g.categories.includes(cat)) return false
     if (fav && !g.favorite) return false
     if (smart && !smartListTest(smart, g)) return false
@@ -180,6 +188,12 @@ export const filteredGames = computed(() => {
     if (!s) return false
     return matchSearch(s, kw)
   })
+  // 「最近玩过」必须按 lastPlayed 倒序——智能列表默认只过滤不排序，
+  // 而「最近」的语义全在顺序上（混在入库顺序里等于没有这个列表）。
+  if (smart === 'recentPlayed') {
+    out.sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
+  }
+  return out
 })
 
 export const selectedGame = computed(() => library.games.find((g) => g.id === library.selectedId))
@@ -224,11 +238,18 @@ export async function toggleFavorite(id: string): Promise<void> {
   // 乐观更新：先改本地镜像，服务端失败再回滚重拉
   g.favorite = next
   syncIndexToGames()
-  const fresh = await window.hh.updateGame(id, { favorite: next })
-  if (!fresh) {
+  try {
+    const fresh = await window.hh.updateGame(id, { favorite: next })
+    if (!fresh) {
+      g.favorite = !next
+      syncIndexToGames()
+      void refreshGames()
+    }
+  } catch (e) {
+    // IPC 本身被拒（主进程未响应）：回滚并提示，不能留着一个没落盘的乐观状态
     g.favorite = !next
     syncIndexToGames()
-    void refreshGames()
+    library.error = e instanceof Error ? e.message : String(e ?? '')
   }
 }
 
@@ -272,31 +293,47 @@ export async function batchUpdate(patches: { id: string; patch: Partial<Game> }[
       }
     }
   }
-  const r = await window.hh.batchUpdateGames(patches)
-  if (!r.ok) {
+  try {
+    const r = await window.hh.batchUpdateGames(patches)
+    if (!r.ok) {
+      for (const g of library.games) {
+        const old = before.get(g.id)
+        if (old) Object.assign(g, old)
+      }
+      library.error = r.error ?? '批量更新失败'
+      syncIndexToGames()
+      return false
+    }
+    syncIndexToGames()
+    return true
+  } catch (e) {
     for (const g of library.games) {
       const old = before.get(g.id)
       if (old) Object.assign(g, old)
     }
-    library.error = r.error ?? '批量更新失败'
+    library.error = e instanceof Error ? e.message : String(e ?? '批量更新失败')
     syncIndexToGames()
     return false
   }
-  syncIndexToGames()
-  return true
 }
 
 export async function batchRemove(ids: string[]): Promise<boolean> {
   library.games = library.games.filter((g) => !ids.includes(g.id))
   syncIndexToGames()
   if (library.selection.length) library.selection = library.selection.filter((id) => !ids.includes(id))
-  const r = await window.hh.batchRemoveGames(ids)
-  if (!r.ok) {
-    library.error = r.error ?? '批量移除失败'
+  try {
+    const r = await window.hh.batchRemoveGames(ids)
+    if (!r.ok) {
+      library.error = r.error ?? '批量移除失败'
+      void refreshGames()
+      return false
+    }
+    return true
+  } catch (e) {
+    library.error = e instanceof Error ? e.message : String(e ?? '批量移除失败')
     void refreshGames()
     return false
   }
-  return true
 }
 
 // ---------------------------------------------------------------- 手动编辑
@@ -307,7 +344,13 @@ export function openEdit(id: string): void {
 }
 
 export async function saveManualEdit(id: string, patch: Partial<Game>): Promise<boolean> {
-  const fresh = await window.hh.updateGame(id, { ...patch, manualEdit: true })
+  let fresh: Game | null = null
+  try {
+    fresh = await window.hh.updateGame(id, { ...patch, manualEdit: true })
+  } catch (e) {
+    library.error = e instanceof Error ? e.message : String(e ?? '保存失败')
+    return false
+  }
   // 主进程错误形状 {ok:false,error} 是真值，不能当 Game 直接入库（会把错误对象写进列表）
   if (!fresh || (fresh as { ok?: boolean }).ok === false) {
     const msg = (fresh as { error?: string } | null)?.error
@@ -322,12 +365,50 @@ export async function saveManualEdit(id: string, patch: Partial<Game>): Promise<
   return true
 }
 
+/**
+ * 通用「更新单款游戏并把返回的新值同步回本地镜像」。
+ *
+ * 与 saveManualEdit 的区别：它只负责「更新 + 镜像同步」，不做 manualEdit
+ * 标记、不在失败时静默——失败统一记 error 并触发全量重拉（服务端可能已经
+ * 改了部分字段，本地镜像只能以服务端为准）。DetailPanel 的分类/变体切换
+ * 用它，避免每个切换函数各自写一遍「成功替换镜像 / 失败重拉」的样板。
+ *
+ * 返回 true = 本地镜像已是服务端最新值；false = 已记 error 并触发重拉。
+ */
+export async function applyPatch(id: string, patch: Partial<Game>): Promise<boolean> {
+  let fresh: Game | null = null
+  try {
+    fresh = await window.hh.updateGame(id, patch)
+  } catch (e) {
+    library.error = e instanceof Error ? e.message : String(e ?? '保存失败')
+    void refreshGames()
+    return false
+  }
+  // 主进程错误形状 {ok:false,error} 是真值，不能当 Game 直接入库（会把错误对象写进列表）
+  if (!fresh || (fresh as { ok?: boolean }).ok === false) {
+    const msg = (fresh as { error?: string } | null)?.error
+    library.error = msg || '保存失败'
+    void refreshGames()
+    return false
+  }
+  const idx = library.games.findIndex((it) => it.id === id)
+  if (idx >= 0) {
+    library.games[idx] = fresh
+    syncIndexToGames()
+  }
+  return true
+}
+
 export async function launchGame(id: string): Promise<void> {
-  const r = await window.hh.launchGame(id)
-  if (r && r.ok) {
-    library.runningIds.add(id)
-  } else if (r && r.error) {
-    library.error = r.error
+  try {
+    const r = await window.hh.launchGame(id)
+    if (r && r.ok) {
+      library.runningIds.add(id)
+    } else if (r && r.error) {
+      library.error = r.error
+    }
+  } catch (e) {
+    library.error = e instanceof Error ? e.message : String(e ?? '启动失败')
   }
 }
 
@@ -380,9 +461,23 @@ export function openScrape(gameId: string, query: string): void {
 export async function runSearch(query: string): Promise<void> {
   library.scrapeLoading = true
   try {
-    const r = await window.hh.scrapeSearch(query)
-    library.scrapeResults = r.results
-    library.scrapeWarnings = r.warnings
+    // 双源并行、先回先上屏（G20）：不再等最慢源。
+    // 单源失败只进 warnings，不拖累已回来的另一源。
+    library.scrapeResults = []
+    library.scrapeWarnings = []
+    const [vndb, bgm] = await Promise.allSettled([
+      window.hh.scrapeSearchSource('vndb', query),
+      window.hh.scrapeSearchSource('bangumi', query),
+    ])
+    for (const r of [vndb, bgm]) {
+      if (r.status === 'fulfilled') {
+        library.scrapeResults.push(...r.value.results)
+        library.scrapeWarnings.push(...r.value.warnings)
+      } else {
+        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
+        library.scrapeWarnings.push(msg)
+      }
+    }
   } catch (e) {
     library.scrapeWarnings = [e instanceof Error ? e.message : String(e)]
   } finally {
@@ -391,9 +486,16 @@ export async function runSearch(query: string): Promise<void> {
 }
 
 export async function applyScrapeResult(result: ScrapeCandidate): Promise<void> {
-  const r = await window.hh.scrapeApply(library.scrapeTargetId, result)
-  if (!r.ok) {
-    library.error = r.error ?? '刮削失败'
+  let r: { ok: boolean; error?: string } | null = null
+  try {
+    r = await window.hh.scrapeApply(library.scrapeTargetId, result)
+  } catch (e) {
+    library.error = e instanceof Error ? e.message : String(e ?? '刮削失败')
+    return
+  }
+  // TS 流分析：try 内赋值在异常路径上保持 null（尽管 catch 已 return），显式判空
+  if (!r || !r.ok) {
+    library.error = r?.error ?? '刮削失败'
   } else {
     // 单刮确认成功 → 从批量待确认列表摘掉
     batchScrape.pending = batchScrape.pending.filter((p) => p.id !== library.scrapeTargetId)
@@ -437,9 +539,7 @@ function normTitle(s: string): string {
 function scoreCandidate(g: Game, c: ScrapeCandidate): number {
   const gt = normTitle(g.rawTitle || g.title)
   if (!gt) return 0
-  const forms = [c.title, c.titleNative, ...(c.aliases ?? [])]
-    .filter((x): x is string => !!x)
-    .map(normTitle)
+  const forms = [c.title, c.titleNative, ...(c.aliases ?? [])].filter((x): x is string => !!x).map(normTitle)
   if (!forms.length) return 10
   if (forms.some((f) => f === gt)) return 100
   if (forms.some((f) => f.includes(gt) || gt.includes(f))) return 75
@@ -454,9 +554,7 @@ function scoreCandidate(g: Game, c: ScrapeCandidate): number {
 /** 从搜索结果选自动应用项；null = 冲突待确认。 */
 function pickAuto(g: Game, results: ScrapeCandidate[]): ScrapeCandidate | null {
   if (!results.length) return null
-  const scored = results
-    .map((c) => ({ c, s: scoreCandidate(g, c) }))
-    .sort((a, b) => b.s - a.s)
+  const scored = results.map((c) => ({ c, s: scoreCandidate(g, c) })).sort((a, b) => b.s - a.s)
   const best = scored[0]!
   if (best.s < 80) return null
   // 第二名同分 → 真冲突，不猜
@@ -468,7 +566,9 @@ function pickAuto(g: Game, results: ScrapeCandidate[]): ScrapeCandidate | null {
  * 批量刮削：对 selection 串行跑 现有 scrapeSearch → scrapeApply 管线。
  * 源间加短延迟，避免 VNDB/Bangumi 被连发打限流。
  */
-export async function startBatchScrape(ids: string[]): Promise<{ applied: number; failed: number; pending: number; cancelled: boolean }> {
+export async function startBatchScrape(
+  ids: string[],
+): Promise<{ applied: number; failed: number; pending: number; cancelled: boolean }> {
   const list = ids.filter((id) => library.games.some((g) => g.id === id))
   const summary = { applied: 0, failed: 0, pending: 0, cancelled: false }
   if (!list.length || batchScrape.running) return summary
@@ -492,12 +592,16 @@ export async function startBatchScrape(ids: string[]): Promise<{ applied: number
         batchScrape.done += 1
         continue
       }
-      const query = g.rawTitle || g.title
+      const query = (g.title || g.rawTitle || '').trim()
       batchScrape.current = query
       let results: ScrapeCandidate[] = []
       try {
-        const r = await window.hh.scrapeSearch(query)
-        results = r.results
+        results = (await window.hh.scrapeSearch(query)).results
+        // 精简标题搜不到时回退原名再搜一次：VNDB 常收录原始/完整版名
+        if (!results.length && g.rawTitle && g.rawTitle !== g.title) {
+          batchScrape.current = g.rawTitle
+          results = (await window.hh.scrapeSearch(g.rawTitle)).results
+        }
       } catch {
         batchScrape.failed += 1
         batchScrape.done += 1
@@ -542,9 +646,10 @@ export async function startBatchScrape(ids: string[]): Promise<{ applied: number
 export function cancelBatchScrape(): void {
   if (batchScrape.running) {
     batchScrape.cancel = true
-    return
   }
-  // 未在跑：关浮层时清掉残留「待确认」，避免重进多选弹出陈旧 pending
+  // 无论是否在跑都清空「待确认」：关闭浮层/退出多选时，残留的 pending
+  // 不应滞留到下一次操作（overlay 的 v-if 含 pending.length，不清就是
+  // 陈旧面板赖着不走的 bug 根源）。
   batchScrape.pending = []
 }
 

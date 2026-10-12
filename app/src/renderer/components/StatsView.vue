@@ -7,7 +7,9 @@ import { computed, onMounted, ref } from 'vue'
 import { BarChart3, Clock, Gamepad2, ImageDown, Trophy } from 'lucide-vue-next'
 import type { OverviewStats } from '../../shared/types'
 import { tokens } from '../design/tokens'
+import { ui } from '../stores/ui'
 import { message } from 'ant-design-vue'
+import { t, tf } from '../i18n'
 
 const stats = ref<OverviewStats | null>(null)
 const error = ref('')
@@ -26,13 +28,18 @@ const textDim = computed(() => tokens.color.textTertiary)
 const barMax = computed(() => Math.max(1, ...(stats.value?.days.map((d) => d.ms) ?? [1])))
 const maxGameMs = computed(() => Math.max(1, ...(stats.value?.topGames.map((g) => g.ms) ?? [1])))
 
+/** 空态引导 CTA：跳回游戏库（用户要去那儿启动游戏才会产生记录） */
+function goLibrary(): void {
+  ui.page = 'library'
+}
+
 function fmtDur(ms: number): string {
-  if (ms <= 0) return '0 分钟'
+  if (ms <= 0) return tf('dp_minutes', { m: 0 })
   const h = Math.floor(ms / 3600000)
   const m = Math.floor((ms % 3600000) / 60000)
-  if (h <= 0) return `${m} 分钟`
-  if (m === 0) return `${h} 小时`
-  return `${h} 小时 ${m} 分钟`
+  if (h <= 0) return tf('dp_minutes', { m })
+  if (m === 0) return tf('st_hour', { h })
+  return tf('dp_hours_min', { h, m })
 }
 
 function fmtShort(ms: number): string {
@@ -43,7 +50,19 @@ function fmtShort(ms: number): string {
   return `${h}h${m > 0 ? m : ''}`
 }
 
-/** 柱状图：30 根竖条 + hover 提示 */
+/** 柱状图：30 根竖条 + hover 提示。
+ *  内插的 d.date / g.title 来自统计与刮削源（用户可控），先转义再拼 SVG，
+ *  不能直接进 v-html——否则一条 `<img onerror>` 或 `<foreignObject>` 标题就能
+ *  在统计页注入内容（CSP 兜底但别依赖它）。 */
+function esc(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
 function barChart(): string {
   const days = stats.value?.days ?? []
   const W = 640
@@ -56,11 +75,11 @@ function barChart(): string {
     const y = H - h - 8
     return `<g>
       <rect x="${x}" y="${y}" width="${bw - 2}" height="${h}" rx="2" fill="${accent.value}" opacity="0.85">
-        <title>${d.date} · ${fmtShort(d.ms)}</title>
+        <title>${esc(d.date)} · ${fmtShort(d.ms)}</title>
       </rect>
     </g>`
   })
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="近 30 天游玩时长柱状图">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${t('st_aria_bars')}">
     ${parts.join('')}
   </svg>`
 }
@@ -75,14 +94,14 @@ function topBars(): string {
     const y = i * 26
     const label = g.title.length > 14 ? g.title.slice(0, 14) + '…' : g.title
     return `<g>
-      <text x="0" y="${y + 15}" font-size="12" fill="${textDim.value}">${label}</text>
+      <text x="0" y="${y + 15}" font-size="12" fill="${textDim.value}">${esc(label)}</text>
       <rect x="150" y="${y + 4}" width="${w}" height="14" rx="3" fill="${accent.value}" opacity="0.8">
-        <title>${g.title} · ${fmtDur(g.ms)}</title>
+        <title>${esc(g.title)} · ${fmtDur(g.ms)}</title>
       </rect>
       <text x="496" y="${y + 15}" font-size="11" fill="${textDim.value}">${fmtShort(g.ms)}</text>
     </g>`
   })
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="游戏时长排行">
+  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${t('st_aria_rank')}">
     ${parts.join('')}
   </svg>`
 }
@@ -114,7 +133,7 @@ function drawPosterPng(): string {
   const innerW = W - PAD * 2
   const font = `"PingFang SC","Microsoft YaHei","Segoe UI",sans-serif`
   const now = new Date()
-  const dateStr = `${now.getFullYear()} 年 ${now.getMonth() + 1} 月 ${now.getDate()} 日`
+  const dateStr = tf('st_date', { y: now.getFullYear(), m: now.getMonth() + 1, d: now.getDate() })
 
   const canvas = document.createElement('canvas')
   canvas.width = W
@@ -144,18 +163,18 @@ function drawPosterPng(): string {
   ctx.textAlign = 'left'
   ctx.fillStyle = text
   ctx.font = `800 38px ${font}`
-  ctx.fillText('游玩统计', PAD, 96)
+  ctx.fillText(t('st_title'), PAD, 96)
   ctx.fillStyle = dim
   ctx.font = `14px ${font}`
-  ctx.fillText(`${dateStr} · 近 30 天数据`, PAD, 130)
+  ctx.fillText(tf('st_poster_sub', { date: dateStr }), PAD, 130)
 
   // KPI 卡片：5 张横排
   const kpis: [string, string][] = [
-    ['今日', fmtDur(s.todayMs)],
-    ['近 7 天', fmtDur(s.weekMs)],
-    ['近 30 天', fmtDur(s.monthMs)],
-    ['累计', fmtDur(s.totalMs)],
-    ['玩过', `${s.playedGames} 款`],
+    [t('st_today'), fmtDur(s.todayMs)],
+    [t('st_week7'), fmtDur(s.weekMs)],
+    [t('st_month30'), fmtDur(s.monthMs)],
+    [t('st_total'), fmtDur(s.totalMs)],
+    [t('st_played'), tf('st_played_n', { n: s.playedGames })],
   ]
   const kpiW = (innerW - 4 * 14) / 5
   kpis.forEach(([label, val], i) => {
@@ -205,11 +224,11 @@ function drawPosterPng(): string {
   ctx.textAlign = 'left'
   ctx.fillStyle = text
   ctx.font = `700 18px ${font}`
-  ctx.fillText('近 30 天每日时长', PAD, 540)
+  ctx.fillText(t('st_daily'), PAD, 540)
   ctx.fillStyle = dim
   ctx.font = `12px ${font}`
   ctx.textAlign = 'right'
-  ctx.fillText('今日高亮', W - PAD, 540)
+  ctx.fillText(t('st_today_highlight'), W - PAD, 540)
 
   // Top5 排行
   const top = s.topGames.slice(0, 5)
@@ -218,7 +237,7 @@ function drawPosterPng(): string {
   ctx.fillStyle = text
   ctx.textAlign = 'left'
   ctx.font = `700 18px ${font}`
-  ctx.fillText('游戏时长排行 Top5', PAD, 856)
+  ctx.fillText(t('st_rank5'), PAD, 856)
   top.forEach((g, i) => {
     const w = Math.max(6, (g.ms / maxTop) * rankW)
     const y = 880 + i * 44
@@ -253,7 +272,7 @@ function drawPosterPng(): string {
   ctx.fillStyle = dim
   ctx.font = `11px ${font}`
   ctx.textAlign = 'right'
-  ctx.fillText('由 HaneHana 生成 · hanehana.app', W - PAD, H - 40)
+  ctx.fillText(t('st_watermark'), W - PAD, H - 40)
 
   return canvas.toDataURL('image/png')
 }
@@ -263,15 +282,15 @@ async function exportPoster(): Promise<void> {
   posterBusy.value = true
   try {
     const dataUrl = drawPosterPng()
-    if (!dataUrl) throw new Error('海报渲染失败')
+    if (!dataUrl) throw new Error(t('st_render_fail'))
     const r = await window.hh.exportStatsPoster(dataUrl)
     if (!r.ok) {
-      message.error(r.error || '海报导出失败')
+      message.error(r.error || t('st_poster_fail'))
     } else if (!r.canceled && r.path) {
-      message.success(`海报已保存：${r.path}`)
+      message.success(tf('st_poster_saved', { path: r.path }))
     }
   } catch (e) {
-    message.error(`海报导出失败：${e instanceof Error ? e.message : String(e)}`)
+    message.error(tf('st_poster_fail_detail', { msg: e instanceof Error ? e.message : String(e) }))
   } finally {
     posterBusy.value = false
   }
@@ -283,13 +302,37 @@ async function exportPoster(): Promise<void> {
     <div v-if="error" class="error-banner glass">{{ error }}</div>
     <div v-if="!stats && !error" class="empty glass">
       <BarChart3 class="empty-icon" :size="36" :stroke-width="1.5" />
-      <div class="empty-text">正在统计游玩时长…</div>
+      <div class="empty-text">{{ t('st_loading') }}</div>
     </div>
     <template v-else-if="stats">
+      <!-- 空态引导：库里一款都没玩过时，5 个 KPI 全是 0、柱状图全平，
+           一屏数字没有任何信息量。换成「怎么开始记录」的引导，
+           把用户带到真正能产生数据的地方（启动游戏 / 扫描入库）。 -->
+      <div v-if="stats.totalMs <= 0 && stats.playedGames === 0" class="empty-guide glass">
+        <BarChart3 class="guide-ic" :size="40" :stroke-width="1.5" />
+        <div class="guide-title">{{ t('st_empty_title') }}</div>
+        <div class="guide-hint">{{ t('st_empty_hint') }}</div>
+        <div class="guide-steps">
+          <div class="guide-step">
+            <span class="step-num num">1</span>
+            <span>{{ t('st_empty_step1') }}</span>
+          </div>
+          <div class="guide-step">
+            <span class="step-num num">2</span>
+            <span>{{ t('st_empty_step2') }}</span>
+          </div>
+          <div class="guide-step">
+            <span class="step-num num">3</span>
+            <span>{{ t('st_empty_step3') }}</span>
+          </div>
+        </div>
+        <button class="guide-cta" @click="goLibrary">{{ t('st_empty_cta') }}</button>
+      </div>
+      <template v-else>
       <div class="stats-head">
-        <div class="stats-title">游玩统计</div>
+        <div class="stats-title">{{ t('st_title') }}</div>
         <button class="poster-btn" :disabled="posterBusy" @click="exportPoster">
-          <ImageDown :size="14" /> {{ posterBusy ? '生成中…' : '导出海报' }}
+          <ImageDown :size="14" /> {{ posterBusy ? t('st_poster_busy') : t('st_export_poster') }}
         </button>
       </div>
       <div class="kpi-row">
@@ -297,48 +340,49 @@ async function exportPoster(): Promise<void> {
           <Clock :size="16" class="kpi-ic" />
           <div>
             <div class="kpi-num">{{ fmtDur(stats.todayMs) }}</div>
-            <div class="kpi-label">今日</div>
+            <div class="kpi-label">{{ t('st_today') }}</div>
           </div>
         </div>
         <div class="kpi glass">
           <Clock :size="16" class="kpi-ic" />
           <div>
             <div class="kpi-num">{{ fmtDur(stats.weekMs) }}</div>
-            <div class="kpi-label">近 7 天</div>
+            <div class="kpi-label">{{ t('st_week7') }}</div>
           </div>
         </div>
         <div class="kpi glass">
           <Clock :size="16" class="kpi-ic" />
           <div>
             <div class="kpi-num">{{ fmtDur(stats.monthMs) }}</div>
-            <div class="kpi-label">近 30 天</div>
+            <div class="kpi-label">{{ t('st_month30') }}</div>
           </div>
         </div>
         <div class="kpi glass">
           <Trophy :size="16" class="kpi-ic" />
           <div>
             <div class="kpi-num">{{ fmtDur(stats.totalMs) }}</div>
-            <div class="kpi-label">累计</div>
+            <div class="kpi-label">{{ t('st_total') }}</div>
           </div>
         </div>
         <div class="kpi glass">
           <Gamepad2 :size="16" class="kpi-ic" />
           <div>
-            <div class="kpi-num">{{ stats.playedGames }} 款</div>
-            <div class="kpi-label">玩过</div>
+            <div class="kpi-num">{{ tf('st_played_n', { n: stats.playedGames }) }}</div>
+            <div class="kpi-label">{{ t('st_played') }}</div>
           </div>
         </div>
       </div>
 
       <div class="panel glass">
-        <div class="panel-title">近 30 天每日时长</div>
+        <div class="panel-title">{{ t('st_daily') }}</div>
         <div class="chart-wrap" v-html="barChart()"></div>
       </div>
 
       <div class="panel glass" v-if="stats.topGames.length">
-        <div class="panel-title">游戏时长排行（近 90 天）</div>
+        <div class="panel-title">{{ t('st_rank90') }}</div>
         <div class="chart-wrap" v-html="topBars()"></div>
       </div>
+      </template>
     </template>
   </div>
 </template>
@@ -351,6 +395,72 @@ async function exportPoster(): Promise<void> {
   flex-direction: column;
   gap: 12px;
   padding-bottom: 16px;
+}
+/* 空态引导卡：替代全 0 的 KPI + 全平的柱状图 */
+.empty-guide {
+  margin: 48px auto;
+  max-width: 460px;
+  padding: 40px 36px;
+  text-align: center;
+  border-radius: var(--hh-radius-panel);
+}
+.guide-ic {
+  color: var(--hh-color-accent);
+  opacity: 0.75;
+  margin-bottom: 14px;
+}
+.guide-title {
+  font-size: var(--hh-font-subtitle-size);
+  font-weight: 700;
+  color: var(--hh-color-text-glow);
+  margin-bottom: 8px;
+}
+.guide-hint {
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-mid);
+  margin-bottom: 22px;
+}
+.guide-steps {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  text-align: left;
+  margin-bottom: 24px;
+}
+.guide-step {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-secondary);
+}
+.step-num {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.guide-cta {
+  height: 34px;
+  padding: 0 24px;
+  border: none;
+  border-radius: var(--hh-radius-md);
+  background: var(--hh-color-accent);
+  color: var(--hh-color-on-accent);
+  font-size: var(--hh-font-body-size);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--hh-motion-med) ease;
+}
+.guide-cta:hover {
+  background: var(--hh-color-accent-hover);
 }
 .stats-head {
   display: flex;
@@ -376,8 +486,13 @@ async function exportPoster(): Promise<void> {
   font-size: 12.5px;
   cursor: pointer;
 }
-.poster-btn:hover { background: var(--hh-color-surface-mid); }
-.poster-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.poster-btn:hover {
+  background: var(--hh-color-surface-mid);
+}
+.poster-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .kpi-row {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
@@ -390,9 +505,20 @@ async function exportPoster(): Promise<void> {
   padding: 14px 16px;
   border-radius: var(--hh-radius-lg);
 }
-.kpi-ic { color: var(--hh-color-accent); flex: none; }
-.kpi-num { font-size: 17px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--hh-color-text-glow); }
-.kpi-label { font-size: 11.5px; color: var(--hh-color-text-tertiary); }
+.kpi-ic {
+  color: var(--hh-color-accent);
+  flex: none;
+}
+.kpi-num {
+  font-size: 17px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--hh-color-text-glow);
+}
+.kpi-label {
+  font-size: 11.5px;
+  color: var(--hh-color-text-tertiary);
+}
 .panel {
   border-radius: var(--hh-radius-panel);
   padding: 14px 16px;
@@ -403,8 +529,12 @@ async function exportPoster(): Promise<void> {
   color: var(--hh-color-text-strong);
   margin-bottom: 10px;
 }
-.chart-wrap { width: 100%; }
-.chart-wrap :deep(svg) { display: block; }
+.chart-wrap {
+  width: 100%;
+}
+.chart-wrap :deep(svg) {
+  display: block;
+}
 .empty {
   margin: 60px auto;
   max-width: 360px;
@@ -412,8 +542,14 @@ async function exportPoster(): Promise<void> {
   text-align: center;
   border-radius: var(--hh-radius-panel);
 }
-.empty-icon { color: var(--hh-color-text-tertiary); margin-bottom: 10px; }
-.empty-text { font-size: var(--hh-font-body-size); color: var(--hh-color-text-mid); }
+.empty-icon {
+  color: var(--hh-color-text-tertiary);
+  margin-bottom: 10px;
+}
+.empty-text {
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-mid);
+}
 .error-banner {
   padding: 10px 14px;
   border-radius: var(--hh-radius-md);

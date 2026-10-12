@@ -14,26 +14,40 @@
  *   - 标题栏：titleBarStyle: 'hidden' + titleBarOverlay 保留系统三个按钮，
  *     渲染层用 app-region: drag 画自定义标题栏。
  */
-import { app, BrowserWindow, dialog, Menu, nativeImage, nativeTheme, Notification, powerSaveBlocker, protocol, shell, Tray } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  Notification,
+  powerSaveBlocker,
+  protocol,
+  shell,
+  Tray,
+} from 'electron'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { Ipc } from '../shared/ipc'
 import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
-import type { TaskProgressPush, TaskRow } from '../shared/types'
-import { loadGames, getGames, ensureCoversDir } from './gameStore'
+import type { TaskProgressPush, TaskRow, TrackCheckResult } from '../shared/types'
+import { loadGames, getGames, ensureCoversDir, flushPersist } from './gameStore'
 import { detachAllRunning, setSessionSink, setCrashNotifier, setAutoBackup, setToolPaths } from './games'
 import { createSnapshot, rotateSnapshots } from './saves'
 import { engineStatus } from './engine'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
+import { backfillLocalCovers } from './localCover'
+import { healBadCovers } from './coverHeal'
 import { Manager } from './manager'
 import { Store, dataDir } from './store'
 import { applyChromiumProxy } from './netConfig'
 import { TRAY_ICON_DATA_URL } from './trayIcon'
 import { checkUpdate, initAutoUpdater, setUpdatePush } from './updater'
+import { installMainLogger } from './log'
 import { wireSites } from './sites/bridge'
 import { checkTracks } from './tracking'
-import type { TrackCheckResult } from '../shared/types'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerWinHandlers } from './ipc/win'
 import { registerScanHandlers } from './ipc/scan'
@@ -78,8 +92,31 @@ if (!gotSingleInstanceLock) {
 let win: BrowserWindow | null = null
 let tray: Tray | null = null
 let trayTimer: ReturnType<typeof setInterval> | null = null
+let trackTimer: ReturnType<typeof setInterval> | null = null
 let store: Store
 let manager: Manager
+
+// 全局窗口拦截：主窗口的 setWindowOpenHandler 只覆盖它自己，游戏站页签的
+// webview（allowpopups）开的客人窗口是另一组 WebContents——不给它同样约束，
+// 被嵌入的站点页面就能 `window.open` 出一个不受控的 Electron 窗口。
+// 统一规则：只放 https/http 外链到系统浏览器，其余（javascript:、file:、
+// 自定义协议）一律拒绝；跨协议降级（https→http）也在这里拒绝。
+// `web-contents-created` 是 app 级事件，对主窗口、webview 客人窗口、DevTools
+// 全部生效，一处约束管住所有 WebContents。
+app.on('web-contents-created', (_e, contents) => {
+  contents.setWindowOpenHandler(({ url }) => {
+    try {
+      const u = new URL(url)
+      if (u.protocol === 'https:' || u.protocol === 'http:') {
+        void shell.openExternal(url)
+      }
+      // 其它协议（javascript:/file:/data:/自定义）不开任何东西
+    } catch {
+      // URL 解析不了同样拒绝
+    }
+    return { action: 'deny' }
+  })
+})
 
 function showWindow(): void {
   if (!win || win.isDestroyed()) {
@@ -94,7 +131,10 @@ function showWindow(): void {
 /** 新作追踪命中通知（手动检查与定时检查共用）：有新作才弹，点击回到窗口。 */
 function notifyTrackFresh(r: TrackCheckResult): void {
   if (!r.ok || !r.fresh.length || !Notification.isSupported()) return
-  const names = r.fresh.slice(0, 3).map((h) => h.title).join('、')
+  const names = r.fresh
+    .slice(0, 3)
+    .map((h) => h.title)
+    .join('、')
   const n = new Notification({
     title: 'HaneHana 新作追踪',
     body: `发现 ${r.fresh.length} 部新作：${names}${r.fresh.length > 3 ? '…' : ''}`,
@@ -157,6 +197,15 @@ function createWindow(): void {
     },
   }
 
+  // 开发模式没有 exe 资源可嵌，不显式设图标的话任务栏/Alt-Tab 显示 Electron
+  // 默认蓝原子。指向 build/icon.ico（dev 下源在 out/main，往上两级即 app/）；
+  // 打包后图标由 electron-builder 嵌进 exe（electron-builder.yml win.icon），
+  // 那时文件不在包内、这里返回空图，就不设，避免把 exe 图标盖成空白。
+  if (!app.isPackaged) {
+    const devIcon = nativeImage.createFromPath(join(here, '../../build/icon.ico'))
+    if (!devIcon.isEmpty()) winOpts.icon = devIcon
+  }
+
   win = new BrowserWindow(winOpts)
   // 三态：system 模式跟随系统当前深浅（而不是写死的 initialDark）
   const effDark = applyThemeMode(store ? store.loadSettings().theme_mode : 'dark')
@@ -177,6 +226,22 @@ function createWindow(): void {
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:\/\//i.test(url)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  // 主窗口整窗导航白名单（纵深防御）：渲染层若有 XSS（当前 CSP 已把攻击面
+  // 压得很小），window.location 能把整窗带去钓鱼页/file:// 页面而没有任何
+  // 拦截。这里只放打包入口（file:// 的 index.html）与 dev server
+  // （localhost/127.0.0.1 的 Vite），其余导航一律阻止。webview 内的站点
+  // 页签导航是功能语义，不在这里、由各自 WebContents 自行驱动。
+  win.webContents.on('will-navigate', (e, url) => {
+    try {
+      const u = new URL(url)
+      const devHost = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
+      const ok = u.protocol === 'file:' || ((u.protocol === 'http:' || u.protocol === 'https:') && devHost)
+      if (!ok) e.preventDefault()
+    } catch {
+      e.preventDefault()
+    }
   })
 
   // 全屏状态变化：同步给渲染层（点系统手势 / Esc / 切走再切回都要一致）
@@ -308,9 +373,7 @@ function notifyTerminal(row: TaskRow): void {
       : /\.(zip|7z|rar)$/i.test(dest)
         ? '，解压后可用「扫描」导入游戏库'
         : ''
-    const where = total
-      ? `已保存到 ${dirname(dest)}（${fmtSize(total)}）`
-      : `已保存到 ${dirname(dest)}`
+    const where = total ? `已保存到 ${dirname(dest)}（${fmtSize(total)}）` : `已保存到 ${dirname(dest)}`
     notify(frontmost, `${name} 下载完成`, `${where}${hint}`, row.id)
   } else if (st === 'error' && s.notify_on_error) {
     // 原文和码取自同一份记录（理由同 TaskRow 的 err）：混着取会在
@@ -320,12 +383,7 @@ function notifyTerminal(row: TaskRow): void {
       ? { raw: snap.error, code: snap.error_code, params: snap.error_params }
       : { raw: row.def.error, code: row.def.error_code ?? '', params: row.def.error_params ?? null }
     const e = explainError(src.raw, src.code, src.params)
-    notify(
-      frontmost,
-      `${name} 下载失败`,
-      e ? `${e.title}。${e.advice}` : '点开任务查看原因。',
-      row.id,
-    )
+    notify(frontmost, `${name} 下载失败`, e ? `${e.title}。${e.advice}` : '点开任务查看原因。', row.id)
   }
   // 窗口不在前台时让任务栏图标闪起来：toast 会被自动收起，闪动的图标是第二次提醒。
   if (!frontmost && win && !win.isDestroyed()) win.flashFrame(true)
@@ -381,6 +439,12 @@ function quit(): void {
     clearInterval(trayTimer)
     trayTimer = null
   }
+  // 新作追踪定时器：不随退出清理的话，process 离开后它仍会跑，虽不致命
+  // 但会在退出间隙再发起一轮 VNDB 请求（还可能触发通知）。
+  if (trackTimer) {
+    clearInterval(trackTimer)
+    trackTimer = null
+  }
   releaseKeepAwake()
   manager?.shutdown()
   tray?.destroy()
@@ -390,11 +454,23 @@ function quit(): void {
 
 if (gotSingleInstanceLock) {
   void app.whenReady().then(() => {
+    // 主进程日志落盘（userData/logs/）：放在最早，把启动早期的事件也记上
+    installMainLogger()
     loadGames()
     ensureCoversDir()
     protocol.handle('hh', handleHhProtocol)
-    // 启动后串行回填缺缩略图/主色的条目（逐张生成，不阻塞启动）
-    backfillThumbs(getGames())
+    // 封面自愈先行：清掉库里已落盘的残图/纯色废图（旧版无质量闸时混进
+    // 来的黑条横幅之类），再让回填重新选到好图。逐张校验、每张之间让出
+    // 事件循环，不挡首帧；两个 backfill 在自愈完成后才排队，避免拿废图
+    // 先生成一轮缩略图再推翻。
+    void healBadCovers(getGames()).then(() => {
+      // 启动后串行回填缺缩略图/主色的条目（逐张生成，不阻塞启动）。
+      // backfillThumbs 按设计串行执行（每张生成是独立排队任务），同一批游戏调用
+      // 两次只是把同一份工作排队两遍，没有任何收益，这里只调一次。
+      backfillThumbs(getGames())
+      // 库里还没有封面的条目：先探测游戏目录本地图，再让 thumb 管线接上
+      backfillLocalCovers(getGames())
+    })
     store = new Store()
     // 引擎自检：缺失只记日志 + 设置页提示，不拦启动。游戏库、刮削、启动游戏
     // 都不需要引擎，为它挡下整个应用是把小问题变成大问题。
@@ -418,19 +494,19 @@ if (gotSingleInstanceLock) {
       pushQueue.set(p.taskId, { ...p, snapshot: p.snapshot })
       if (!pushTimer) pushTimer = setTimeout(flushPush, PUSH_WINDOW_MS)
     }
-    manager = new Manager(
-      initialSettings,
-      onPushCoalesced,
-      (tasks) => store.saveTasks(tasks),
-      initialDefs,
-    )
+    manager = new Manager(initialSettings, onPushCoalesced, (tasks) => store.saveTasks(tasks), initialDefs)
     // 游玩会话记录：游戏退出时 store 追加一条（统计报表的数据源）
     setSessionSink((sessions) => {
       if (sessions.length) store.appendPlaySessions(sessions)
     })
     // 异常退出（崩溃/被杀）：弹系统通知，玩家第一时间知道「刚才那游戏不是正常关的」
     setCrashNotifier(({ title }) => {
-      notify(false, `${title} 可能异常退出`, '游戏进程非正常结束（崩溃或被杀）。如果频繁发生，试试用 LE 转区或以管理员身份运行。', 'crash')
+      notify(
+        false,
+        `${title} 可能异常退出`,
+        '游戏进程非正常结束（崩溃或被杀）。如果频繁发生，试试用 LE 转区或以管理员身份运行。',
+        'crash',
+      )
     })
     // 存档自动备份（G1）：游戏正常退出后台跑快照（仅备份开了开关的游戏）。
     // 快照会读盘+算哈希，几 MB 存档毫秒级，直接 await 不阻塞主循环。
@@ -473,12 +549,15 @@ if (gotSingleInstanceLock) {
     // tracking.ts 内部做互斥，手动「立即检查」与定时检查并发时自动合并。
     // 测试缝 HANEHANA_TRACK_INTERVAL_MS：验收脚本设短间隔驱动定时触发（生产不设）。
     const trackIntervalMs = Number(process.env.HANEHANA_TRACK_INTERVAL_MS)
-    setInterval(() => {
-      void (async () => {
-        const r = await checkTracks()
-        notifyTrackFresh(r)
-      })()
-    }, Number.isFinite(trackIntervalMs) && trackIntervalMs > 0 ? trackIntervalMs : 3600000)
+    trackTimer = setInterval(
+      () => {
+        void (async () => {
+          const r = await checkTracks()
+          notifyTrackFresh(r)
+        })()
+      },
+      Number.isFinite(trackIntervalMs) && trackIntervalMs > 0 ? trackIntervalMs : 3600000,
+    )
     // 跟随系统：系统深浅切换时实时同步窗口 + 渲染层（theme_mode='system' 才有效，
     // 固定深浅时 themeSource 已锁定，'updated' 不会因设置而触发）。
     nativeTheme.on('updated', () => {
@@ -521,7 +600,15 @@ app.on('before-quit', () => {
     clearInterval(trayTimer)
     trayTimer = null
   }
+  if (trackTimer) {
+    clearInterval(trackTimer)
+    trackTimer = null
+  }
   releaseKeepAwake()
   manager?.shutdown()
   detachAllRunning()
+  // 合并写入的 400ms 定时器可能还没到期：退出前把待写内容同步落盘，
+  // 不丢最后一批更新（回填时长/字段变更/任务状态/游玩会话）。
+  flushPersist()
+  store?.flush()
 })

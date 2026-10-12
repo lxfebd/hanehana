@@ -25,15 +25,21 @@ const send = (method, params = {}) =>
   })
 const evalJs = async (expr) => {
   const res = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-  if (res.result?.exceptionDetails) return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
+  if (res.result?.exceptionDetails)
+    return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
   return res.result?.result?.value
 }
 
 let passed = 0
 let failed = 0
 const check = (name, cond, detail = '') => {
-  if (cond) { passed++; console.log(`PASS  ${name}`) }
-  else { failed++; console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`) }
+  if (cond) {
+    passed++
+    console.log(`PASS  ${name}`)
+  } else {
+    failed++
+    console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`)
+  }
 }
 
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -66,10 +72,16 @@ check('空态文案显示', typeof emptyText === 'string' && emptyText.includes(
 
 // 5. 过滤器（全部/下载中/已暂停/已完成/失败）— segmented chip 行（§5.5）
 const filters = await evalJs(`[...document.querySelectorAll('.seg-chip')].map(e => e.textContent.trim()).join('|')`)
-check('状态过滤器齐全', typeof filters === 'string' && ['全部', '下载中', '已暂停', '已完成', '失败'].every((f) => filters.includes(f)), String(filters))
+check(
+  '状态过滤器齐全',
+  typeof filters === 'string' && ['全部', '下载中', '已暂停', '已完成', '失败'].every((f) => filters.includes(f)),
+  String(filters),
+)
 
 // 6. 新建下载按钮存在（打开弹窗）
-const hasAddBtn = await evalJs(`[...document.querySelectorAll('button')].some(b => b.title === '新建下载' || b.textContent.includes('新建下载'))`)
+const hasAddBtn = await evalJs(
+  `[...document.querySelectorAll('button')].some(b => b.title === '新建下载' || b.textContent.includes('新建下载'))`,
+)
 check('新建下载按钮存在', hasAddBtn === true)
 await evalJs(`[...document.querySelectorAll('button')].find(b => b.title === '新建下载')?.click()`)
 await wait(600)
@@ -84,7 +96,11 @@ await wait(600)
 const settingsTitle = await evalJs(`document.querySelector('.ant-modal-title')?.textContent ?? ''`)
 check('设置弹窗打开', String(settingsTitle).includes('偏好设置'), String(settingsTitle))
 const tabs = await evalJs(`[...document.querySelectorAll('.ant-tabs-tab')].map(e => e.textContent.trim()).join('|')`)
-check('设置页签齐全（含「关于」）', typeof tabs === 'string' && ['下载', '通知', '网络', '外观', '关于'].every((t) => tabs.includes(t)), String(tabs))
+check(
+  '设置页签齐全（含「关于」）',
+  typeof tabs === 'string' && ['下载', '通知', '网络', '外观', '关于'].every((t) => tabs.includes(t)),
+  String(tabs),
+)
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)
 ws.close()

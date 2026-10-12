@@ -66,6 +66,10 @@ use state::Bucket;
 
 const MIN_SEGMENT: u64 = 256 * 1024;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
+/// 边车（`.part.meta`）写入的最小间隔：on_tick 每 100ms 走一次，而 save_sidecar
+/// 是阻塞的 std::fs 写 + fsync + rename，10 次/秒会把 runtime 线程卡在磁盘上、
+/// 拖住所有 worker 的 tick。按时间降频，进度水位仍是最终一致的。
+const SIDECAR_INTERVAL: Duration = Duration::from_secs(1);
 /// 指数退避封顶。重试次数不再封顶：下载任务应该无限重连，断多久都能续上。
 const RETRY_BACKOFF_CAP: u64 = 30;
 /// 引擎是长驻进程：每次 `probe` 建一个新任务并领一个递增代号。后台校验等异步结果
@@ -121,6 +125,10 @@ struct Task {
     /// 每次 run 递增。被取消的 worker 看到代际变化就退出，避免恢复时
     /// 出现两个 worker 同时写同一段。
     gen: usize,
+    /// 上次写边车的时刻。on_tick 每 100ms 想写一次时先看它，距上次不足
+    /// SIDECAR_INTERVAL 就跳过——进度水位允许最多滞后 1 秒，换取不把
+    /// runtime 线程卡在 fsync 上。
+    last_sidecar: Instant,
 }
 
 impl Task {
@@ -188,7 +196,46 @@ impl Task {
         }
     }
 
-    fn save_sidecar(&self) {
+    /// 按时间降频写边车：距上次不足 SIDECAR_INTERVAL 直接跳过（水位滞后 ≤1s，
+    /// 断点续传依旧安全——边车只记已 fsync 的水位，重启后最多从 1 秒前的位置续）。
+    /// 具体落盘走 spawn_blocking：std::fs 写 + sync_all 是阻塞 IO，直接放在
+    /// async 上下文里会占住 runtime 线程（每 100ms tick 一次就卡一次）。
+    fn save_sidecar(&mut self) {
+        if self.last_sidecar.elapsed() < SIDECAR_INTERVAL {
+            return;
+        }
+        self.last_sidecar = Instant::now();
+        let obj = self.sidecar_json();
+        let path = self.sidecar_path();
+        let tmp = format!("{path}.tmp");
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut f) = std::fs::File::create(&tmp) {
+                if f.write_all(obj.to_string().as_bytes()).is_ok() {
+                    let _ = f.sync_all();
+                    let _ = std::fs::rename(&tmp, path);
+                }
+            }
+        });
+    }
+
+    /// 立即落盘边车（不受 SIDECAR_INTERVAL 限频）：暂停/停止/清进度这些
+    /// 「之后一段时间不会再有 tick」的时刻必须把当前水位写死，否则降频
+    /// 会把最后一次进度留在旧边车里，重启后续传从 1 秒前的位置开始。
+    fn save_sidecar_now(&mut self) {
+        let obj = self.sidecar_json();
+        let path = self.sidecar_path();
+        let tmp = format!("{path}.tmp");
+        let _ = tokio::task::spawn_blocking(move || {
+            if let Ok(mut f) = std::fs::File::create(&tmp) {
+                if f.write_all(obj.to_string().as_bytes()).is_ok() {
+                    let _ = f.sync_all();
+                    let _ = std::fs::rename(&tmp, path);
+                }
+            }
+        });
+    }
+
+    fn sidecar_json(&self) -> serde_json::Value {
         let mut m = serde_json::Map::new();
         for s in &self.segments {
             // 只记已落盘的水位。记 `downloaded` 的话，进程被强杀/断电后续传会跳过
@@ -196,18 +243,11 @@ impl Task {
             // 解包时才暴露。
             m.insert(s.index.to_string(), json!(s.flushed.min(s.downloaded)));
         }
-        let obj = json!({
+        json!({
             "url": self.url, "total": self.total,
             "threads": self.segments.len(), "segments": m,
             "part_len": self.total,
-        });
-        let tmp = format!("{}.tmp", self.sidecar_path());
-        if let Ok(mut f) = std::fs::File::create(&tmp) {
-            if f.write_all(obj.to_string().as_bytes()).is_ok() {
-                let _ = f.sync_all();
-                let _ = std::fs::rename(&tmp, self.sidecar_path());
-            }
-        }
+        })
     }
 
     fn load_sidecar(&self) -> Option<Value> {
@@ -232,7 +272,11 @@ impl Task {
     /// 所以这条路径不支持断点续传：偏移一律清零，从 0 重下。
     async fn ensure_part(&mut self) -> Result<(), FetchErr> {
         let p = self.tmp_path();
-        if let Some(parent) = Path::new(&p).parent() {
+        // 相对路径的 dest（如 `downloads/file.zip`）`parent()` 是空串 `""`，
+        // create_dir_all("") 在 Windows 上直接报错、把本可用的相对路径判成
+        // fatal——空 parent 说明文件就在当前目录，不需要建任何目录。
+        let parent = Path::new(&p).parent().filter(|d| !d.as_os_str().is_empty());
+        if let Some(parent) = parent {
             tokio::fs::create_dir_all(parent).await.map_err(part_io_err)?;
         }
         let meta_before = tokio::fs::metadata(&p).await.ok();
@@ -263,7 +307,7 @@ impl Task {
                 s.status = "waiting".into();
             }
             self.stream_done = false;
-            self.save_sidecar();
+            self.save_sidecar_now();
         }
         Ok(())
     }
@@ -582,7 +626,10 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                         return;
                     }
                 } else {
-                    zrestart_streak = 0;
+                    // 非 restart_from_zero 的错误不清零 zrestart_streak：交替出现
+                    // 「网络抖动（重试后成功）→ 服务器无视 Range」时，若每次非 restart
+                    // 错误都清零，zrestart_streak 永远到不了 MAX_ZRESTART，任务在
+                    // 「重下整段 → 断线 → 重下整段」里无限空转。只有真正成功才清零。
                 }
                 // 可恢复的错误也必须让 UI 看见：以前这里只有 fatal 分支会写
                 // `g.error`，于是断线、截断这些还在重试的情况 UI 一直是空白的，
@@ -914,6 +961,21 @@ async fn handle(
 ) {
     match cmd.cmd.as_str() {
         "probe" => {
+            // 换任务前先停掉旧任务：探测新 URL 时旧 worker 可能还在下载，
+            // 不取消它就会白烧带宽、旧 `.part` 永不 finalize（新任务会覆盖
+            // 同一个 task 槽，旧 Arc 的 worker 却还活着）。换代 + 置 cancelled
+            // 让旧 worker 在下一个 tick 退出；旧任务的进度快照随即停更。
+            if let Some(prev) = task.clone() {
+                let mut p = prev.lock().await;
+                p.gen += 1;
+                p.cancelled.store(true, Ordering::Relaxed);
+                p.paused.store(true, Ordering::Relaxed);
+                if p.state == "downloading" {
+                    p.state = "idle".into();
+                    p.clear_error();
+                    p.speed = 0.0;
+                }
+            }
             // 第一条应答的形状不能改：主进程靠 `state=="preparing"` 区分「还在探测」，
             // 且这条里的 total 是上一轮继承的旧值——任何依赖 total 的放行
             // 只能落在下面那条 `state == "idle"` 的完整快照上。
@@ -981,6 +1043,7 @@ async fn handle(
                 paused: Arc::new(AtomicBool::new(false)),
                 cancelled: Arc::new(AtomicBool::new(false)),
                 gen: 0,
+                last_sidecar: Instant::now(),
             };
             t.build_segments();
             let snap = t.snapshot();
@@ -1011,8 +1074,11 @@ async fn handle(
                     // （主循环那边也会丢掉通道），留着会把新一次下载的收尾卡死。
                     g.verifying = false;
                     // 已完成后再收到 run/resume：绝不能重建全零 .part 再 rename 覆盖成品。
-                    // 先看成品在不在、大小对不对：在就把状态置回 done 并发一条 done（幂等），
-                    // 不在（成品被删/损坏）才把偏移清零、老老实实从头下。
+                    // 先看成品在不在、大小对不对：在就把状态置回 done 并发一条 done（幂等）。
+                    // 不在（成品被删/损坏）时**先看 .part 是否完好**：若 all_done 但 dest
+                    // 还没生成（校验中被 run/resume 打断的典型场景），.part 是完整的——
+                    // 直接按「全部段完成」续跑，on_tick 会走 finalize 收尾，而不是把
+                    // 几十 GB 的进度清零从头再下一遍。
                     if g.all_done() {
                         let dest_ok = tokio::fs::metadata(&g.dest)
                             .await
@@ -1024,14 +1090,23 @@ async fn handle(
                             let _ = emit_line(out, json!({"event":"done","total":g.total})).await;
                             return;
                         }
-                        for s in &mut g.segments {
-                            s.downloaded = 0;
-                            s.flushed = 0;
-                            s.speed = 0.0;
-                            s.status = "waiting".into();
+                        // dest 不存在但 .part 完好（校验中被重启）：保留段进度，
+                        // 靠后面的 ensure_part 校验 .part 真实性；确实不完整时
+                        // ensure_part 自己会清零。只有 .part 也不在/不对时才手动清零。
+                        let part_ok = tokio::fs::metadata(&g.tmp_path())
+                            .await
+                            .map(|m| m.len() == g.total)
+                            .unwrap_or(false);
+                        if !part_ok {
+                            for s in &mut g.segments {
+                                s.downloaded = 0;
+                                s.flushed = 0;
+                                s.speed = 0.0;
+                                s.status = "waiting".into();
+                            }
+                            g.stream_done = false;
+                            g.save_sidecar_now();
                         }
-                        g.stream_done = false;
-                        g.save_sidecar();
                     }
                     // ensure_part 会校验 .part 的真实状态，必要时（文件没了/长度不对）
                     // 自己把偏移清零，所以这里不必再担心边车与文件不一致。
@@ -1070,7 +1145,8 @@ async fn handle(
                 g.state = "paused".into();
                 // 这里写边车是安全的：save_sidecar 只记已 fsync 的水位，
                 // 而 worker 会在下一个 tick（≤100ms）内 drop 掉 in-flight 请求退出。
-                g.save_sidecar();
+                // 暂停后 tick 停止，必须 now 立即落盘（降频会漏掉最后 1 秒水位）。
+                g.save_sidecar_now();
                 let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
             }
         }
@@ -1113,7 +1189,7 @@ async fn handle(
                                 seg.status = if seg.done() { "done" } else { "waiting" }.into();
                             }
                         }
-                        g.save_sidecar();
+                        g.save_sidecar_now();
                     }
                 }
                 let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
@@ -1222,7 +1298,8 @@ async fn on_tick(
                 let (tx, rx) = mpsc::unbounded_channel();
                 tokio::spawn(run_verify(cs, g.tmp_path(), g.id, g.gen, tx));
                 *verify_rx = Some(rx);
-                g.save_sidecar();
+                // paused 分支之后不再走常规 tick，直接 now 落盘
+                g.save_sidecar_now();
                 None
             } else {
                 g.state = "done".into();

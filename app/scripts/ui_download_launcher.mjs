@@ -16,7 +16,8 @@ const exe = join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
 const proc = spawn(exe, ['.'], {
   cwd: APP_ROOT,
   env: { ...process.env, HANEHANA_DEBUG_PORT: PORT, HANEHANA_DATA_DIR: DATA_DIR },
-  stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+  stdio: ['ignore', 'pipe', 'pipe'],
+  windowsHide: true,
 })
 proc.stderr.on('data', (d) => console.log('[app]', d.toString().trim().slice(0, 160)))
 
@@ -47,6 +48,8 @@ try {
   console.error('FAIL', e.message)
   process.exitCode = 1
 } finally {
-  try { proc.kill() } catch {}
+  try {
+    proc.kill()
+  } catch {}
   rmSync(DATA_DIR, { recursive: true, force: true })
 }

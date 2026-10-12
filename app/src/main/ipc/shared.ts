@@ -23,6 +23,20 @@ export function err(error: string): { ok: false; error: string } {
   return { ok: false, error }
 }
 
+/**
+ * IPC 入参里最常见的校验样板：id 必须是 1..64 的字符串、且目标必须存在。
+ * tasks.ts 里 4 个 handler 都重复这一段，收敛成共享助手——返回 null 表示
+ * 校验通过，返回 {ok:false,error} 直接回给渲染层。
+ */
+export function guardIdExists(
+  id: unknown,
+  has: (_id: string) => boolean,
+  missingMsg = '任务不存在，可能已经被移除',
+): { ok: false; error: string } | null {
+  if (!isId(id) || !has(id)) return err(missingMsg)
+  return null
+}
+
 /** wireIpc 注入的运行时依赖（纯函数域无状态时不读）。 */
 export interface IpcCtx {
   win: () => BrowserWindow | null

@@ -6,12 +6,24 @@ if (!page) throw new Error('no page target')
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 let msgId = 0
 const pending = new Map()
-ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } }
+ws.onmessage = (ev) => {
+  const m = JSON.parse(ev.data)
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m)
+    pending.delete(m.id)
+  }
+}
 await new Promise((r) => (ws.onopen = r))
-const send = (method, params = {}) => new Promise((res) => { const mid = ++msgId; pending.set(mid, res); ws.send(JSON.stringify({ id: mid, method, params })) })
+const send = (method, params = {}) =>
+  new Promise((res) => {
+    const mid = ++msgId
+    pending.set(mid, res)
+    ws.send(JSON.stringify({ id: mid, method, params }))
+  })
 const evalJs = async (expr) => {
   const res = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-  if (res.result?.exceptionDetails) return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
+  if (res.result?.exceptionDetails)
+    return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
   return res.result?.result?.value
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -22,9 +34,16 @@ await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => 
 await send('Page.bringToFront').catch(() => {})
 await wait(600)
 
-let passed = 0, failed = 0
+let passed = 0,
+  failed = 0
 const check = (name, cond, detail = '') => {
-  if (cond) { passed++; console.log(`PASS  ${name}`) } else { failed++; console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`) }
+  if (cond) {
+    passed++
+    console.log(`PASS  ${name}`)
+  } else {
+    failed++
+    console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`)
+  }
 }
 
 // 0. 刷新页面拿到干净状态（设置 dark 由 initTasks 同步，此时应为 true）
@@ -32,16 +51,22 @@ await send('Page.reload', { ignoreCache: true })
 await wait(3500)
 const boot = await evalJs(`document.querySelector('.tag')?.textContent ?? ''`)
 console.log('BOOT:', boot)
-let theme0 = await evalJs(`({ theme: document.documentElement.dataset.theme, accent: getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim() })`)
+let theme0 = await evalJs(
+  `({ theme: document.documentElement.dataset.theme, accent: getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim() })`,
+)
 console.log('THEME_INIT:', JSON.stringify(theme0))
 check('刷新后为深色（settings dark=true 同步）', theme0?.theme === 'dark', String(theme0?.theme))
 
 // 若当前设置已是 light，先切回 dark 再测
 if (theme0?.theme !== 'dark') {
-  await evalJs(`window.hh.getSettings().then(async (s) => { await window.hh.saveSettings({ ...s, dark: true }); return true })`)
+  await evalJs(
+    `window.hh.getSettings().then(async (s) => { await window.hh.saveSettings({ ...s, dark: true }); return true })`,
+  )
   await send('Page.reload', { ignoreCache: true })
   await wait(3500)
-  theme0 = await evalJs(`({ theme: document.documentElement.dataset.theme, accent: getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim() })`)
+  theme0 = await evalJs(
+    `({ theme: document.documentElement.dataset.theme, accent: getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim() })`,
+  )
   console.log('THEME_RESET:', JSON.stringify(theme0))
   check('重置后为深色', theme0?.theme === 'dark', String(theme0?.theme))
 }
@@ -57,14 +82,18 @@ await evalJs(`[...document.querySelectorAll('.ant-tabs-tab')].find(e => e.textCo
 await wait(500)
 
 // 3. 检查开关（应 checked=true 深色）
-const sw1 = await evalJs(`(() => { const s=document.querySelector('.ant-switch'); return s?.classList.contains('ant-switch-checked') ?? null })()`)
+const sw1 = await evalJs(
+  `(() => { const s=document.querySelector('.ant-switch'); return s?.classList.contains('ant-switch-checked') ?? null })()`,
+)
 console.log('SWITCH_INIT:', sw1)
 check('开关初始为深色', sw1 === true, String(sw1))
 
 // 4. 点击切到浅色
 await evalJs(`document.querySelector('.ant-switch')?.click()`)
 await wait(500)
-const sw2 = await evalJs(`(() => { const s=document.querySelector('.ant-switch'); return s?.classList.contains('ant-switch-checked') ?? null })()`)
+const sw2 = await evalJs(
+  `(() => { const s=document.querySelector('.ant-switch'); return s?.classList.contains('ant-switch-checked') ?? null })()`,
+)
 console.log('SWITCH_AFTER:', sw2)
 check('开关已切到浅色', sw1 === true && sw2 === false, `${sw1}->${sw2}`)
 

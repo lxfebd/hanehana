@@ -34,6 +34,24 @@ jobs:
         working-directory: app
         run: npm run build
 
+      # grep 验收闸（秒级，纯静态找源码文本，不起窗口）：R7-R9 的结构承诺
+      # 用「如果源码里出现某个符号/命名就断言」固化下来，防改回旧风格。
+      # 本地手跑 acceptance 脚本闭了本机，但合入前谁都有忘跑的可能——进 CI 兜底。
+      - name: regression static (grep gates)
+        working-directory: app
+        run: npm run regression:static
+
+      # lint：错误 = 合入阻断（0 errors 闸）；警告是渐进债务台账，不阻断。
+      #   no-console 提醒走 logger；未用变量提醒清尾。新代码必须过。
+      - name: lint (0 errors)
+        working-directory: app
+        run: npx eslint src tests --max-warnings 9999
+
+      # 单元测试（node:test，构建到 .test-build 再跑）——format/工具函数回归网
+      - name: unit tests
+        working-directory: app
+        run: npm test
+
       - name: cargo test
         working-directory: engine-rs
         run: cargo test --locked

@@ -13,16 +13,16 @@ import { basename, dirname, extname, join } from 'node:path'
 import { existsSync, rmSync, statSync, statfsSync } from 'node:fs'
 import { EngineTask } from './engine'
 import { randomBytes } from 'node:crypto'
-import type {
-  Settings,
-  StatusCounts,
-  TaskDef,
-  TaskProgressPush,
-  TaskRow,
-  TaskSnapshot,
-  TaskState,
+import {
+  isAutoResumable,
+  type Settings,
+  type StatusCounts,
+  type TaskDef,
+  type TaskProgressPush,
+  type TaskRow,
+  type TaskSnapshot,
+  type TaskState,
 } from '../shared/types'
-import { isAutoResumable } from '../shared/types'
 import { safeFileName, uniquePath } from './store'
 
 const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms))
@@ -103,6 +103,7 @@ async function removeFile(p: string): Promise<string | null> {
       await sleep(120)
     }
   }
+  // 不可达：循环 4 次内必然 return（第 4 次失败在 attempt===3 提前返回）。
   return null
 }
 
@@ -127,6 +128,9 @@ export class Manager {
   private defs = new Map<string, TaskDef>()
   private tasks = new Map<string, EngineTask>()
   private order: string[] = []
+  /** url → id 索引：add 去重从 O(n) 扫 listDefs 变成 O(1) 查表（千级队列 + 连点
+   *  添加是最常见路径，每次都全表 find 没必要）。register/remove 处同步维护。 */
+  private byUrl = new Map<string, string>()
   private onPush: (p: TaskProgressPush) => void
   private persist: PersistFn
   /** 正在退出：kill() 引发的 cancelled 不落盘，见 syncDef */
@@ -141,6 +145,11 @@ export class Manager {
   private notified = new Map<string, TaskState>()
   /** 已经做过磁盘预检的任务。每次 startOne 清空，腾出空间后重试会重新检查。 */
   private spaceChecked = new Set<string>()
+  /**
+   * 调度心跳。maybeStart 只在状态变化时触发；慢任务/探测中任务长期占着槽位时，
+   * 排队任务没有任何事件可依赖——心跳兜底周期性补位，防止「排队中」永久卡死。
+   */
+  private schedulerTimer: ReturnType<typeof setInterval> | null = null
 
   constructor(
     settings: Settings,
@@ -152,6 +161,10 @@ export class Manager {
     this.onPush = onPush
     this.persist = persist
     for (const d of initialDefs) this.register(this.reconcileLegacy(d))
+    // 每 2s 兜底补位：正常路径（状态变化）会即时触发，心跳只负责「没有事件的
+    // 场景」。2s 间隔几乎不可感知，但保证占槽任务让位后排队任务必然被拉起。
+    this.schedulerTimer = setInterval(() => this.maybeStart(), 2000)
+    this.schedulerTimer.unref?.()
   }
 
   /**
@@ -169,6 +182,7 @@ export class Manager {
   /** 注册任务定义。persist 时按 order 顺序落盘。 */
   private register(d: TaskDef): void {
     this.defs.set(d.id, d)
+    this.byUrl.set(d.url, d.id)
     if (!this.order.includes(d.id)) this.order.push(d.id)
   }
 
@@ -181,7 +195,9 @@ export class Manager {
     const url = input.url.trim()
     // 同一个链接重复添加（页面里连点两次下载是最常见的操作）不该产生第二个
     // 引擎进程去写同一个目标文件——两个进程同时写一份 .part 会互相踩坏。
-    const existing = this.listDefs().find((d) => d.url === url)
+    // byUrl 索引 O(1) 判重；加载旧存档时按 defs 重建，见 loadPersisted。
+    const existingId = this.byUrl.get(url)
+    const existing = existingId ? this.defs.get(existingId) : undefined
     if (existing) return { def: existing, duplicate: true }
 
     const threads = input.threads ?? s.threads
@@ -466,6 +482,9 @@ export class Manager {
       }
       this.persist(this.listDefs())
     }
+    // 并发上限可能被调大了：槽位空出但没有任何状态变化事件，排队中的任务
+    // 会一直趴着不动。这里显式补一次调度。
+    this.maybeStart()
   }
 
   /**
@@ -480,6 +499,7 @@ export class Manager {
     const dest = d?.dest ?? ''
     const task = this.tasks.get(id)
     this.defs.delete(id)
+    if (d) this.byUrl.delete(d.url)
     this.order = this.order.filter((x) => x !== id)
     this.tasks.delete(id)
     this.notified.delete(id)
@@ -665,14 +685,16 @@ export class Manager {
   }
 
   totalSpeed(): number {
-    return [...this.tasks.values()]
-      .filter((t) => t.state === 'downloading')
-      .reduce((sum, t) => sum + (t.speed || 0), 0)
+    return [...this.tasks.values()].filter((t) => t.state === 'downloading').reduce((sum, t) => sum + (t.speed || 0), 0)
   }
 
   /** 引擎退出前统一停掉所有子进程，避免泄漏。 */
   shutdown(): void {
     this.closing = true
+    if (this.schedulerTimer) {
+      clearInterval(this.schedulerTimer)
+      this.schedulerTimer = null
+    }
     for (const task of this.tasks.values()) this.shutdownTask(task)
     this.tasks.clear()
   }

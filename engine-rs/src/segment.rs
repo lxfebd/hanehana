@@ -4,9 +4,9 @@
 //! `recompute_segment` 是 `set_threads` 时把老段进度折算进新段的纯函数——旧算法
 //! 累加 `min(odone, overlap)`，把整段重叠区都当成已下载，曾导致中途改线程数损坏文件。
 
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
-#[derive(Default, Serialize, Deserialize)]
+#[derive(Deserialize)]
 pub struct Segment {
     pub index: usize,
     pub start: u64,

@@ -6,9 +6,19 @@
  */
 import { computed, onBeforeUnmount } from 'vue'
 import { Heart, ListChecks, Star, Trash2, Wand2, X } from 'lucide-vue-next'
-import { message } from 'ant-design-vue'
-import { batchRemove, batchUpdate, batchScrape, cancelBatchScrape, enterSelectMode, library, resolvePending, startBatchScrape } from '../stores/library'
+import { message, Modal } from 'ant-design-vue'
+import {
+  batchRemove,
+  batchUpdate,
+  batchScrape,
+  cancelBatchScrape,
+  enterSelectMode,
+  library,
+  resolvePending,
+  startBatchScrape,
+} from '../stores/library'
 import { tokens } from '../design/tokens'
+import { t, tf } from '../i18n'
 
 const emit = defineEmits<{ done: [] }>()
 
@@ -23,17 +33,21 @@ function gameOf(id: string) {
 /** 切「已通关」：库里每款按自身当前态生成独立 patch（全含则移除，否则添加） */
 async function toggleQuickCat(): Promise<void> {
   if (!count.value) return
-  const patches = sel.value.map((id) => {
-    const g = gameOf(id)
-    if (!g) return null
-    const has = g.categories.includes('已通关')
-    return {
-      id,
-      patch: { categories: has ? g.categories.filter((c) => c !== '已通关') : [...g.categories, '已通关'] },
-    }
-  }).filter((p): p is { id: string; patch: { categories: string[] } } => !!p)
+  const patches = sel.value
+    .map((id) => {
+      const g = gameOf(id)
+      if (!g) return null
+      const has = g.categories.includes('已通关')
+      return {
+        id,
+        patch: { categories: has ? g.categories.filter((c) => c !== '已通关') : [...g.categories, '已通关'] },
+      }
+    })
+    .filter((p): p is { id: string; patch: { categories: string[] } } => !!p)
   const ok = await batchUpdate(patches)
-  message[ok ? 'success' : 'error'](ok ? `已更新 ${patches.length} 款的「已通关」标记` : library.error || '批量更新失败')
+  message[ok ? 'success' : 'error'](
+    ok ? tf('batch_clear_updated', { n: patches.length }) : library.error || t('batch_update_fail'),
+  )
   emit('done')
 }
 
@@ -42,22 +56,44 @@ async function toggleFav(): Promise<void> {
   if (!count.value) return
   const anyUnfav = sel.value.some((id) => !gameOf(id)?.favorite)
   const ok = await batchUpdate(sel.value.map((id) => ({ id, patch: { favorite: anyUnfav } })))
-  message[ok ? 'success' : 'error'](ok ? (anyUnfav ? `已收藏 ${count.value} 款` : `已取消收藏 ${count.value} 款`) : library.error || '批量更新失败')
+  message[ok ? 'success' : 'error'](
+    ok
+      ? anyUnfav
+        ? tf('batch_faved', { n: count.value })
+        : tf('batch_unfaved', { n: count.value })
+      : library.error || t('batch_update_fail'),
+  )
   emit('done')
 }
 
 async function setRating(r: number): Promise<void> {
   if (!count.value) return
   const ok = await batchUpdate(sel.value.map((id) => ({ id, patch: { rating: r } })))
-  message[ok ? 'success' : 'error'](ok ? `已为 ${count.value} 款设置评分 ${r.toFixed(1)}` : library.error || '批量更新失败')
+  message[ok ? 'success' : 'error'](
+    ok ? tf('batch_rated', { n: count.value, rating: r.toFixed(1) }) : library.error || t('batch_update_fail'),
+  )
   emit('done')
 }
 
 async function removeSel(): Promise<void> {
   if (!count.value) return
-  const ok = await batchRemove(sel.value)
-  message[ok ? 'success' : 'error'](ok ? `已移除 ${count.value} 款` : library.error || '批量移除失败')
-  emit('done')
+  // 批量移除是破坏性操作（从库中删除 + 运行时状态一起走），确认一次再执行；
+  // 收藏/评分可逆，这里不拦。
+  const n = count.value
+  Modal.confirm({
+    title: tf('batch_remove_confirm_title', { n }),
+    content: t('batch_remove_confirm_content'),
+    okText: t('batch_remove_ok'),
+    cancelText: t('common_cancel'),
+    okButtonProps: { danger: true },
+    onOk: async () => {
+      const ok = await batchRemove(sel.value)
+      message[ok ? 'success' : 'error'](
+        ok ? tf('batch_removed', { n: count.value }) : library.error || t('batch_remove_fail'),
+      )
+      emit('done')
+    },
+  })
 }
 
 /** 批量刮削：串行后台队列；冲突入 pending，不逐个弹窗（P1-1） */
@@ -65,11 +101,11 @@ async function runBulkScrape(): Promise<void> {
   if (!count.value || batchScrape.running) return
   const ids = [...sel.value]
   const r = await startBatchScrape(ids)
-  if (r.cancelled) message.info(`已取消：完成 ${batchScrape.applied} 款，待确认 ${r.pending}`)
+  if (r.cancelled) message.info(tf('batch_cancelled', { done: batchScrape.applied, pending: r.pending }))
   else {
-    const parts = [`已刮削 ${r.applied} 款`]
-    if (r.pending) parts.push(`${r.pending} 款待确认`)
-    if (r.failed) parts.push(`${r.failed} 款失败`)
+    const parts = [tf('batch_scraped', { n: r.applied })]
+    if (r.pending) parts.push(tf('batch_pending', { n: r.pending }))
+    if (r.failed) parts.push(tf('batch_failed', { n: r.failed }))
     message[r.applied || r.pending ? 'success' : 'warning'](parts.join('，'))
   }
 }
@@ -84,57 +120,84 @@ function confirmPending(item: { id: string; title: string; query: string }): voi
 }
 
 function close(): void {
-  if (batchScrape.running) cancelBatchScrape()
+  // 无论刮削是否在跑，退出多选都要清掉 pending「待确认」残留——否则 overlay
+  // 的 v-if（含 pending.length）仍为真，陈旧面板滞留到下次操作。
+  cancelBatchScrape()
   enterSelectMode(false)
   emit('done')
 }
 
 onBeforeUnmount(() => {
-  if (batchScrape.running) cancelBatchScrape()
+  cancelBatchScrape()
 })
 </script>
 
 <template>
-  <div class="batch-overlay" v-if="count > 0">
+  <div class="batch-overlay" v-if="count > 0 || batchScrape.running || batchScrape.pending.length > 0">
     <div class="batch-panel glass">
-      <span class="batch-count">{{ count }} 款已选</span>
+      <span class="batch-count" v-if="count > 0">{{ tf('batch_selected', { n: count }) }}</span>
       <template v-if="batchScrape.running">
         <span class="b-scrape-status" data-testid="batch-scrape-status">
-          刮削中 {{ batchScrape.done }}/{{ batchScrape.total }}
+          {{ tf('batch_scraping', { done: batchScrape.done, total: batchScrape.total }) }}
           <span v-if="batchScrape.current" class="b-scrape-title">{{ batchScrape.current }}</span>
         </span>
-        <button class="b-btn danger" title="取消批量刮削" data-testid="batch-scrape-cancel" @click="cancelScrape">取消</button>
+        <button
+          class="b-btn danger"
+          :title="t('batch_cancel_scrape')"
+          data-testid="batch-scrape-cancel"
+          @click="cancelScrape"
+        >
+          {{ t('common_cancel') }}
+        </button>
         <span class="b-sep"></span>
       </template>
       <template v-else>
         <button
           class="b-btn"
-          title="批量刮削：高置信自动应用，冲突待确认"
+          :title="t('batch_scrape_title')"
           data-testid="batch-scrape"
           :disabled="batchScrape.running"
           @click="runBulkScrape"
         >
-          <Wand2 :size="14" /> 批量刮削
+          <Wand2 :size="14" /> {{ t('batch_scrape') }}
         </button>
         <span class="b-sep"></span>
       </template>
-      <button class="b-btn" title="切换收藏" @click="toggleFav"><Heart :size="14" /> 收藏</button>
-      <button class="b-btn" title="加/移除「已通关」" @click="toggleQuickCat"><ListChecks :size="14" /> 已通关</button>
+      <button class="b-btn" :title="t('batch_toggle_fav')" @click="toggleFav">
+        <Heart :size="14" /> {{ t('detail_fav') }}
+      </button>
+      <button class="b-btn" :title="t('batch_toggle_clear')" @click="toggleQuickCat">
+        <ListChecks :size="14" /> {{ t('batch_cleared') }}
+      </button>
       <span class="b-sep"></span>
-      <button class="b-btn" v-for="r in [8, 9, 10]" :key="r" :title="'评分 ' + r.toFixed(1)" @click="setRating(r)">
+      <button
+        class="b-btn"
+        v-for="r in [8, 9, 10]"
+        :key="r"
+        :title="tf('batch_rate', { r: r.toFixed(1) })"
+        @click="setRating(r)"
+      >
         <Star :size="12" :fill="starColor" :stroke-width="0" /> {{ r }}
       </button>
       <span class="b-sep"></span>
-      <button class="b-btn danger" title="从库移除（不删文件）" @click="removeSel"><Trash2 :size="14" /> 移除</button>
-      <button class="b-btn" title="退出多选" @click="close"><X :size="14" /> 退出</button>
+      <button class="b-btn danger" :title="t('batch_remove_title')" @click="removeSel">
+        <Trash2 :size="14" /> {{ t('batch_remove') }}
+      </button>
+      <button class="b-btn" :title="t('batch_exit_multi')" @click="close">
+        <X :size="14" /> {{ t('batch_exit') }}
+      </button>
     </div>
-    <div v-if="!batchScrape.running && batchScrape.pending.length" class="batch-panel glass pending-panel" data-testid="batch-scrape-pending">
-      <span class="pending-label">{{ batchScrape.pending.length }} 款待确认</span>
+    <div
+      v-if="!batchScrape.running && batchScrape.pending.length"
+      class="batch-panel glass pending-panel"
+      data-testid="batch-scrape-pending"
+    >
+      <span class="pending-label">{{ tf('batch_pending', { n: batchScrape.pending.length }) }}</span>
       <button
         v-for="p in batchScrape.pending"
         :key="p.id"
         class="b-btn pending-item"
-        :title="'为「' + p.title + '」手动选择刮削结果'"
+        :title="tf('batch_pick_title', { title: p.title })"
         @click="confirmPending(p)"
       >
         <Wand2 :size="12" /> {{ p.title }}

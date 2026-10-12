@@ -1,0 +1,8 @@
+# 构建产物与依赖不格式化
+node_modules
+out
+release
+dist
+.test-build
+*.min.js
+package-lock.json

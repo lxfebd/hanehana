@@ -22,12 +22,16 @@ export const Ipc = {
   GameAddOne: 'hanehana:games:add-one',
   // 元数据刮削
   ScrapeSearch: 'hanehana:scrape:search',
+  /** 按源搜索（G20）：scrapeSearch 聚合等最慢源，这里允许 UI 单源流式上屏 */
+  ScrapeSearchSource: 'hanehana:scrape:search-source',
   ScrapeApply: 'hanehana:scrape:apply',
   // 启动
   GameLaunch: 'hanehana:games:launch',
   GameRunning: 'hanehana:games:running',
   // 打开目录
   OpenDir: 'hanehana:games:openDir',
+  /** 打开下载产物本身（exe 直接跑/压缩包交系统默认程序）；不是所在目录 */
+  OpenTaskFile: 'hanehana:task:openFile',
   // 原生目录选择对话框
   PickDir: 'hanehana:pickDir',
   // 原生 exe 文件选择对话框（G2：LE/Magpie 路径选择）

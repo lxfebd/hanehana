@@ -21,9 +21,12 @@ export function registerSteamHandlers(_ctx: IpcCtx): void {
       .filter((x): x is Record<string, unknown> => !!x && typeof x === 'object')
       .filter(
         (x) =>
-          typeof x.dir === 'string' && x.dir &&
-          typeof x.exePath === 'string' && x.exePath &&
-          typeof x.rawTitle === 'string' && x.rawTitle,
+          typeof x.dir === 'string' &&
+          x.dir &&
+          typeof x.exePath === 'string' &&
+          x.exePath &&
+          typeof x.rawTitle === 'string' &&
+          x.rawTitle,
       )
       .map((x) => ({
         dir: x.dir as string,

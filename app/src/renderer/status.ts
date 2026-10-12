@@ -1,25 +1,26 @@
 /**
  * 下载任务状态 → 展示元数据。
- * 文案和配色都在这里定义，模板里不再散落判断。
+ * 文案走 i18n（labelKey 到词典），模板里 t() 渲染；配色在这里定义，模板不再散落判断。
  */
 import type { TaskDef, TaskRow, TaskSnapshot, TaskState } from '../shared/types'
 import { fileName, fmtProgress } from '../shared/format'
+import type { I18nKey } from './i18n'
 
 export interface StatusMeta {
   key: TaskState
-  label: string
+  labelKey: I18nKey
   tone: 'blue' | 'default' | 'success' | 'error' | 'warning'
 }
 
 const STATUS: Record<string, StatusMeta> = {
-  downloading: { key: 'downloading', label: '下载中', tone: 'blue' },
-  paused: { key: 'paused', label: '已暂停', tone: 'default' },
-  done: { key: 'done', label: '已完成', tone: 'success' },
-  error: { key: 'error', label: '失败', tone: 'error' },
-  queued: { key: 'queued', label: '排队中', tone: 'default' },
-  idle: { key: 'idle', label: '等待', tone: 'default' },
-  preparing: { key: 'preparing', label: '准备中', tone: 'default' },
-  cancelled: { key: 'cancelled', label: '已取消', tone: 'default' },
+  downloading: { key: 'downloading', labelKey: 'st_badge_downloading', tone: 'blue' },
+  paused: { key: 'paused', labelKey: 'st_badge_paused', tone: 'default' },
+  done: { key: 'done', labelKey: 'st_badge_done', tone: 'success' },
+  error: { key: 'error', labelKey: 'st_badge_error', tone: 'error' },
+  queued: { key: 'queued', labelKey: 'st_badge_queued', tone: 'default' },
+  idle: { key: 'idle', labelKey: 'st_badge_idle', tone: 'default' },
+  preparing: { key: 'preparing', labelKey: 'st_badge_preparing', tone: 'default' },
+  cancelled: { key: 'cancelled', labelKey: 'st_badge_cancelled', tone: 'default' },
 }
 
 /** 未知状态回落到 idle，避免模板里出现 undefined 分支。 */
@@ -41,27 +42,23 @@ export function matchesFilter(state: string | undefined, filter: string): boolea
 // ------------------------------------------------------- 未知长度 / 校验中
 
 export interface StatusBadge {
-  label: string
+  labelKey: I18nKey
   tone: StatusMeta['tone']
 }
 
 /**
- * 显示用的状态文案与配色。
+ * 显示用的状态文案键与配色。
  *
  * verifying 和「大小未知」都不进 TaskState——那是跨进程的持久化与调度契约；
  * 它们只是同一个状态下的不同处境，所以只在这里改文案。
  */
-export function statusBadge(
-  state: TaskState,
-  snap: TaskSnapshot | null,
-  def: TaskDef | null,
-): StatusBadge {
+export function statusBadge(state: TaskState, snap: TaskSnapshot | null, def: TaskDef | null): StatusBadge {
   const meta = statusMeta(state)
-  if (snap?.verifying) return { label: '校验中', tone: meta.tone }
+  if (snap?.verifying) return { labelKey: 'st_badge_verifying', tone: meta.tone }
   if (state === 'downloading' && totalBytes(snap, def?.total ?? 0) <= 0) {
-    return { label: '下载中（大小未知）', tone: meta.tone }
+    return { labelKey: 'st_badge_unknown', tone: meta.tone }
   }
-  return { label: meta.label, tone: meta.tone }
+  return { labelKey: meta.labelKey, tone: meta.tone }
 }
 
 /** 已知总长；0 = 服务器没报 Content-Length，下完才会变成真实字节数。 */
@@ -111,13 +108,13 @@ export function matchesQuery(r: TaskRow, query: string): boolean {
 
 export type TaskSort = 'added-desc' | 'added-asc' | 'name' | 'progress' | 'size' | 'speed'
 
-export const SORT_OPTIONS: { value: TaskSort; label: string }[] = [
-  { value: 'added-desc', label: '最近添加' },
-  { value: 'added-asc', label: '最早添加' },
-  { value: 'name', label: '名称 A→Z' },
-  { value: 'progress', label: '进度' },
-  { value: 'size', label: '文件大小' },
-  { value: 'speed', label: '当前速度' },
+export const SORT_OPTIONS: { value: TaskSort; labelKey: I18nKey }[] = [
+  { value: 'added-desc', labelKey: 'sort_added_desc' },
+  { value: 'added-asc', labelKey: 'sort_added_asc' },
+  { value: 'name', labelKey: 'sort_name' },
+  { value: 'progress', labelKey: 'sort_progress' },
+  { value: 'size', labelKey: 'sort_size' },
+  { value: 'speed', labelKey: 'sort_speed' },
 ]
 
 function rowTotal(r: TaskRow): number {

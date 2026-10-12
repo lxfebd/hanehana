@@ -55,7 +55,11 @@ export function computeOverview(games: Game[], sessions: PlaySession[]): Overvie
     dayMap.set(k, d)
   }
 
-  // 兼容老库：games.json 里的 playMs 总量（无会话记录时也算进总时长）
+  // 兼容老库：games.json 里的 playMs 总量（无会话记录时也算进总时长）。
+  // playMs 是权威口径——games.ts 每次游戏退出都会把本次时长累加进 playMs，
+  // 同时才追加会话记录，所以 legacyTotal 恒 ≥ sessionTotal（老库只有 playMs、
+  // 新库两边都有），取 max 得到的就是完整累计时长。保留双口径仅为了
+  // 老库（有 playMs 无会话）也能统计出总量。
   const legacyTotal = games.reduce((a, g) => a + g.playMs, 0)
   const sessionTotal = sessions.reduce((a, s) => a + s.ms, 0)
   const totalMs = Math.max(legacyTotal, sessionTotal)
@@ -71,7 +75,13 @@ export function computeOverview(games: Game[], sessions: PlaySession[]): Overvie
   }
 
   const topGames = [...byGame.entries()]
-    .map(([gameId, v]) => ({ gameId, title: v.title, ms: v.ms, sessions: v.sessions, lastPlayed: v.lastPlayed || undefined }))
+    .map(([gameId, v]) => ({
+      gameId,
+      title: v.title,
+      ms: v.ms,
+      sessions: v.sessions,
+      lastPlayed: v.lastPlayed || undefined,
+    }))
     .sort((a, b) => b.ms - a.ms)
     .slice(0, 10)
 

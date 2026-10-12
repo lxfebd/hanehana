@@ -1,27 +1,13 @@
-/**
- * 游戏站页签：内嵌浏览器 + 搜索聚合 + 直链捕获。
- *
- * 左侧是站点列表与聚合搜索结果，右侧是 webview（partition=persist:gamesites，
- * 登录状态跨重启保持）。页面里点下载时主进程的捕获桥负责分流，并把结果推到
- * push:site-download：公开直链进 FastDrop 引擎、需要会话的链接交回浏览器下载。
- * 订阅在 renderer/store.ts 里做（切走页签也不能丢消息），这里只管浏览与解析。
- *
- * webview 是 Electron 的 OOPIF，有自己的进程与会话；它在沙箱化渲染进程里
- * 也能用（webviewTag: true 在主进程开）。注意：webview 的 DOM 事件需要
- * 在元素上直接挂监听，不能用 Vue 的 @事件语法（部分事件不冒泡）。
- */
+/** * 游戏站页签：内嵌浏览器 + 搜索聚合 + 直链捕获。 * * 左侧是站点列表与聚合搜索结果，右侧是
+webview（partition=persist:gamesites， * 登录状态跨重启保持）。页面里点下载时主进程的捕获桥负责分流，并把结果推到 *
+push:site-download：公开直链进 FastDrop 引擎、需要会话的链接交回浏览器下载。 * 订阅在 renderer/store.ts
+里做（切走页签也不能丢消息），这里只管浏览与解析。 * * webview 是 Electron 的
+OOPIF，有自己的进程与会话；它在沙箱化渲染进程里 * 也能用（webviewTag: true 在主进程开）。注意：webview 的 DOM 事件需要 *
+在元素上直接挂监听，不能用 Vue 的 @事件语法（部分事件不冒泡）。 */
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import {
-  ArrowLeftOutlined,
-  ArrowRightOutlined,
-  CompassOutlined,
-  DownloadOutlined,
-  LinkOutlined,
-  ReloadOutlined,
-  SearchOutlined,
-} from '@ant-design/icons-vue'
+import { ArrowLeft, ArrowRight, Compass, Download, Link, RefreshCw, Search } from 'lucide-vue-next'
 import type {
   Mirror,
   ResolveOutcome,
@@ -33,11 +19,13 @@ import type {
 import { GAMESITES_PARTITION } from '../../shared/sites'
 import type { WebviewElement } from '../webview'
 import { reportRejection } from '../stores/downloads'
+import { t, tf } from '../i18n'
 
 const sites = ref<SiteInfo[]>([])
 const activeSiteId = ref<string>('gamer520')
 
 const searchKeyword = ref('')
+const searchInput = ref<HTMLInputElement | null>(null)
 const searchDone = ref(false)
 /** 每个站一列，各列独立结项（谁先回来谁先能看） */
 interface SiteGroup {
@@ -79,12 +67,14 @@ onMounted(async () => {
 })
 
 function activeSite(): SiteInfo {
-  return sites.value.find((s) => s.id === activeSiteId.value) ?? {
-    id: 'gamer520',
-    name: 'Gamer520',
-    home: 'https://www.gamer520.com',
-    searchPlaceholder: '搜索游戏…',
-  }
+  return (
+    sites.value.find((s) => s.id === activeSiteId.value) ?? {
+      id: 'gamer520',
+      name: 'Gamer520',
+      home: 'https://www.gamer520.com',
+      searchPlaceholder: t('gs_search_ph'),
+    }
+  )
 }
 
 function switchSite(id: string): void {
@@ -184,7 +174,7 @@ async function searchOne(seq: number, site: SiteInfo, kw: string): Promise<void>
     outcome = {
       ok: false,
       siteId: site.id,
-      message: `这次没能发起搜索：${e instanceof Error ? e.message : String(e)}`,
+      message: tf('gs_search_fail', { msg: e instanceof Error ? e.message : String(e) }),
     }
   }
   if (seq !== searchSeq) return
@@ -200,6 +190,19 @@ function retrySite(g: SiteGroup): void {
   g.pending = true
   g.outcome = null
   void searchOne(seq, g.site, g.kw)
+}
+
+/** 空态出口：在系统浏览器里打开本站首页，人工兜底（站内搜索可能被反爬）。 */
+function openSiteExternal(site: SiteInfo): void {
+  void window.hh.webviewOpenExternal(site.home)
+}
+
+/** 空态出口：清空关键词并把焦点放回搜索框，方便换词重搜。 */
+function refocusSearch(): void {
+  searchKeyword.value = ''
+  searchDone.value = false
+  resultsBySite.value = []
+  nextTick(() => searchInput.value?.focus())
 }
 
 // --------------------------------------------------------------- 镜像与解析
@@ -225,11 +228,11 @@ function showProgress(text: string): void {
 async function showMirrors(siteId: string, item: SiteSearchResult): Promise<void> {
   if (mirrorBusy.value) {
     // 连点时也要给句话。什么都不发生，用户读作「卡了」，然后继续点。
-    message.info({ content: '上一个链接还在解析，先等它出结果', key: 'gamesites-busy', duration: 2 })
+    message.info({ content: t('gs_busy'), key: 'gamesites-busy', duration: 2 })
     return
   }
   mirrorBusy.value = true
-  showProgress(`正在读取「${item.title}」的下载链接…`)
+  showProgress(tf('gs_reading', { title: item.title }))
   try {
     let outcome: SiteMirrorOutcome
     try {
@@ -240,13 +243,13 @@ async function showMirrors(siteId: string, item: SiteSearchResult): Promise<void
     }
     if (!outcome.ok) {
       message.destroy(LOADING_KEY)
-      message.warning(outcome.message ?? '解析失败')
+      message.warning(outcome.message ?? t('gs_resolve_fail'))
       return
     }
     const mirrors = outcome.mirrors ?? []
     if (!mirrors.length) {
       message.destroy(LOADING_KEY)
-      message.warning(outcome.message ?? '没有找到下载链接，请在浏览器里打开详情页。')
+      message.warning(outcome.message ?? t('gs_no_link'))
       return
     }
     // 浮层是要用户做决定的，不是在进行中——转圈先收掉，别让他以为还在加载
@@ -282,17 +285,17 @@ function pickMirror(title: string, mirrors: Mirror[]): Promise<Mirror | null> {
     box.innerHTML = `
       <div class="m-title"></div>
       <div class="m-list"></div>
-      <div class="m-foot"><button class="m-cancel">取消</button></div>
+      <div class="m-foot"><button class="m-cancel">${t('common_cancel')}</button></div>
     `
     holder.appendChild(box)
-    box.querySelector('.m-title')!.textContent = `选择下载方式 — ${title}`
+    box.querySelector('.m-title')!.textContent = tf('gs_choose_dl', { title })
     const list = box.querySelector('.m-list')!
     for (const m of mirrors) {
       const row = document.createElement('div')
       row.className = 'm-row'
       row.innerHTML = `<span class="m-kind"></span><span class="m-name"></span>`
       const kind = row.querySelector('.m-kind')!
-      kind.textContent = KIND_LABEL[m.kind] ?? m.kind
+      kind.textContent = kindLabel(m.kind)
       row.querySelector('.m-name')!.textContent = m.note ? `${m.name}（${m.note}）` : m.name
       row.addEventListener('click', () => close(m))
       list.appendChild(row)
@@ -312,13 +315,23 @@ function pickMirror(title: string, mirrors: Mirror[]): Promise<Mirror | null> {
 }
 
 /** 镜像类型的中文标签（浮层里显示，避免直接露出 kind 原始值）。 */
-const KIND_LABEL: Record<Mirror['kind'], string> = {
-  pan: '网盘',
-  gofile: 'GOFILE',
-  direct: '直链',
-  cloudreve: '网盘(自动)',
-  torrent: '磁力',
-  page: '页面',
+function kindLabel(kind: Mirror['kind']): string {
+  switch (kind) {
+    case 'gofile':
+      return 'GOFILE'
+    case 'pan':
+      return t('gs_kind_pan')
+    case 'direct':
+      return t('gs_kind_direct')
+    case 'cloudreve':
+      return t('gs_kind_cloudreve')
+    case 'torrent':
+      return t('gs_kind_torrent')
+    case 'page':
+      return t('gs_kind_page')
+    default:
+      return kind
+  }
 }
 
 /**
@@ -329,10 +342,10 @@ const KIND_LABEL: Record<Mirror['kind'], string> = {
 async function handleMirror(m: Mirror): Promise<void> {
   if (m.kind === 'page') {
     nav(m.url)
-    message.info('已在页面中打开，请在页面里点击下载')
+    message.info(t('gs_opened_page'))
     return
   }
-  showProgress(`正在解析 ${KIND_LABEL[m.kind]}「${m.name}」…`)
+  showProgress(tf('gs_resolving', { kind: kindLabel(m.kind), name: m.name }))
   let outcome: ResolveOutcome
   try {
     outcome = await window.hh.sitesResolve(m)
@@ -342,20 +355,18 @@ async function handleMirror(m: Mirror): Promise<void> {
   }
   if (outcome.ok && (outcome.files?.length || outcome.url)) {
     // 一个分享常有多个文件（RAR 分卷），逐个入队；失败的每一个都要报出来
-    const list = outcome.files?.length
-      ? outcome.files
-      : [{ url: outcome.url!, filename: outcome.filename ?? '' }]
+    const list = outcome.files?.length ? outcome.files : [{ url: outcome.url!, filename: outcome.filename ?? '' }]
     let added = 0
     let dups = 0
     const failed: string[] = []
     for (let i = 0; i < list.length; i++) {
       const f = list[i]!
-      if (list.length > 1) showProgress(`正在加入下载列表（${i + 1}/${list.length}）…`)
+      if (list.length > 1) showProgress(tf('gs_adding_list', { i: i + 1, total: list.length }))
       try {
         const r = await window.hh.sitesAddTask({ url: f.url, filename: f.filename })
         if (r.ok && !r.duplicate) added++
         else if (r.ok) dups++
-        else failed.push(`${f.filename || '该文件'}：${r.error}`)
+        else failed.push(`${f.filename || t('gs_that_file')}：${r.error}`)
       } catch (e) {
         reportRejection(e)
       }
@@ -366,14 +377,14 @@ async function handleMirror(m: Mirror): Promise<void> {
     let note = outcome.message ?? ''
     if ((outcome.missing ?? 0) > 0 && (m.kind === 'cloudreve' || m.kind === 'gofile')) {
       nav(m.url)
-      note = note ? `${note}，已在右侧浏览器打开` : '剩余文件已在右侧浏览器打开'
+      note = note ? `${note}，${t('gs_opened_right')}` : t('gs_rest_opened')
     }
     reportResolve(added, dups, failed, note)
     return
   }
   // 解析失败：网盘类回退到内嵌 webview，让用户用站点自带会话手动下载
   message.destroy(LOADING_KEY)
-  message.info(outcome.message ?? '该链接无法自动下载，请在页面里打开')
+  message.info(outcome.message ?? t('gs_cant_auto'))
   if (m.kind === 'pan' || m.kind === 'gofile' || m.kind === 'cloudreve') {
     nav(m.url)
   } else {
@@ -391,11 +402,11 @@ async function handleMirror(m: Mirror): Promise<void> {
  */
 function reportResolve(added: number, dups: number, failed: string[], note?: string): void {
   const parts: string[] = []
-  if (added) parts.push(added === 1 ? '已添加到下载列表' : `已添加 ${added} 个文件`)
-  if (dups) parts.push(`${dups} 个已在下载列表`)
-  if (failed.length) parts.push(`${failed.length} 个失败：${failed[0]}`)
+  if (added) parts.push(added === 1 ? t('gs_added_one') : tf('gs_added_n', { n: added }))
+  if (dups) parts.push(tf('gs_dup_n', { n: dups }))
+  if (failed.length) parts.push(tf('gs_failed_n', { n: failed.length, first: failed[0] }))
   if (note) parts.push(note)
-  if (!parts.length) parts.push('没有文件被加入下载列表')
+  if (!parts.length) parts.push(t('gs_added_none'))
   const important = failed.length > 0 || !!note
   message.open({
     content: parts.join(' · '),
@@ -424,7 +435,7 @@ onBeforeUnmount(() => {
           :class="{ active: s.id === activeSiteId }"
           @click="switchSite(s.id)"
         >
-          <CompassOutlined class="g-site-ic" />
+          <Compass class="g-site-ic" :size="14" />
           <span>{{ s.name }}</span>
         </button>
       </div>
@@ -432,12 +443,13 @@ onBeforeUnmount(() => {
       <div class="g-search">
         <input
           v-model="searchKeyword"
+          ref="searchInput"
           class="g-input"
           :placeholder="activeSite().searchPlaceholder"
           @keyup.enter="runSearch"
         />
-        <button class="g-go" title="搜索" @click="runSearch">
-          <SearchOutlined :class="{ spin: pendingCount > 0 }" />
+        <button class="g-go" :title="t('common_search')" @click="runSearch">
+          <Search :size="14" :class="{ spin: pendingCount > 0 }" />
         </button>
       </div>
 
@@ -446,17 +458,13 @@ onBeforeUnmount(() => {
           <div v-for="g in resultsBySite" :key="g.site.id" class="g-group">
             <div class="g-group-title">
               {{ g.site.name }}
-              <span v-if="g.pending" class="g-count">搜索中…</span>
+              <span v-if="g.pending" class="g-count">{{ t('gs_searching') }}</span>
               <span v-else class="g-count">{{ g.outcome?.results?.length ?? 0 }}</span>
-              <button
-                v-if="!g.pending && g.outcome && !g.outcome.ok"
-                class="g-retry"
-                @click="retrySite(g)"
-              >
-                重试
+              <button v-if="!g.pending && g.outcome && !g.outcome.ok" class="g-retry" @click="retrySite(g)">
+                {{ t('gs_retry') }}
               </button>
             </div>
-            <div v-if="g.pending" class="g-empty">正在检索 {{ g.site.name }}…</div>
+            <div v-if="g.pending" class="g-empty">{{ tf('gs_searching_site', { site: g.site.name }) }}</div>
             <template v-else-if="g.outcome?.ok">
               <div
                 v-if="g.outcome.results?.length"
@@ -467,12 +475,28 @@ onBeforeUnmount(() => {
               >
                 <span class="g-result-title">{{ r.title }}</span>
               </div>
-              <div v-else class="g-empty">{{ g.outcome.message ?? '无结果' }}</div>
+              <div v-else class="g-empty">
+                <div class="g-empty-text">{{ g.outcome.message ?? t('gs_no_result') }}</div>
+                <div class="g-empty-actions">
+                  <button class="g-empty-btn" @click="refocusSearch">{{ t('gs_new_kw') }}</button>
+                  <button class="g-empty-btn" @click="openSiteExternal(g.site)">
+                    {{ tf('gs_open_browser', { site: g.site.name }) }}
+                  </button>
+                </div>
+              </div>
             </template>
-            <div v-else class="g-empty">{{ g.outcome?.message }}</div>
+            <div v-else class="g-empty">
+              <div class="g-empty-text">{{ g.outcome?.message }}</div>
+              <div class="g-empty-actions">
+                <button class="g-empty-btn" @click="retrySite(g)">{{ t('gs_retry') }}</button>
+                <button class="g-empty-btn" @click="openSiteExternal(g.site)">
+                  {{ tf('gs_open_browser', { site: g.site.name }) }}
+                </button>
+              </div>
+            </div>
           </div>
         </template>
-        <div v-else class="g-hint">输入关键词搜索三个站点，点结果解析下载链接。</div>
+        <div v-else class="g-hint">{{ t('gs_hint') }}</div>
       </div>
     </aside>
 
@@ -480,31 +504,25 @@ onBeforeUnmount(() => {
     <div class="g-main">
       <div class="g-toolbar">
         <button class="g-nav-btn" :disabled="!canBack" @click="goBack">
-          <ArrowLeftOutlined />
+          <ArrowLeft :size="14" />
         </button>
         <button class="g-nav-btn" :disabled="!canForward" @click="goForward">
-          <ArrowRightOutlined />
+          <ArrowRight :size="14" />
         </button>
         <button class="g-nav-btn" @click="reload">
-          <ReloadOutlined :class="{ spin: loading }" />
+          <RefreshCw :size="14" :class="{ spin: loading }" />
         </button>
-        <button class="g-nav-btn" title="回到站点首页" @click="goHome">
-          <DownloadOutlined />
+        <button class="g-nav-btn" :title="t('gs_home')" @click="goHome">
+          <Download :size="14" />
         </button>
         <input v-model="address" class="g-addr" @keyup.enter="nav(address)" />
-        <button class="g-open" title="在系统浏览器打开当前页" @click="openExternal(address)">
-          <LinkOutlined />
+        <button class="g-open" :title="t('gs_open_ext')" @click="openExternal(address)">
+          <Link :size="14" />
         </button>
       </div>
       <div class="g-title">{{ pageTitle }}</div>
       <div class="g-web">
-        <webview
-          ref="webviewEl"
-          class="g-wv"
-          :src="activeSite().home"
-          :partition="GAMESITES_PARTITION"
-          allowpopups
-        />
+        <webview ref="webviewEl" class="g-wv" :src="activeSite().home" :partition="GAMESITES_PARTITION" allowpopups />
       </div>
     </div>
   </div>
@@ -649,6 +667,32 @@ onBeforeUnmount(() => {
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-faint);
   padding: 4px 2px;
+}
+.g-empty-text {
+  line-height: 1.6;
+}
+.g-empty-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  flex-wrap: wrap;
+}
+.g-empty-btn {
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--hh-color-border-ghost);
+  border-radius: var(--hh-radius-sm);
+  background: var(--hh-color-surface-mid);
+  color: var(--hh-color-text-mid);
+  font-size: var(--hh-font-caption-size);
+  cursor: pointer;
+  transition:
+    background var(--hh-motion-med) ease,
+    color var(--hh-motion-med) ease;
+}
+.g-empty-btn:hover {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
 }
 .g-hint {
   font-size: var(--hh-font-caption-size);

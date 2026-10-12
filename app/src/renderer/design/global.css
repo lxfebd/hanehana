@@ -138,8 +138,9 @@ body,
 .ant-select-selector {
   background: var(--hh-color-input) !important;
 }
+/* antd 主按钮：去掉彩色辉光阴影（专业 UI 的按钮不发光） */
 .ant-btn-primary {
-  box-shadow: 0 4px 14px var(--hh-color-accent-shadow);
+  box-shadow: none;
 }
 .ant-select-dropdown,
 .ant-popover-inner,

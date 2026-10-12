@@ -21,7 +21,10 @@ import { isId, err, type IpcCtx } from './shared'
 /** 路径归一后比较（分隔符/大小写不敏感），避免「同一路径写法不同」误报非法。 */
 function samePath(a: string, b: string): boolean {
   try {
-    return resolvePath(a.trim()).toLowerCase().replace(/\\/g, '/') === resolvePath(b.trim()).toLowerCase().replace(/\\/g, '/')
+    return (
+      resolvePath(a.trim()).toLowerCase().replace(/\\/g, '/') ===
+      resolvePath(b.trim()).toLowerCase().replace(/\\/g, '/')
+    )
   } catch {
     return a.trim().toLowerCase() === b.trim().toLowerCase()
   }
@@ -102,7 +105,8 @@ export function registerGamesHandlers(ctx: IpcCtx): void {
     const opts: Electron.SaveDialogOptions = {
       title: '导出游戏库',
       defaultPath: `hanehana-library.${format}`,
-      filters: format === 'csv' ? [{ name: 'CSV 表格', extensions: ['csv'] }] : [{ name: 'JSON', extensions: ['json'] }],
+      filters:
+        format === 'csv' ? [{ name: 'CSV 表格', extensions: ['csv'] }] : [{ name: 'JSON', extensions: ['json'] }],
     }
     let filePath: string | undefined
     if (process.env['HANEHANA_EXPORT_DEST']) {

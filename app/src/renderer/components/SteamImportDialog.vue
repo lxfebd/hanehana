@@ -9,6 +9,7 @@ import DialogShell from './DialogShell.vue'
 import { RefreshCw } from 'lucide-vue-next'
 import { refreshGames } from '../stores/library'
 import type { SteamCandidate } from '../../shared/types'
+import { t, tf } from '../i18n'
 
 const open = defineModel<boolean>('open')
 const scanning = ref(false)
@@ -29,7 +30,7 @@ async function runScan(): Promise<void> {
     candidates.value = list
     // 默认全选
     picked.value = new Set(list.map((c) => c.exePath))
-    result.value = list.length ? `找到 ${list.length} 款未入库的 Steam 游戏` : '未找到新的 Steam 游戏（已导入过的会自动跳过）'
+    result.value = list.length ? tf('si_found', { n: list.length }) : t('si_none')
   } catch (e) {
     error.value = true
     result.value = e instanceof Error ? e.message : String(e)
@@ -58,7 +59,7 @@ async function doImport(): Promise<void> {
     const r = await window.hh.steamImport(
       sel.map((c) => ({ dir: c.dir, exePath: c.exePath, rawTitle: c.rawTitle, appid: c.appid })),
     )
-    result.value = `已导入 ${r.added} 款（跳过 ${r.skipped} 款已有）`
+    result.value = tf('si_imported', { n: r.added, m: r.skipped })
     candidates.value = []
     picked.value = new Set()
     await refreshGames()
@@ -72,19 +73,19 @@ async function doImport(): Promise<void> {
 </script>
 
 <template>
-  <DialogShell v-model:open="open" title="从 Steam 导入" :width="560">
+  <DialogShell v-model:open="open" :title="t('si_title')" :width="560">
     <div class="steam-body">
       <div class="row">
         <button class="scan-btn" :disabled="scanning" @click="runScan">
-          <RefreshCw :size="14" :class="{ spin: scanning }" /> {{ scanning ? '扫描中…' : '扫描 Steam 库' }}
+          <RefreshCw :size="14" :class="{ spin: scanning }" /> {{ scanning ? t('si_scanning') : t('si_scan_btn') }}
         </button>
-        <span class="hint">自动读取 Steam 安装目录的 libraryfolders.vdf 与 appmanifest</span>
+        <span class="hint">{{ t('si_hint') }}</span>
       </div>
 
       <div v-if="result" class="result" :class="{ error }">{{ result }}</div>
 
       <div v-if="candidates.length" class="cands">
-        <div class="cands-title">勾选要入库的游戏（{{ picked.size }}/{{ candidates.length }}）：</div>
+        <div class="cands-title">{{ tf('si_pick', { n: picked.size, total: candidates.length }) }}</div>
         <div class="cand-list">
           <label v-for="c in candidates" :key="c.exePath" class="cand-row">
             <input type="checkbox" :checked="isPicked(c)" @change="toggle(c.exePath)" />
@@ -94,7 +95,7 @@ async function doImport(): Promise<void> {
           </label>
         </div>
         <button class="scan-btn primary" :disabled="importing || !picked.size" @click="doImport">
-          {{ importing ? '导入中…' : `导入所选（${picked.size}）` }}
+          {{ importing ? t('si_importing') : tf('si_import_btn', { n: picked.size }) }}
         </button>
       </div>
     </div>
@@ -102,9 +103,20 @@ async function doImport(): Promise<void> {
 </template>
 
 <style scoped>
-.steam-body { display: flex; flex-direction: column; gap: 14px; }
-.row { display: flex; align-items: center; gap: 10px; }
-.hint { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-tertiary); }
+.steam-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.hint {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-tertiary);
+}
 .scan-btn {
   display: inline-flex;
   align-items: center;
@@ -118,21 +130,44 @@ async function doImport(): Promise<void> {
   font-size: var(--hh-font-body-size);
   cursor: pointer;
 }
-.scan-btn:hover { background: var(--hh-color-surface-mid); }
-.scan-btn:disabled { opacity: 0.5; cursor: default; }
+.scan-btn:hover {
+  background: var(--hh-color-surface-mid);
+}
+.scan-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
 .scan-btn.primary {
   border: none;
-  background-image: var(--hh-color-accent-grad);
+  background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
   font-weight: 600;
   align-self: flex-start;
 }
-.spin { animation: ic-spin 1s linear infinite; }
-@keyframes ic-spin { to { transform: rotate(360deg); } }
-.result { font-size: var(--hh-font-body-size); color: var(--hh-color-success-text); }
-.result.error { color: var(--hh-color-error-text); }
-.cands { display: flex; flex-direction: column; gap: 10px; }
-.cands-title { font-size: var(--hh-font-body-size); color: var(--hh-color-text-strong); }
+.spin {
+  animation: ic-spin 1s linear infinite;
+}
+@keyframes ic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.result {
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-success-text);
+}
+.result.error {
+  color: var(--hh-color-error-text);
+}
+.cands {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.cands-title {
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-strong);
+}
 .cand-list {
   max-height: 280px;
   overflow-y: auto;
@@ -149,8 +184,32 @@ async function doImport(): Promise<void> {
   cursor: pointer;
   font-size: var(--hh-font-body-size);
 }
-.cand-row:hover { background: var(--hh-color-surface-soft); }
-.cand-name { font-weight: 500; color: var(--hh-color-text-glow); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 200px; }
-.cand-appid { font-size: 11px; color: var(--hh-color-accent-text); background: var(--hh-color-accent-bg); padding: 1px 7px; border-radius: var(--hh-radius-xs); flex: none; }
-.cand-path { font-size: 11px; color: var(--hh-color-text-tertiary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-left: auto; max-width: 180px; }
+.cand-row:hover {
+  background: var(--hh-color-surface-soft);
+}
+.cand-name {
+  font-weight: 500;
+  color: var(--hh-color-text-glow);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 200px;
+}
+.cand-appid {
+  font-size: 11px;
+  color: var(--hh-color-accent-text);
+  background: var(--hh-color-accent-bg);
+  padding: 1px 7px;
+  border-radius: var(--hh-radius-xs);
+  flex: none;
+}
+.cand-path {
+  font-size: 11px;
+  color: var(--hh-color-text-tertiary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-left: auto;
+  max-width: 180px;
+}
 </style>

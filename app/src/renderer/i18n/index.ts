@@ -1,230 +1,20 @@
 /**
- * i18n 骨架（G18）：轻量语言包。
+ * i18n（G18）：中文/英文双语词典 + t()/tf()。
  *
- * 只搭「词典 + t()」骨架，不全量翻译：核心导航/侧栏/按钮走 t()，
- * 长文案（设置页 hint、错误说明）仍用中文，后续按需补词条。
- * 词典是扁平键值，类型安全（key 必须两边都在）。
- * P2-3：37→103 词条，覆盖下载过滤、设置页签与高频交互按钮。
+ * 词典在 zh.ts / en.ts（数据层，约 470 键 × 2 语言）；这里只留逻辑：
+ * lang 响应式引用、setLanguage 切语言、t() 取词条（缺键回落 zh 再回落键名）、
+ * tf() 插值。I18nKey 类型从 zh.ts 的键集推导，en 在编译期被 Record<I18nKey, string>
+ * 强制与 zh 键一一对应。
+ *
+ * 范围：所有用户可见文案（导航/按钮/对话框/提示/海报）已接入；主进程
+ * 日志与注释不在此列。
  */
 import { ref, type Ref } from 'vue'
 import type { UILanguage } from '../../shared/types'
+import { zh, type I18nKey } from './zh'
+import { en } from './en'
 
-const zh = {
-  nav_library: '全部游戏',
-  nav_downloads: '下载任务',
-  nav_stats: '统计',
-  nav_games: '游戏站',
-  nav_settings: '设置',
-  nav_more: '更多',
-  nav_fullscreen: '全屏模式',
-  nav_steam_import: 'Steam 导入',
-  toolbar_search_placeholder: '搜索游戏 / 标签 / 原文名…',
-  toolbar_search_regex_placeholder: '正则匹配（如 ^恋.*＄）',
-  toolbar_regex: '正则搜索',
-  toolbar_export: '导出游戏库',
-  toolbar_export_csv: '导出 CSV',
-  toolbar_export_json: '导出 JSON',
-  toolbar_fav: '只看收藏',
-  toolbar_select: '多选模式',
-  toolbar_grid: '网格视图',
-  toolbar_list: '列表视图',
-  toolbar_all: '全部',
-  toolbar_smart: '智能列表',
-  lib_empty: '游戏库还是空的',
-  lib_empty_hint: '点「扫描导入」选择游戏目录，自动识别 exe 入库',
-  lib_scan: '扫描导入',
-  lib_add_one: '添加游戏',
-  lib_no_match: '没有匹配的游戏',
-  lib_clear: '清除筛选',
-  detail_launch: '启动游戏',
-  detail_running: '运行中',
-  detail_scrape: '刮削',
-  detail_edit: '编辑',
-  detail_dir: '目录',
-  detail_fav: '收藏',
-  detail_faved: '已收藏',
-  detail_backup: '备份',
-  detail_backup_on: '备份已开',
-  detail_backup_records: '备份记录',
-  detail_empty: '点击封面查看详情',
-  count_suffix: '款',
-  // ---- P2-3 下载页 ----
-  dl_filter_downloading: '下载中',
-  dl_filter_paused: '已暂停',
-  dl_filter_done: '已完成',
-  dl_filter_failed: '失败',
-  dl_search_placeholder: '搜索文件名 / 链接…',
-  dl_new: '新建下载',
-  dl_start_all: '全部开始',
-  dl_pause_all: '全部暂停',
-  dl_retry_failed: '重试全部失败',
-  dl_clear_finished: '清空已完成',
-  dl_clear_confirm: '清空所有已完成任务？',
-  dl_clear_ok: '清空',
-  dl_remove_task: '移除任务',
-  dl_remove_title: '移除该任务？',
-  dl_remove_content: '任务将从列表移除。磁盘上的文件与断点默认保留（不勾选删除文件时）。',
-  dl_empty: '还没有下载任务',
-  dl_empty_hint: '点右上角「＋」新建，或从游戏站捕获直链',
-  dl_no_match: '没有符合条件的任务',
-  // ---- P2-3 通用按钮 ----
-  common_cancel: '取消',
-  common_save: '保存',
-  common_ok: '确定',
-  common_clear: '清空',
-  common_delete: '删除',
-  common_close: '关闭',
-  common_browse: '浏览',
-  common_refresh: '刷新',
-  common_search: '搜索',
-  // ---- P2-3 设置页 ----
-  set_tab_download: '下载',
-  set_tab_notify: '通知',
-  set_tab_net: '网络',
-  set_tab_ui: '外观',
-  set_tab_backup: '备份',
-  set_tab_tools: '工具',
-  set_tab_track: '新作',
-  set_tab_about: '关于',
-  set_engine_unavailable: '下载引擎不可用',
-  set_threads: '默认分片数',
-  set_max_concurrent: '同时下载任务数',
-  set_download_dir: '默认保存目录',
-  set_confirm_delete: '删除任务时确认',
-  set_language: '界面语言 / Language',
-  set_theme_mode: '主题模式',
-  set_theme_system: '跟随系统',
-  set_theme_dark: '深色',
-  set_theme_light: '浅色',
-  set_theme_preset: '主题配色',
-  set_bg_image: '自定义背景',
-  set_bg_pick: '选择图片',
-  set_bg_replace: '更换',
-  set_proxy: '代理',
-  set_proxy_system: '留空＝跟随系统代理',
-  set_about_version: '版本',
-  set_about_data_dir: '数据目录',
-  set_about_engine: '引擎',
-  set_about_engine_path: '引擎路径',
-  set_auto_update: '自动更新',
-  set_check_update: '检查更新',
-  set_recheck_update: '重新检查',
-  set_install_restart: '立即重启安装',
-  set_engine_checking: '检测中…',
-  set_engine_ready: '已就位',
-  set_engine_missing: '不可用',
-  set_update_idle: '未检查',
-  set_update_checking: '检查中…',
-  set_update_installing: '正在安装…',
-} as const
-
-const en: Record<keyof typeof zh, string> = {
-  nav_library: 'Library',
-  nav_downloads: 'Downloads',
-  nav_stats: 'Stats',
-  nav_games: 'Sites',
-  nav_settings: 'Settings',
-  nav_more: 'More',
-  nav_fullscreen: 'Fullscreen',
-  nav_steam_import: 'Steam Import',
-  toolbar_search_placeholder: 'Search games / tags / titles…',
-  toolbar_search_regex_placeholder: 'Regex pattern (e.g. ^Koi.*$)',
-  toolbar_regex: 'Regex search',
-  toolbar_export: 'Export library',
-  toolbar_export_csv: 'Export CSV',
-  toolbar_export_json: 'Export JSON',
-  toolbar_fav: 'Favorites only',
-  toolbar_select: 'Multi-select',
-  toolbar_grid: 'Grid view',
-  toolbar_list: 'List view',
-  toolbar_all: 'All',
-  toolbar_smart: 'Smart lists',
-  lib_empty: 'Your library is empty',
-  lib_empty_hint: 'Click "Scan Import" to pick a folder and auto-add games',
-  lib_scan: 'Scan Import',
-  lib_add_one: 'Add Game',
-  lib_no_match: 'No matching games',
-  lib_clear: 'Clear filters',
-  detail_launch: 'Launch',
-  detail_running: 'Running',
-  detail_scrape: 'Scrape',
-  detail_edit: 'Edit',
-  detail_dir: 'Folder',
-  detail_fav: 'Favorite',
-  detail_faved: 'Favorited',
-  detail_backup: 'Backup',
-  detail_backup_on: 'Backup on',
-  detail_backup_records: 'Backups',
-  detail_empty: 'Click a cover to view details',
-  count_suffix: 'items',
-  dl_filter_downloading: 'Downloading',
-  dl_filter_paused: 'Paused',
-  dl_filter_done: 'Done',
-  dl_filter_failed: 'Failed',
-  dl_search_placeholder: 'Search filename / URL…',
-  dl_new: 'New download',
-  dl_start_all: 'Start all',
-  dl_pause_all: 'Pause all',
-  dl_retry_failed: 'Retry all failed',
-  dl_clear_finished: 'Clear finished',
-  dl_clear_confirm: 'Clear all finished tasks?',
-  dl_clear_ok: 'Clear',
-  dl_remove_task: 'Remove task',
-  dl_remove_title: 'Remove this task?',
-  dl_remove_content: 'The task will be removed from the list. Files and resume data on disk are kept by default.',
-  dl_empty: 'No download tasks yet',
-  dl_empty_hint: 'Click + to create one, or capture direct links from game sites',
-  dl_no_match: 'No matching tasks',
-  common_cancel: 'Cancel',
-  common_save: 'Save',
-  common_ok: 'OK',
-  common_clear: 'Clear',
-  common_delete: 'Delete',
-  common_close: 'Close',
-  common_browse: 'Browse',
-  common_refresh: 'Refresh',
-  common_search: 'Search',
-  set_tab_download: 'Download',
-  set_tab_notify: 'Notifications',
-  set_tab_net: 'Network',
-  set_tab_ui: 'Appearance',
-  set_tab_backup: 'Backup',
-  set_tab_tools: 'Tools',
-  set_tab_track: 'New releases',
-  set_tab_about: 'About',
-  set_engine_unavailable: 'Download engine unavailable',
-  set_threads: 'Default threads',
-  set_max_concurrent: 'Concurrent downloads',
-  set_download_dir: 'Default download folder',
-  set_confirm_delete: 'Confirm before deleting tasks',
-  set_language: 'Interface language / Language',
-  set_theme_mode: 'Theme mode',
-  set_theme_system: 'Follow system',
-  set_theme_dark: 'Dark',
-  set_theme_light: 'Light',
-  set_theme_preset: 'Theme color',
-  set_bg_image: 'Custom background',
-  set_bg_pick: 'Choose image',
-  set_bg_replace: 'Replace',
-  set_proxy: 'Proxy',
-  set_proxy_system: 'Empty = use system proxy',
-  set_about_version: 'Version',
-  set_about_data_dir: 'Data folder',
-  set_about_engine: 'Engine',
-  set_about_engine_path: 'Engine path',
-  set_auto_update: 'Auto update',
-  set_check_update: 'Check for updates',
-  set_recheck_update: 'Check again',
-  set_install_restart: 'Restart & install',
-  set_engine_checking: 'Checking…',
-  set_engine_ready: 'Ready',
-  set_engine_missing: 'Unavailable',
-  set_update_idle: 'Not checked',
-  set_update_checking: 'Checking…',
-  set_update_installing: 'Installing…',
-}
-
-export type I18nKey = keyof typeof zh
+export type { I18nKey }
 
 const dicts: Record<UILanguage, Record<I18nKey, string>> = { zh, en }
 
@@ -241,4 +31,20 @@ export function t(key: I18nKey): string {
   if (key in d) return d[key]
   if (key in zh) return zh[key as keyof typeof zh]
   return key
+}
+
+/**
+ * 取翻译并插值：tf('已导出 {fmt} 到：{path}', { fmt, path })。
+ * 只替换词条里出现的 {key} 占位符，没出现的参数忽略；模板不含占位符时
+ * 直接返回原文，行为等同 t()。
+ */
+export function tf(key: I18nKey, params?: Record<string, string | number>): string {
+  let s = t(key)
+  if (params) {
+    for (const [k, v] of Object.entries(params)) {
+      // split/join 替代 replaceAll（tsconfig lib 未到 es2021）
+      s = s.split(`{${k}}`).join(String(v))
+    }
+  }
+  return s
 }

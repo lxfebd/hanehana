@@ -28,8 +28,14 @@ ws.onmessage = (ev) => {
 }
 await new Promise((resolve, reject) => {
   const to = setTimeout(() => reject(new Error('browser ws open timeout')), 10000)
-  ws.onopen = () => { clearTimeout(to); resolve() }
-  ws.onerror = (e) => { clearTimeout(to); reject(new Error('browser ws error ' + (e?.message || ''))) }
+  ws.onopen = () => {
+    clearTimeout(to)
+    resolve()
+  }
+  ws.onerror = (e) => {
+    clearTimeout(to)
+    reject(new Error('browser ws error ' + (e?.message || '')))
+  }
 })
 let sessionId = null
 const sendRaw = (method, params = {}) =>
@@ -39,7 +45,12 @@ const sendRaw = (method, params = {}) =>
     const msg = { id: mid, method, params }
     if (sessionId) msg.sessionId = sessionId // sessionId 必须在消息顶层，否则被当作普通 params 忽略
     ws.send(JSON.stringify(msg))
-    setTimeout(() => { if (pending.has(mid)) { pending.delete(mid); rej(new Error('cdp timeout: ' + method)) } }, 12000)
+    setTimeout(() => {
+      if (pending.has(mid)) {
+        pending.delete(mid)
+        rej(new Error('cdp timeout: ' + method))
+      }
+    }, 12000)
   })
 const targets = await sendRaw('Target.getTargets')
 const page = (targets.result?.targetInfos || []).find((t) => t.type === 'page')
@@ -50,7 +61,8 @@ if (!sessionId) throw new Error('attachToTarget failed: ' + JSON.stringify(att))
 const send = (method, params = {}) => sendRaw(method, params)
 const evalJs = async (expr) => {
   const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-  if (r.result?.exceptionDetails) return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
+  if (r.result?.exceptionDetails)
+    return { __err: String(r.result.exceptionDetails.exception?.description ?? 'eval failed') }
   return r.result?.result?.value
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -126,7 +138,11 @@ const hitTargets = await evalJs(`(async () => {
                   })
   return { n: items.length, bad, dpr: devicePixelRatio, zoom: document.body.style.zoom || document.documentElement.style.zoom || 'none' }
 })()`)
-check('点击目标 ≥30px', hitTargets.n === 0 || hitTargets.bad.length === 0, `n=${hitTargets.n} dpr=${hitTargets.dpr} bad=[${hitTargets.bad}]`)
+check(
+  '点击目标 ≥30px',
+  hitTargets.n === 0 || hitTargets.bad.length === 0,
+  `n=${hitTargets.n} dpr=${hitTargets.dpr} bad=[${hitTargets.bad}]`,
+)
 
 // 5. img @error 兜底：触发错误事件后破图会被隐藏（Vue @error 绑定不会暴露为
 //    img.onerror 属性，正确做法是 dispatchEvent 一个 error 事件验证隐藏行为）
@@ -195,7 +211,11 @@ const settingsGuard = await evalJs(`(async () => {
   await new Promise(r => setTimeout(r, 200))
   return { ok: disabled, ...dump }
 })()`)
-check('代理格式非法时保存被禁用', settingsGuard.ok, `disabled=${settingsGuard.disabled} hint=${settingsGuard.hint} dump=${JSON.stringify(settingsGuard).slice(0, 300)}`)
+check(
+  '代理格式非法时保存被禁用',
+  settingsGuard.ok,
+  `disabled=${settingsGuard.disabled} hint=${settingsGuard.hint} dump=${JSON.stringify(settingsGuard).slice(0, 300)}`,
+)
 
 // 8. 对比度统一：同一语义（错误提示）只用 token 定义的错误色
 const errColor = await evalJs(`(() => {
@@ -204,11 +224,17 @@ const errColor = await evalJs(`(() => {
   for (const el of elems) colors.add(getComputedStyle(el).color)
   return { elems: elems.length, distinct: colors.size, colors: [...colors].slice(0, 4) }
 })()`)
-check('错误文案颜色单一真值', errColor.elems === 0 || errColor.distinct <= 1, `distinct=${errColor.distinct} elems=${errColor.elems}`)
+check(
+  '错误文案颜色单一真值',
+  errColor.elems === 0 || errColor.distinct <= 1,
+  `distinct=${errColor.distinct} elems=${errColor.elems}`,
+)
 
 // 收尾：关掉设置弹窗，回到下载页
 await evalJs(`document.querySelector('.ant-modal-close')?.click()`).catch(() => {})
-await evalJs(`[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('下载任务'))?.click()`).catch(() => {})
+await evalJs(
+  `[...document.querySelectorAll('.nav-item')].find(b => b.textContent.includes('下载任务'))?.click()`,
+).catch(() => {})
 
 ws.close()
 const failed = results.filter((r) => !r.ok)

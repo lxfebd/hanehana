@@ -12,6 +12,7 @@ import { Modal, message } from 'ant-design-vue'
 import DialogShell from './DialogShell.vue'
 import { library } from '../stores/library'
 import type { BackupStats, SnapshotInfo } from '../../shared/types'
+import { t, tf } from '../i18n'
 
 const open = defineModel<boolean>('open')
 
@@ -49,7 +50,7 @@ function fmtSize(bytes: number): string {
 }
 
 function fmtCount(n: number): string {
-  return `${n} 个文件`
+  return tf('backup_files', { n })
 }
 
 function fmtTime(ts: number): string {
@@ -67,7 +68,7 @@ async function createBackup(): Promise<void> {
   try {
     const snap = await window.hh.backupCreate(g.id)
     if (!snap) {
-      error.value = '游戏目录不存在，无法备份'
+      error.value = t('backup_no_dir')
     } else {
       await reload()
     }
@@ -83,10 +84,10 @@ function restoreSnapshot(snap: SnapshotInfo): void {
   const g = game.value
   if (!g || busy.value || !snap.dirPath) return
   Modal.confirm({
-    title: '恢复存档',
-    content: '恢复会覆盖游戏目录中同名存档（当前存档先挪到 .pre-restore 备份）。继续？',
-    okText: '恢复',
-    cancelText: '取消',
+    title: t('backup_restore_title'),
+    content: t('backup_restore_confirm'),
+    okText: t('backup_restore_ok'),
+    cancelText: t('common_cancel'),
     okButtonProps: { danger: true },
     onOk: async () => {
       busy.value = true
@@ -97,7 +98,7 @@ function restoreSnapshot(snap: SnapshotInfo): void {
         if (!r.ok) {
           error.value = r.error
         } else {
-          message.success(`已恢复 ${r.restored} 个存档文件`)
+          message.success(tf('backup_restored', { n: r.restored }))
         }
       } catch (e) {
         error.value = e instanceof Error ? e.message : String(e)
@@ -113,10 +114,10 @@ function deleteSnapshot(snap: SnapshotInfo): void {
   const g = game.value
   if (!g || busy.value || !snap.dirPath) return
   Modal.confirm({
-    title: '删除快照',
-    content: '删除这份快照？该操作不可恢复。',
-    okText: '删除',
-    cancelText: '取消',
+    title: t('backup_del_title'),
+    content: t('backup_del_confirm'),
+    okText: t('common_delete'),
+    cancelText: t('common_cancel'),
     okButtonProps: { danger: true },
     onOk: async () => {
       busy.value = true
@@ -125,7 +126,7 @@ function deleteSnapshot(snap: SnapshotInfo): void {
       try {
         const r = await window.hh.backupDelete(g.id, snap.dirPath!)
         if (r && r.ok === false) {
-          error.value = r.error || '删除失败'
+          error.value = r.error || t('backup_del_fail')
         } else {
           await reload()
         }
@@ -149,9 +150,9 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
     const r = await window.hh.backupSync(g.id, snap.dirPath)
     if ('errors' in r) {
       if (r.errors.length) {
-        error.value = `同步完成但有 ${r.errors.length} 项失败：${r.errors[0]}`
+        error.value = tf('backup_sync_partial', { n: r.errors.length, first: r.errors[0] })
       } else {
-        message.success(`同步完成：上传 ${r.uploaded}，下载 ${r.downloaded}`)
+        message.success(tf('backup_sync_ok', { up: r.uploaded, down: r.downloaded }))
       }
     } else if (!r.ok) {
       error.value = r.error
@@ -166,22 +167,22 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
 </script>
 
 <template>
-  <DialogShell v-model:open="open" title="存档备份" :width="600">
+  <DialogShell v-model:open="open" :title="t('backup_title')" :width="600">
     <div class="backup-body">
       <div class="head-row">
         <div class="title-wrap">
           <div class="game-title">{{ game?.title ?? '' }}</div>
-          <div class="hint" v-if="stats">{{ stats.snapshots.length }} 份本地快照</div>
-          <div class="hint" v-else>还没有快照</div>
+          <div class="hint" v-if="stats">{{ tf('backup_local_count', { n: stats.snapshots.length }) }}</div>
+          <div class="hint" v-else>{{ t('backup_none') }}</div>
         </div>
         <button class="btn primary" :disabled="busy || !game" @click="createBackup">
           <DatabaseBackup :size="14" />
-          {{ busy && busyAction === 'create' ? '备份中…' : '立即备份' }}
+          {{ busy && busyAction === 'create' ? t('backup_busy') : t('backup_now') }}
         </button>
       </div>
 
       <div v-if="error" class="error-bar">{{ error }}</div>
-      <div v-if="loading" class="loading">加载中…</div>
+      <div v-if="loading" class="loading">{{ t('backup_loading') }}</div>
 
       <div v-if="!loading && stats?.snapshots.length" class="snap-list">
         <div v-for="snap in stats.snapshots" :key="snap.dirPath" class="snap-row">
@@ -190,30 +191,29 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
             <div class="snap-meta">{{ fmtCount(snap.files) }} · {{ fmtSize(snap.totalBytes) }}</div>
           </div>
           <div class="snap-actions">
-            <button class="btn ghost" :disabled="busy" :title="'同步到 WebDAV'" @click="syncSnapshot(snap)">
+            <button class="btn ghost" :disabled="busy" :title="t('backup_sync_btn')" @click="syncSnapshot(snap)">
               <CloudUpload :size="13" />
-              {{ busy && busyAction === 'sync-' + snap.dirPath ? '同步中' : '云端' }}
+              {{ busy && busyAction === 'sync-' + snap.dirPath ? t('backup_syncing') : t('backup_cloud') }}
             </button>
-            <button class="btn ghost" :disabled="busy" title="恢复" @click="restoreSnapshot(snap)">
+            <button class="btn ghost" :disabled="busy" :title="t('backup_restore_ok')" @click="restoreSnapshot(snap)">
               <HardDriveDownload :size="13" />
-              {{ busy && busyAction === 'restore-' + snap.dirPath ? '恢复中' : '恢复' }}
+              {{ busy && busyAction === 'restore-' + snap.dirPath ? t('backup_restoring') : t('backup_restore_ok') }}
             </button>
-            <button class="btn ghost danger" :disabled="busy" title="删除" @click="deleteSnapshot(snap)">
+            <button class="btn ghost danger" :disabled="busy" :title="t('common_delete')" @click="deleteSnapshot(snap)">
               <Trash2 :size="13" />
-              {{ busy && busyAction === 'delete-' + snap.dirPath ? '删除中' : '删除' }}
+              {{ busy && busyAction === 'delete-' + snap.dirPath ? t('backup_deleting') : t('common_delete') }}
             </button>
           </div>
         </div>
       </div>
 
       <div v-if="!loading && !stats?.snapshots.length" class="empty">
-        <div class="empty-text">还没有存档快照。点击「立即备份」把当前存档完整复制一份。</div>
+        <div class="empty-text">{{ t('backup_empty') }}</div>
       </div>
 
       <div class="foot-hint">
         <RefreshCw :size="11" class="foot-icon" />
-        本地保留最近 {{ stats?.snapshots.length ?? 0 }} 份，超出的旧快照会自动轮转删除。
-        恢复前当前存档会先挪到 .pre-restore 下，可找回。
+        {{ tf('backup_rotation', { n: stats?.snapshots.length ?? 0 }) }}
       </div>
     </div>
   </DialogShell>
@@ -340,7 +340,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   cursor: default;
 }
 .btn.primary {
-  background-image: var(--hh-color-accent-grad);
+  background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
   font-weight: 600;
 }

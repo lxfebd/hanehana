@@ -7,6 +7,7 @@ import { computed, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import DialogShell from './DialogShell.vue'
 import { refreshGames } from '../stores/library'
+import { t, tf } from '../i18n'
 
 const open = defineModel<boolean>('open')
 const exePath = ref('')
@@ -36,21 +37,21 @@ async function pickExe(): Promise<void> {
 async function addOne(): Promise<void> {
   const p = exePath.value.trim()
   if (!p) {
-    message.warning('请先选择或输入 exe 路径')
+    message.warning(t('add_exe_missing'))
     return
   }
   adding.value = true
   try {
     const r = await window.hh.addGameOne(p)
     if (!r.ok) {
-      message.error(r.error || '添加失败')
+      message.error(r.error || t('add_failed'))
     } else {
-      message.success(`已入库：${r.game?.title ?? guessedTitle.value}`)
+      message.success(tf('add_ok', { title: r.game?.title ?? guessedTitle.value }))
       open.value = false
       await refreshGames()
     }
   } catch (e) {
-    message.error(`添加失败：${e instanceof Error ? e.message : String(e)}`)
+    message.error(tf('add_failed_detail', { msg: e instanceof Error ? e.message : String(e) }))
   } finally {
     adding.value = false
   }
@@ -58,30 +59,37 @@ async function addOne(): Promise<void> {
 </script>
 
 <template>
-  <DialogShell v-model:open="open" title="手动添加游戏" :width="480">
+  <DialogShell v-model:open="open" :title="t('add_title')" :width="480">
     <div class="add-body">
       <div class="row">
-        <input v-model="exePath" class="path-input" placeholder="游戏 exe 路径，如 D:\Games\Game\game.exe" @keyup.enter="addOne" />
-        <button class="add-btn ghost" @click="pickExe">浏览…</button>
+        <input v-model="exePath" class="path-input" :placeholder="t('add_exe_ph')" @keyup.enter="addOne" />
+        <button class="add-btn ghost" @click="pickExe">{{ t('common_browse') }}…</button>
         <button class="add-btn" :disabled="adding || !exePath.trim()" @click="addOne">
-          {{ adding ? '添加中…' : '添加' }}
+          {{ adding ? t('add_adding') : t('add_add') }}
         </button>
       </div>
 
       <div v-if="guessedTitle" class="preview">
-        <div class="preview-title">将按文件名入库：</div>
+        <div class="preview-title">{{ t('add_preview') }}</div>
         <div class="preview-name">{{ guessedTitle }}</div>
         <div class="preview-path">{{ exePath }}</div>
       </div>
 
-      <div class="hint">直接选一个可执行文件加入游戏库（不会扫描所在目录）。重复的 exe 会被自动跳过。</div>
+      <div class="hint">{{ t('add_hint') }}</div>
     </div>
   </DialogShell>
 </template>
 
 <style scoped>
-.add-body { display: flex; flex-direction: column; gap: 14px; }
-.row { display: flex; gap: 8px; }
+.add-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.row {
+  display: flex;
+  gap: 8px;
+}
 .path-input {
   flex: 1;
   height: 38px;
@@ -94,14 +102,20 @@ async function addOne(): Promise<void> {
   outline: none;
 }
 .add-btn {
-  height: 38px; padding: 0 20px;
+  height: 38px;
+  padding: 0 20px;
   border: none;
   border-radius: var(--hh-radius-md);
-  background: var(--hh-color-accent-grad);
-  color: var(--hh-color-on-accent); font-weight: 600; font-size: var(--hh-font-body-size);
+  background: var(--hh-color-accent);
+  color: var(--hh-color-on-accent);
+  font-weight: 600;
+  font-size: var(--hh-font-body-size);
   cursor: pointer;
 }
-.add-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.add-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 .add-btn.ghost {
   background: transparent;
   border: 1px solid var(--hh-color-border-ghost-soft);
@@ -113,8 +127,24 @@ async function addOne(): Promise<void> {
   border-radius: var(--hh-radius-md);
   padding: 10px 12px;
 }
-.preview-title { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-soft); margin-bottom: 6px; }
-.preview-name { font-size: var(--hh-font-bodyLg-size); font-weight: 600; color: var(--hh-color-text-stronger); }
-.preview-path { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-dim); margin-top: 4px; word-break: break-all; }
-.hint { font-size: var(--hh-font-caption-size); color: var(--hh-color-text-dim); }
+.preview-title {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-soft);
+  margin-bottom: 6px;
+}
+.preview-name {
+  font-size: var(--hh-font-bodyLg-size);
+  font-weight: 600;
+  color: var(--hh-color-text-stronger);
+}
+.preview-path {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+  margin-top: 4px;
+  word-break: break-all;
+}
+.hint {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
 </style>

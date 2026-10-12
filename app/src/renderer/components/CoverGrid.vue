@@ -11,14 +11,15 @@
  *   - 性能铁律：卡片内无 backdrop-filter；DOM 窗口化靠 RecycleScroller。
  *
  * 虚拟化度量（§3.5 固定）：
- *   - 网格：itemSize 332 = 封面 276 + 上间距 8 + 标题区 40 + 行距 8；
+ *   - 网格：itemSize 311 = 封面 234.67（184 卡宽 - 8 内边距 = 176 内容宽，3:4 高）
+ *     + 上间距 8 + 标题区 40 + 标签行 20 + 卡片垂直 padding 8；
  *     itemSecondarySize 200 = 卡槽 184 + 间距 16；cols = floor((w+16)/200)。
  *   - 列表：itemSize 72 单列。
  *   - 居中留白：layer wrapper 宽度 = cols*200 - 16，margin auto 居中。
  *     item-view 是绝对定位 transform，居中必须收窄「定位坐标系」本身，
  *     不能靠 item 内 padding。
  */
-import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Check, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
@@ -32,6 +33,33 @@ const props = defineProps<{
   view: 'grid' | 'list'
 }>()
 
+/** 右键菜单单例的公开形状（App.vue provide）。多选模式下不弹——批量浮层接管，
+ *  两套单款/批量语义同时出现会让用户犹豫点哪个。
+ *  注：函数类型形参必须用 _ 前缀——eslint 的 no-unused-vars 会把类型签名里的
+ *  形参名当未使用变量逐个报警（项目放行 /^_/u，见 .eslintrc）。 */
+interface GameCtxMenuApi {
+  showAt: (_x: number, _y: number, _g: GameCtxTarget) => void
+}
+const gameCtxMenu = inject<Ref<GameCtxMenuApi | null> | null>('gameCtxMenu', null)
+
+interface GameCtxTarget {
+  id: string
+  title: string
+  dir: string
+  favorite: boolean
+}
+
+/** 右击封面卡：在鼠标位置开单款菜单（不改当前选中——右键只是「看看能干嘛」） */
+function onCardContext(e: MouseEvent, g: Game): void {
+  if (library.selectMode) return
+  gameCtxMenu?.value?.showAt(e.clientX, e.clientY, {
+    id: g.id,
+    title: g.title,
+    dir: g.dir,
+    favorite: g.favorite,
+  })
+}
+
 const emit = defineEmits<{ select: [id: string] }>()
 const games = computed(() => props.games)
 const selected = computed(() => library.selectedId)
@@ -44,6 +72,12 @@ const containerRef = ref<HTMLElement | null>(null)
 const cols = ref(1)
 const focusIdx = ref(0)
 let ro: ResizeObserver | null = null
+
+/** 空态「清空筛选」按钮：关键词 + 分类一起清（单方法调用，模板不写多语句表达式） */
+function clearFilters(): void {
+  library.keyword = ''
+  library.categoryFilter = ''
+}
 
 /** 网格列数：容器宽 + 16（补回最右间距）÷ 200 卡槽 */
 function updateCols(): void {
@@ -70,7 +104,8 @@ onBeforeUnmount(() => {
  *  搜索词必须用防抖后的值：用实时 keyword 的话，120ms 防抖窗口内先按旧结果
  *  重建一次，随后 debouncedKeyword 更新但指纹不变，scroller 不会重建，残留旧行。 */
 const filterFingerprint = computed(
-  () => `${debouncedKeyword.value}|${library.categoryFilter}|${library.favOnly}|${library.smartList}|${library.metaKey}:${library.metaValue}`,
+  () =>
+    `${debouncedKeyword.value}|${library.categoryFilter}|${library.favOnly}|${library.smartList}|${library.metaKey}:${library.metaValue}`,
 )
 
 /** 网格 wrapper 宽度 = cols*200 - 16，居中留白 */
@@ -81,17 +116,17 @@ const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
  *   不带 c 的话 RecycleScroller 按 key 复用旧行 DOM，残留上一档列数的卡片。 */
 const gridRows = computed(() => {
   const c = cols.value
-  const rows: { k: string; games: Game[] }[] = []
+  const rows: { k: string; games: { g: Game; gi: number }[] }[] = []
   for (let i = 0; i < games.value.length; i += c) {
-    rows.push({ k: `${c}-${Math.floor(i / c)}`, games: games.value.slice(i, i + c) })
+    const items = games.value.slice(i, i + c).map((g, j) => ({ g, gi: i + j }))
+    rows.push({ k: `${c}-${Math.floor(i / c)}`, games: items })
   }
   return rows
 })
 
-/** 行内卡片要知道自己在全集里的 index（roving tabindex / 方向键） */
-function gIdx(id: string): number {
-  return games.value.findIndex((g) => g.id === id)
-}
+/** 行内卡片要知道自己在全集里的 index（roving tabindex / 方向键）。
+ *  不从这里找：gi 在 gridRows 里就带上（O(1)），老版每次渲染 findIndex
+ *  扫一遍全集，千级库 × 每次重渲 = 每帧几十万次比较。 */
 
 /** 占位底色：优先封面主色，退回哈希调色板（reactive，切主题自动刷新） */
 function placeholderBg(g: Game): string {
@@ -136,9 +171,17 @@ function imgErr(e: Event): void {
  *  下一次按键仍然作用在旧卡片上，roving 就死了。 */
 function moveFocus(next: number): void {
   focusIdx.value = Math.max(0, Math.min(games.value.length - 1, next))
-  // focusIdx 变了之后，dom 上唯一 tabindex=0 的就是目标卡片
-  const el = containerRef.value?.querySelector('[tabindex="0"]')
-  if (el instanceof HTMLElement) el.focus()
+  // 目标卡片可能还没挂载（虚拟化窗口外）——先滚动到可视区让 RecycleScroller
+  // 把那一行渲染出来，再 rAF 后取 [data-gi] 交焦点。直接用
+  // querySelector('[tabindex="0"]') 会在焦点行滚出窗口时返回 null，键盘导航断链。
+  const target = containerRef.value?.querySelector(`[data-gi="${focusIdx.value}"]`) as HTMLElement | null
+  if (target) {
+    target.scrollIntoView({ block: 'nearest' })
+  }
+  requestAnimationFrame(() => {
+    const el = containerRef.value?.querySelector(`[data-gi="${focusIdx.value}"]`) as HTMLElement | null
+    if (el instanceof HTMLElement) el.focus()
+  })
 }
 
 function onKeydown(e: KeyboardEvent, idx: number): void {
@@ -166,7 +209,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
     <!-- 加载中：骨架提示（games 为空但还在拉库，别闪"库是空的"） -->
     <div v-if="library.loading" class="empty glass">
       <Loader2 class="empty-icon spin" :size="40" :stroke-width="1.5" />
-      <div class="empty-title">正在加载游戏库…</div>
+      <div class="empty-title">{{ t('cg_loading') }}</div>
     </div>
 
     <!-- 空态：库里确实没有游戏 -->
@@ -180,8 +223,10 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
     <!-- 空态：有游戏但被搜索/分类过滤光了 -->
     <div v-else-if="games.length === 0" class="empty glass">
       <div class="empty-title">{{ t('lib_no_match') }}</div>
-      <div class="empty-hint">换换关键词或分类试试</div>
-      <button class="empty-cta ghost" @click="library.keyword = ''; library.categoryFilter = ''">{{ t('lib_clear') }}</button>
+      <div class="empty-hint">{{ t('cg_empty_hint') }}</div>
+      <button class="empty-cta ghost" @click="clearFilters()">
+        {{ t('lib_clear') }}
+      </button>
     </div>
 
     <!-- 网格视图：行级窗口化 + 每行 flex 自己排列（grid 位置由 CSS 响应式驱动，
@@ -192,7 +237,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       :key="`grid-${cols}-${filterFingerprint}`"
       class="scroller"
       :items="gridRows"
-      :item-size="332"
+      :item-size="311"
       key-field="k"
       :page-mode="false"
       :buffer="400"
@@ -201,36 +246,54 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       <template #default="{ item }">
         <div class="grid-row">
           <div
-            v-for="g in item.games"
-            :key="g.id"
+            v-for="it in item.games"
+            :key="it.g.id"
             class="cover-card"
-            :class="{ selected: selected === g.id, multi: library.selectMode, checked: library.selectMode && library.selection.includes(g.id) }"
+            :data-gi="it.gi"
+            :class="{
+              selected: selected === it.g.id,
+              multi: library.selectMode,
+              checked: library.selectMode && library.selection.includes(it.g.id),
+            }"
             role="gridcell"
-            :tabindex="focusIdx === gIdx(g.id) ? 0 : -1"
-            @click="click(g, gIdx(g.id))"
-            @keydown="onKeydown($event, gIdx(g.id))"
+            :tabindex="focusIdx === it.gi ? 0 : -1"
+            @click="click(it.g, it.gi)"
+            @keydown="onKeydown($event, it.gi)"
+            @contextmenu.prevent="onCardContext($event, it.g)"
           >
-            <div class="cover-thumb" :style="{ background: placeholderBg(g) }">
-              <img v-if="thumbUrl(g)" :src="thumbUrl(g)" loading="lazy" :alt="g.title" @error="imgErr" />
-              <span v-else class="cover-letter">{{ g.title.slice(0, 2) }}</span>
+            <div class="cover-thumb" :style="{ background: placeholderBg(it.g) }">
+              <img v-if="thumbUrl(it.g)" :src="thumbUrl(it.g)" loading="lazy" :alt="it.g.title" @error="imgErr" />
+              <span v-else class="cover-letter">{{ it.g.title.slice(0, 2) }}</span>
 
-              <div v-if="library.runningIds.has(g.id)" class="cover-running">
+              <div v-if="library.runningIds.has(it.g.id)" class="cover-running">
                 <Activity :size="10" :stroke-width="2.5" /> {{ t('detail_running') }}
               </div>
-              <div v-if="g.favorite" class="cover-fav" :title="t('detail_faved')">
+              <div v-if="it.g.favorite" class="cover-fav" :title="t('detail_faved')">
                 <Heart :size="10" :fill="'currentColor'" :stroke-width="0" />
               </div>
-              <div v-if="library.selectMode && library.selection.includes(g.id)" class="cover-check">
+              <div v-if="library.selectMode && library.selection.includes(it.g.id)" class="cover-check">
                 <Check :size="13" :stroke-width="3" />
               </div>
 
               <!-- 压暗渐变只给真图用：占位色块上画只会糊出一团灰雾 -->
-              <div v-if="thumbUrl(g)" class="cover-shade"></div>
+              <div v-if="thumbUrl(it.g)" class="cover-shade"></div>
             </div>
-            <!-- 标题区 32px：标题 + 发行年/时长副行 -->
+            <!-- 标题区 32px：标题 + 副行（发行年/时长 + 评分同一行，保持 40px 锁高） -->
             <div class="cover-titlezone">
-              <div class="cover-title" :title="g.title">{{ g.title }}</div>
-              <div class="cover-sub" v-if="fmtSub(g)">{{ fmtSub(g) }}</div>
+              <div class="cover-title" :title="it.g.title">{{ it.g.title }}</div>
+              <div class="cover-subrow">
+                <span class="cover-sub" v-if="fmtSub(it.g)">{{ fmtSub(it.g) }}</span>
+                <!-- 评分：星星 + 分数（数据来自刮削，无评分不占位） -->
+                <span v-if="it.g.rating" class="cover-rating" :title="t('dp_rating')">
+                  <Star class="rt-star" :size="10" :fill="starColor" :stroke-width="0" />
+                  <span class="num">{{ it.g.rating.toFixed(1) }}</span>
+                </span>
+              </div>
+            </div>
+            <!-- 标签 chips：最多 2 个，超出用 +N 收尾（提升网格信息密度，又不刷屏） -->
+            <div v-if="it.g.tags.length" class="cover-tags">
+              <span v-for="tag in it.g.tags.slice(0, 2)" :key="tag" class="cover-tag">{{ tag }}</span>
+              <span v-if="it.g.tags.length > 2" class="cover-tag more">+{{ it.g.tags.length - 2 }}</span>
             </div>
           </div>
         </div>
@@ -253,7 +316,12 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       <template #default="{ item, index }">
         <div
           class="list-row"
-          :class="{ selected: selected === item.id, multi: library.selectMode, checked: library.selectMode && library.selection.includes(item.id) }"
+          :data-gi="index"
+          :class="{
+            selected: selected === item.id,
+            multi: library.selectMode,
+            checked: library.selectMode && library.selection.includes(item.id),
+          }"
           role="row"
           :tabindex="focusIdx === index ? 0 : -1"
           @click="click(item, index)"
@@ -282,7 +350,9 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           <div class="list-cols">
             <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
             <span v-else></span>
-            <span v-if="item.rating"><Star class="num" :size="11" :fill="starColor" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span>
+            <span v-if="item.rating"
+              ><Star class="num" :size="11" :fill="starColor" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span
+            >
             <span v-else></span>
             <span v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</span>
             <span v-else></span>
@@ -319,33 +389,52 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   color: var(--hh-color-text-tertiary);
   margin-bottom: 12px;
 }
-.empty-icon.spin { animation: ic-spin 1s linear infinite; }
-@keyframes ic-spin {
-  to { transform: rotate(360deg); }
+.empty-icon.spin {
+  animation: ic-spin 1s linear infinite;
 }
-.empty-title { font-size: var(--hh-font-subtitle-size); font-weight: 600; margin-bottom: 6px; color: var(--hh-color-text-glow); }
-.empty-hint { font-size: var(--hh-font-body-size); color: var(--hh-color-text-mid); margin-bottom: 0; }
+@keyframes ic-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.empty-title {
+  font-size: var(--hh-font-subtitle-size);
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--hh-color-text-glow);
+}
+.empty-hint {
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-mid);
+  margin-bottom: 0;
+}
+/* 主 CTA：accent 实色（不用渐变——渐变按钮是配色遮羞布，
+   实色 + hover 提亮才是专业 UI 的口径） */
 .empty-cta {
   margin-top: 18px;
   height: 34px;
   padding: 0 22px;
   border-radius: var(--hh-radius-md);
   border: none;
-  background-image: var(--hh-color-accent-grad);
+  background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
   font-size: var(--hh-font-body-size);
   font-weight: 600;
   cursor: pointer;
-  transition: filter var(--hh-motion-med) ease;
+  transition: background var(--hh-motion-med) ease;
 }
-.empty-cta:hover { filter: brightness(1.08); }
+.empty-cta:hover {
+  background: var(--hh-color-accent-hover);
+}
 .empty-cta.ghost {
   background: transparent;
   border: 1px solid var(--hh-color-border-ghost);
   color: var(--hh-color-text-muted-pure);
   font-weight: 500;
 }
-.empty-cta.ghost:hover { background: var(--hh-color-surface-mid); }
+.empty-cta.ghost:hover {
+  background: var(--hh-color-surface-mid);
+}
 
 /* ============ 网格 ============ */
 /* 行级虚拟化：scroller 只纵向窗口化行，行内 flex 自己排列。
@@ -370,28 +459,31 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   padding: 4px;
   background: var(--hh-color-card);
   border: 1px solid var(--hh-color-card-border);
-  transition: transform var(--hh-motion-med) ease, background var(--hh-motion-med) ease, border-color var(--hh-motion-med) ease;
+  transition:
+    transform var(--hh-motion-med) ease,
+    background var(--hh-motion-med) ease,
+    border-color var(--hh-motion-med) ease;
   /* 焦点环交给全局 :focus-visible（WCAG 2.4.11），不留 outline:none 掐死它 */
 }
+/* hover 不抬升不缩放：translateY/scale 是"AI 演示动画"手法，
+   桌面工具软件里每张卡都会跳只会让人晕。改为边框提亮 + 底色微亮，
+   信息密度高的界面里，动效越少越显专业。 */
 .cover-card:hover {
-  transform: translateY(-4px);
   background: var(--hh-color-card-hover);
-  border-color: var(--hh-color-surface-hover);
+  border-color: var(--hh-color-accent-selected-border);
 }
-.cover-card.multi { cursor: pointer; }
+.cover-card.multi {
+  cursor: pointer;
+}
+/* 选中态：accent 描边 + 低透明底。不做外发光（glow）——
+   发光是"AI 味"重灾区，专业软件用边框说话。 */
 .cover-card.checked {
   background: var(--hh-color-accent-selected-bg);
   border-color: var(--hh-color-accent);
-  box-shadow:
-    0 0 0 1px var(--hh-color-accent),
-    0 8px 24px var(--hh-color-accent-selected-ring);
 }
 .cover-card.selected {
-  background: var(--hh-color-accent-soft);
+  background: var(--hh-color-accent-selected-bg);
   border-color: var(--hh-color-accent);
-  box-shadow:
-    0 0 0 1px var(--hh-color-accent),
-    0 8px 24px var(--hh-color-accent-selected-ring);
 }
 
 .cover-thumb {
@@ -403,77 +495,174 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   transition: box-shadow var(--hh-motion-med) ease;
 }
 .cover-thumb img {
-  width: 100%; height: 100%;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display: block;
   transition: transform var(--hh-motion-page) cubic-bezier(0.22, 0.61, 0.36, 1);
 }
-.cover-card:hover .cover-thumb img { transform: scale(1.06); }
+.cover-card:hover .cover-thumb img {
+  /* 只做极轻微的提亮（1.02），不做放大——缩放会让相邻封面边缘露白 */
+  filter: brightness(1.06);
+}
 .cover-letter {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 24px; font-weight: 600; color: var(--hh-color-text-mid);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  font-weight: 600;
+  color: var(--hh-color-text-mid);
 }
 
 /* 运行中徽章（评分不上卡） */
 .cover-running {
-  position: absolute; top: 8px; left: 8px;
+  position: absolute;
+  top: 8px;
+  left: 8px;
   background: var(--hh-color-success-opaque);
-  color: var(--hh-color-on-success); font-size: 11px; font-weight: 600;
-  padding: 3px 9px; border-radius: var(--hh-radius-sm);
+  color: var(--hh-color-on-success);
+  font-size: 11px;
+  font-weight: 600;
+  padding: 3px 9px;
+  border-radius: var(--hh-radius-sm);
   z-index: 2;
-  display: flex; align-items: center; gap: 3px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
 }
 /* 收藏角标：右上角小爱心 */
 .cover-fav {
-  position: absolute; top: 8px; right: 8px;
+  position: absolute;
+  top: 8px;
+  right: 8px;
   color: var(--hh-color-star);
   background: var(--hh-color-surface-strong);
-  width: 20px; height: 20px;
+  width: 20px;
+  height: 20px;
   border-radius: var(--hh-radius-sm);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 2;
 }
 /* 多选勾选角标：右下角实心对勾 */
 .cover-check {
-  position: absolute; bottom: 8px; right: 8px;
+  position: absolute;
+  bottom: 8px;
+  right: 8px;
   background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
-  width: 22px; height: 22px;
+  width: 22px;
+  height: 22px;
   border-radius: var(--hh-radius-pill);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   z-index: 2;
 }
 
 /* 封面底部轻渐晕（标题在封面下，只做视觉过渡） */
 .cover-shade {
-  position: absolute; left: 0; right: 0; bottom: 0; height: 35%;
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 35%;
   background: linear-gradient(to top, var(--hh-color-shade-thumb), transparent);
   z-index: 1;
 }
 
-/* 标题区 40px：封面下方，非叠图 */
+/* 标题区 40px：封面下方，非叠图。评分行叠在副行位置（无评分时副行让位），
+   两行总高仍锁 40px——虚拟化 itemSize 按这个数排版，不能随意撑高。 */
 .cover-titlezone {
   padding: 5px 2px 0;
   height: 40px;
   box-sizing: border-box;
   overflow: hidden;
 }
+/* 评分与副行（发行年/时长）抢同一行：都有时评分在左、副行在右，
+   只有其一时各自独占。用 flex 一行放下，避免把标题区撑到两行。 */
+.cover-subrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  line-height: 16px;
+  min-width: 0;
+}
+.cover-subrow .cover-sub {
+  flex: 1;
+  min-width: 0;
+}
+.cover-rating {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.cover-rating .rt-star {
+  flex: none;
+  color: var(--hh-color-star);
+}
 .cover-title {
-  font-size: var(--hh-font-body-size); line-height: 18px; font-weight: 600;
+  font-size: var(--hh-font-body-size);
+  line-height: 18px;
+  font-weight: 600;
   color: var(--hh-color-text-glow);
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .cover-sub {
-  font-size: var(--hh-font-caption-size); line-height: 16px;
+  font-size: var(--hh-font-caption-size);
+  line-height: 16px;
   color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 标签 chips 行：封面卡底部，最多 2 个 + "+N"。
+   高度锁 20px（含 4px 上间距），网格 itemSize 已把这个余量算进去。 */
+.cover-tags {
+  display: flex;
+  gap: 4px;
+  padding: 4px 2px 0;
+  height: 20px;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+.cover-tag {
+  flex: none;
+  min-width: 0;
+  max-width: 84px;
+  padding: 1px 6px;
+  border-radius: var(--hh-radius-xs);
+  background: var(--hh-color-surface-mid);
+  border: 1px solid var(--hh-color-border-faint);
+  color: var(--hh-color-text-muted);
+  font-size: 11px;
+  line-height: 14px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cover-tag.more {
+  background: transparent;
+  border-color: transparent;
+  color: var(--hh-color-text-dim);
 }
 
 /* ============ 列表 ============ */
 .list-row {
-  display: flex; align-items: center; gap: 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   height: 72px;
   padding: 0 10px;
   border-radius: var(--hh-radius-lg);
@@ -482,62 +671,109 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   margin: 4px 0;
   box-sizing: border-box;
 }
-.list-row:hover { background: var(--hh-color-surface-soft); }
-.list-row.selected { background: var(--hh-color-accent-selected-bg); }
-.list-row.checked { background: var(--hh-color-accent-selected-bg); }
+.list-row:hover {
+  background: var(--hh-color-surface-soft);
+}
+.list-row.selected {
+  background: var(--hh-color-accent-selected-bg);
+}
+.list-row.checked {
+  background: var(--hh-color-accent-selected-bg);
+}
 .list-thumb {
-  width: 44px; height: 66px;
-  border-radius: var(--hh-radius-xs); overflow: hidden; flex-shrink: 0;
+  width: 44px;
+  height: 66px;
+  border-radius: var(--hh-radius-xs);
+  overflow: hidden;
+  flex-shrink: 0;
   position: relative;
   box-shadow: 0 3px 10px var(--hh-color-thumb-shadow-soft);
 }
-.list-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.list-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .list-letter {
-  position: absolute; inset: 0;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 22px; font-weight: 700; color: var(--hh-color-text-dim);
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--hh-color-text-dim);
 }
 .list-running {
-  position: absolute; top: 4px; right: 4px;
+  position: absolute;
+  top: 4px;
+  right: 4px;
   background: var(--hh-color-success-opaque);
-  width: 18px; height: 18px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--hh-radius-xs);
-  display: flex; align-items: center; justify-content: center;
-  font-size: 11px; color: var(--hh-color-on-success);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  color: var(--hh-color-on-success);
 }
 .list-fav {
-  position: absolute; bottom: 3px; right: 3px;
+  position: absolute;
+  bottom: 3px;
+  right: 3px;
   color: var(--hh-color-star);
-  width: 15px; height: 15px;
+  width: 15px;
+  height: 15px;
   border-radius: var(--hh-radius-xs);
   background: var(--hh-color-surface-strong);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .list-check {
-  position: absolute; top: 4px; left: 4px;
+  position: absolute;
+  top: 4px;
+  left: 4px;
   background: var(--hh-color-accent);
   color: var(--hh-color-on-accent);
-  width: 18px; height: 18px;
+  width: 18px;
+  height: 18px;
   border-radius: var(--hh-radius-pill);
-  display: flex; align-items: center; justify-content: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   font-size: 11px;
 }
-.list-body { flex: 1; min-width: 0; }
+.list-body {
+  flex: 1;
+  min-width: 0;
+}
 .list-title {
-  font-size: var(--hh-font-body-size); font-weight: 500;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font-size: var(--hh-font-body-size);
+  font-weight: 500;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .list-meta {
-  font-size: var(--hh-font-caption-size); color: var(--hh-color-text-muted);
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-muted);
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 /* 右侧三列 caption tabular-nums：发行 / 评分 / 时长。
    窄视口下永不挤压标题区：左、中两列可整体收缩换行，右列为空时让位。 */
 .list-cols {
-  display: flex; align-items: center; gap: 12px;
-  font-size: var(--hh-font-caption-size); color: var(--hh-color-text-tertiary);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-tertiary);
   font-variant-numeric: tabular-nums;
   min-width: 0;
   flex-shrink: 0;
@@ -545,16 +781,24 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 .list-cols span {
   flex-shrink: 1;
   flex-basis: auto;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.list-cols .num { vertical-align: -1px; }
+.list-cols .num {
+  vertical-align: -1px;
+}
 
 /* 窄视口让位：次要列逐级退场，标题区永远保有足够宽度。
    时长列先退，评分列再退，最低只留发行年。 */
 @media (max-width: 1100px) {
-  .list-cols span:nth-child(3) { display: none; }
+  .list-cols span:nth-child(3) {
+    display: none;
+  }
 }
 @media (max-width: 960px) {
-  .list-cols span:nth-child(2) { display: none; }
+  .list-cols span:nth-child(2) {
+    display: none;
+  }
 }
 </style>

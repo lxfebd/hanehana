@@ -13,8 +13,13 @@ const BARE_RADIUS = /border-radius:\s*\d+px\b/
 let passed = 0
 let failed = 0
 function assert(name, cond, extra = '') {
-  if (cond) { passed++; console.log('PASS ' + name) }
-  else { failed++; console.log('FAIL ' + name + (extra ? ' :: ' + extra : '')) }
+  if (cond) {
+    passed++
+    console.log('PASS ' + name)
+  } else {
+    failed++
+    console.log('FAIL ' + name + (extra ? ' :: ' + extra : ''))
+  }
 }
 
 function walk(dir, out = []) {

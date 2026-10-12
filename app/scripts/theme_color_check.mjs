@@ -7,12 +7,24 @@ if (!page) throw new Error('no page target')
 const ws = new WebSocket(page.webSocketDebuggerUrl)
 let msgId = 0
 const pending = new Map()
-ws.onmessage = (ev) => { const m = JSON.parse(ev.data); if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id) } }
+ws.onmessage = (ev) => {
+  const m = JSON.parse(ev.data)
+  if (m.id && pending.has(m.id)) {
+    pending.get(m.id)(m)
+    pending.delete(m.id)
+  }
+}
 await new Promise((r) => (ws.onopen = r))
-const send = (method, params = {}) => new Promise((res) => { const mid = ++msgId; pending.set(mid, res); ws.send(JSON.stringify({ id: mid, method, params })) })
+const send = (method, params = {}) =>
+  new Promise((res) => {
+    const mid = ++msgId
+    pending.set(mid, res)
+    ws.send(JSON.stringify({ id: mid, method, params }))
+  })
 const evalJs = async (expr) => {
   const res = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true })
-  if (res.result?.exceptionDetails) return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
+  if (res.result?.exceptionDetails)
+    return { __err: String(res.result.exceptionDetails.exception?.description ?? 'eval failed') }
   return res.result?.result?.value
 }
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -21,9 +33,16 @@ await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => 
 await send('Page.bringToFront').catch(() => {})
 await wait(600)
 
-let passed = 0, failed = 0
+let passed = 0,
+  failed = 0
 const check = (name, cond, detail = '') => {
-  if (cond) { passed++; console.log(`PASS  ${name}`) } else { failed++; console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`) }
+  if (cond) {
+    passed++
+    console.log(`PASS  ${name}`)
+  } else {
+    failed++
+    console.log(`FAIL  ${name}${detail ? ' — ' + detail : ''}`)
+  }
 }
 
 // 判断颜色是否偏蓝（AI 蓝检测）：rgba/hex → {r,g,b}，b 明显高于 r/g 且饱和度够高
@@ -37,7 +56,9 @@ function isBluish(col) {
   const h = col.match(/#([0-9a-fA-F]{6})/)
   if (h) {
     const n = parseInt(h[1], 16)
-    const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255
+    const r = (n >> 16) & 255,
+      g = (n >> 8) & 255,
+      b = n & 255
     return b > r + 25 && b > g + 25
   }
   return false
@@ -78,27 +99,55 @@ async function sampleTheme(themeLabel) {
   const blueHits = blueHunt.filter((x) => isBluish(x.v) && !x.v.startsWith('rgba(0, 0, 0'))
   console.log('BLUE_HITS:', blueHits.length)
   for (const h of blueHits.slice(0, 15)) console.log('  ' + h.sel + '[' + h.prop + '] = ' + h.v)
-  check(`${themeLabel} 无蓝色残留 (${blueHits.length} hits)`, blueHits.length === 0, blueHits.map((h) => `${h.sel}.${h.prop}=${h.v}`).join(' | '))
+  check(
+    `${themeLabel} 无蓝色残留 (${blueHits.length} hits)`,
+    blueHits.length === 0,
+    blueHits.map((h) => `${h.sel}.${h.prop}=${h.v}`).join(' | '),
+  )
   return { s, blueHits }
 }
 
 // 深色
-await evalJs(`window.hh.getSettings().then(async (s) => { if (!s.dark) await window.hh.saveSettings({ ...s, dark: true }); return true })`)
+await evalJs(
+  `window.hh.getSettings().then(async (s) => { if (!s.dark) await window.hh.saveSettings({ ...s, dark: true }); return true })`,
+)
 await send('Page.reload', { ignoreCache: true })
 await wait(4000)
 const dark = await sampleTheme('dark')
 check('深色 theme=dark', dark.s?.theme === 'dark', String(dark.s?.theme))
-check('深色 sidebar 底是深灰/纯黑系', (dark.s?.sidebar?.bg || '').includes('(24, 24, 24)') || (dark.s?.sidebar?.bg || '').includes('rgb(10, 10, 10)') || (dark.s?.sidebar?.bg || '').includes('0, 0, 0'), String(dark.s?.sidebar?.bg))
-check('深色文本为亮字', (dark.s?.body?.color || '').includes('250, 250, 250') || (dark.s?.body?.color || '').includes('255, 255, 255'), String(dark.s?.body?.color))
+check(
+  '深色 sidebar 底是深灰/纯黑系',
+  (dark.s?.sidebar?.bg || '').includes('(24, 24, 24)') ||
+    (dark.s?.sidebar?.bg || '').includes('rgb(10, 10, 10)') ||
+    (dark.s?.sidebar?.bg || '').includes('0, 0, 0'),
+  String(dark.s?.sidebar?.bg),
+)
+check(
+  '深色文本为亮字',
+  (dark.s?.body?.color || '').includes('250, 250, 250') || (dark.s?.body?.color || '').includes('255, 255, 255'),
+  String(dark.s?.body?.color),
+)
 
 // 浅色
-await evalJs(`window.hh.getSettings().then(async (s) => { if (s.dark) await window.hh.saveSettings({ ...s, dark: false }); return true })`)
+await evalJs(
+  `window.hh.getSettings().then(async (s) => { if (s.dark) await window.hh.saveSettings({ ...s, dark: false }); return true })`,
+)
 await send('Page.reload', { ignoreCache: true })
 await wait(4000)
 const light = await sampleTheme('light')
 check('浅色 theme=light', light.s?.theme === 'light', String(light.s?.theme))
-check('浅色正文为深字', (light.s?.body?.color || '').includes('24, 24, 27') || (light.s?.body?.color || '').includes('0, 0, 0'), String(light.s?.body?.color))
-check('浅色 body 底为白/浅灰', (light.s?.body?.bg || '').includes('255, 255, 255') || (light.s?.body?.bg || '').includes('247, 247, 248') || light.s?.body?.bg === 'rgba(0, 0, 0, 0)', String(light.s?.body?.bg))
+check(
+  '浅色正文为深字',
+  (light.s?.body?.color || '').includes('24, 24, 27') || (light.s?.body?.color || '').includes('0, 0, 0'),
+  String(light.s?.body?.color),
+)
+check(
+  '浅色 body 底为白/浅灰',
+  (light.s?.body?.bg || '').includes('255, 255, 255') ||
+    (light.s?.body?.bg || '').includes('247, 247, 248') ||
+    light.s?.body?.bg === 'rgba(0, 0, 0, 0)',
+  String(light.s?.body?.bg),
+)
 
 console.log(`\n==== ${passed} passed, ${failed} failed ====`)
 ws.close()
