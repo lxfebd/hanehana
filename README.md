@@ -6,6 +6,7 @@
 找到 → 下下来 → 入库 → 启动 → 记录时长，一个窗口里闭环
 
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+[![CI](https://github.com/lxfebd/hanehana/actions/workflows/ci.yml/badge.svg)](https://github.com/lxfebd/hanehana/actions/workflows/ci.yml)
 ![Electron](https://img.shields.io/badge/Electron-44-2b2e3a.svg)
 ![Vue](https://img.shields.io/badge/Vue-3.5-42b883.svg)
 ![Rust](https://img.shields.io/badge/Rust-tokio%20%2B%20reqwest-000000.svg)
