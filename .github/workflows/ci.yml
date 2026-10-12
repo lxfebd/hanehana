@@ -15,7 +15,9 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # Electron 44 要求 Node >= 22.12：用 Node 20 时 electron 的二进制不会落地，
+          # 静态闸里的 CDP 段会报 spawn electron.exe ENOENT。
+          node-version: 24
           cache: npm
           cache-dependency-path: app/package-lock.json
 
@@ -34,8 +36,7 @@ jobs:
         working-directory: app
         run: npm run build
 
-      # grep 验收闸（秒级，纯静态找源码文本，不起窗口）：R7-R9 的结构承诺
-      # 用「如果源码里出现某个符号/命名就断言」固化下来，防改回旧风格。
+      # grep 验收闸（秒级）+ 这批脚本自带的 CDP 运行时闸（起真实窗口，验证 IPC 与弹层）。
       # 本地手跑 acceptance 脚本闭了本机，但合入前谁都有忘跑的可能——进 CI 兜底。
       - name: regression static (grep gates)
         working-directory: app

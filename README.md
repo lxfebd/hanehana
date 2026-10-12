@@ -86,7 +86,7 @@
 
 ## 🚀 快速开始
 
-**前置依赖**：Node.js 20+ 与 npm、Rust stable（rustup）。Electron 由 npm 依赖安装。
+**前置依赖**：Node.js 22.12+ 与 npm（Electron 44 的硬性要求）、Rust stable（rustup）。Electron 由 npm 依赖安装。
 
 ```bash
 # 1) 构建 Rust 下载引擎（打包与下载功能的必需件）
