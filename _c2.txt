@@ -1,0 +1,4 @@
+chore(仓库整理): 移除误提交的 lint 输出残留，补 .gitignore
+
+- 删除 app/eslint_out.txt（跑 lint 时的 stdout 重定向残留，6048B，非源码）
+- .gitignore 补 app/*_out.txt 等输出残留规则，避免同类文件再次入库

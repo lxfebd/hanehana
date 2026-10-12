@@ -29,6 +29,13 @@ app/.*-game/
 app/.*-game2/
 app/.batch*-mock.json
 app/.batch*-export/
+# 命令输出重定向的残留（lint/probe 等的 stdout 落地文件）
+app/eslint_out.txt
+app/*_out.txt
+# 批处理验收的临时输出（脚本跑完留下，非源码）
+app/.batch*-err.txt
+app/.batch*-out.txt
+app/.b*/
 
 # 图标管线的中间产物（只有 icon_src.png 输入 + icon.ico/tray.png/icon-256.png 输出入库）
 app/build/icon_src_cropped.png
