@@ -1,5 +1,5 @@
 /**
- * 缩略图管线（REDESIGN-SPEC §3.4）。
+ * 缩略图管线。
  *
  * 封面全尺寸原图直接进网格会打爆 GPU 内存，这里在封面下载后/启动回填时
  * 生成 320 宽 JPEG 缩略图缓存到 userData/thumbs/{gameId}.jpg，渲染层

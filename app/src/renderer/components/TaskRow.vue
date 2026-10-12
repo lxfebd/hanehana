@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 任务行（REDESIGN-SPEC §5.5 Motrix 化）：
+ * 任务行（Motrix 化）：
  *   - 高 64，card 材质，margin-bottom 8，radius 12
  *   - 左：状态色点 4px 竖条 + 状态图标 16
  *   - 中：name 13 单行 + sub caption mono（速度·剩余·区间 / 错误行 / 完成信息）

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 下载页（REDESIGN-SPEC §5.5）。
+ * 下载页。
  *   - 删除 .dl-side 第二侧栏；单行工具栏：
  *     segmented 状态过滤（带 count）+ 搜索框 + 排序 Select + 总速度 + 按钮组
  *   - 任务行 Motrix 化（见 TaskRow.vue）：高 64、底部绝对进度条、自绘状态 chip
@@ -357,7 +357,7 @@ function onAll(action: string): void {
   box-shadow: 0 0 0 3px var(--hh-color-accent-focus-ring);
 }
 
-/* ============ 批状态汇总条（INTERACTION-SPEC Task 1）============ */
+/* ============ 批状态汇总条 ============ */
 .dl-batch {
   display: flex;
   align-items: center;

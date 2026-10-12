@@ -85,7 +85,7 @@ export const zh = {
   sort_progress: '进度',
   sort_size: '文件大小',
   sort_speed: '当前速度',
-  // ---- 汇总条（INTERACTION-SPEC Task 1）----
+  // ---- 汇总条 ----
   dl_batch_done: '个完成',
   dl_batch_error: '个失败',
   dl_batch_paused: '个暂停',

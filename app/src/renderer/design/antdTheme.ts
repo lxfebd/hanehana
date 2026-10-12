@@ -1,7 +1,7 @@
 /**
- * antd 主题（REDESIGN-SPEC §4.1）。
+ * antd 主题。
  *
- * 铁律 §0-3：seed token 只喂实色 hex（rgba 会破坏 darkAlgorithm 的派生色链），
+ * 铁律：seed token 只喂实色 hex（rgba 会破坏 darkAlgorithm 的派生色链），
  * 半透明只出现在 component tokens 的定点覆盖（Select optionSelectedBg）。
  * 浮层（Modal/Select 下拉/Popconfirm/Message）保持实色高不透明。
  *

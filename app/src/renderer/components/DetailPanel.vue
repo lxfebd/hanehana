@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 详情面板（REDESIGN-SPEC §5.4，樱夜 hero 化）。
+ * 详情面板（樱夜 hero 化）。
  *   - 横幅 224px hero：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
  *   - 前景左 cover 104x156；右列标题 20/26 两行 clamp + 原名 + chips
  *   - 主按钮满宽 40（Play/运行中）、次行两 ghost 等宽（刮削/打开目录）

@@ -1,5 +1,5 @@
 /**
- * 全局 UI 领域 store（REDESIGN-SPEC §3.2）。
+ * 全局 UI 领域 store。
  *
  * 页面切换与设置弹窗开关。多主题（T7）：theme_mode 三态（system/dark/light）
  * 与 theme_preset 套件（樱夜/星海/薄荷）持久化在 settings.json；

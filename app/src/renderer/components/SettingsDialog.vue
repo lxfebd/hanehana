@@ -22,7 +22,7 @@ const emit = defineEmits<{ save: [s: Settings] }>()
 const form = reactive<Settings>({ ...props.settings })
 
 /**
- * 未保存角标（INTERACTION-SPEC Task 3）：打开时的快照 vs 当前 form。
+ * 未保存角标：打开时的快照 vs 当前 form。
  * dirty 为真时保存按钮加「●」、弹窗标题旁给提示，避免「改了不点保存=白改」。
  * 对比用键序无关的规范化序列化：form 与快照可能来自不同来源（主进程
  * settings.json / save() payload），键序不同会让 JSON 字符串对比恒为 dirty。

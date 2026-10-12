@@ -63,7 +63,7 @@ const preloadPath = join(here, '../preload/index.cjs')
 
 app.setAppUserModelId('com.hanehana.app')
 
-// 自定义 scheme 必须在 whenReady 之前注册（REDESIGN-SPEC §3.4）
+// 自定义 scheme 必须在 whenReady 之前注册
 registerThumbProtocol()
 
 // 开发调试：设置 HANEHANA_DEBUG_PORT 时开启 CDP 端口，供 CDP 探针验证 UI。
