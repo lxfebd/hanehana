@@ -43,9 +43,7 @@ app/.b*/
 app/build/icon_src_cropped.png
 app/build/user_icon_icon.png
 
-# 一次性探测/迁移脚本与它们的截图产物（用完即弃，不进仓库）
-app/scripts/*_probe*.mjs
-app/scripts/wide_shots/
+# 一次性截图产物（用完即弃，不进仓库）
 app/hh_sites2.png
 
 # electron-vite 热更新时落盘的临时配置副本
