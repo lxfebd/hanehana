@@ -17,6 +17,10 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # electron-builder 靠 git tag 认版本与目标 tag；不 fetch tag 它会建一个
+          # 挂在 untagged-… 上的 draft release
+          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
@@ -59,3 +63,20 @@ jobs:
         run: npx electron-builder --dir && node scripts/smoke_packaged.mjs
         env:
           PYTHONIOENCODING: utf-8
+
+      # electron-builder 只建 draft release 并上传资产，不会自己发布；smoke 通过后才显式发布，
+      # 这样 smoke 失败的版本不会以已发布状态出现在 Release 页。
+      - name: publish release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          $h = @{ Authorization = "Bearer $env:GH_TOKEN"; Accept = 'application/vnd.github+json' }
+          $rels = Invoke-RestMethod -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases" -Headers $h
+          $rel = $rels | Where-Object { $_.tag_name -eq $env:TAG } | Select-Object -First 1
+          if (-not $rel) { Write-Error "no release found for tag $env:TAG"; exit 1 }
+          if (-not $rel.draft) { Write-Output "release already published: $($rel.html_url)"; exit 0 }
+          $body = @{ draft = $false; prerelease = $false; name = "HaneHana $env:TAG" } | ConvertTo-Json
+          Invoke-RestMethod -Method Patch -Uri "https://api.github.com/repos/$env:GITHUB_REPOSITORY/releases/$($rel.id)" -Headers $h -Body $body | Out-Null
+          Write-Output "published: https://github.com/$env:GITHUB_REPOSITORY/releases/tag/$env:TAG"
