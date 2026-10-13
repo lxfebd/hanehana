@@ -16,11 +16,10 @@ jobs:
   release:
     runs-on: windows-latest
     steps:
+      # 注意：不要加 fetch-tags: true —— tag 触发的 run 里 checkout 会把 SHA 与 tag
+      # 都映射到 refs/tags/<name>，报 "Cannot fetch both ..." 直接失败。
+      # electron-builder 不用本地 tag 也能把 draft 建在版本 tag 上，发布由下方步骤负责。
       - uses: actions/checkout@v4
-        with:
-          # electron-builder 靠 git tag 认版本与目标 tag；不 fetch tag 它会建一个
-          # 挂在 untagged-… 上的 draft release
-          fetch-tags: true
 
       - uses: actions/setup-node@v4
         with:
