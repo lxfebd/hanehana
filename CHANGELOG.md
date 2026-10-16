@@ -2,7 +2,7 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [未发布]
+## [0.1.1] - 2026-10-17
 
 ### 修复
 
@@ -35,5 +35,5 @@
 
 首个版本：Mica 毛玻璃窗口 + 自定义标题栏 + 三栏布局；封面墙游戏库（扫描 / 手动 / Steam 导入，VNDB·Bangumi 刮削，LE / Magpie 启动集成，进程监控计时）；Rust 分段并发下载引擎（任务列表、校验和、限速、代理、断点续传）；内嵌游戏站浏览器 + 多站聚合搜索 + 镜像解析 + 下载捕获；统计页与海报导出、新作追踪、存档备份与 WebDAV 同步；中英双语、三套配色、托盘通知、应用内自动更新。
 
-[未发布]: https://github.com/lxfebd/hanehana/compare/v0.1.0...HEAD
+[0.1.1]: https://github.com/lxfebd/hanehana/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/lxfebd/hanehana/releases/tag/v0.1.0
