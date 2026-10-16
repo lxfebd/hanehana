@@ -266,6 +266,8 @@ const emit = defineEmits<{
   cursor: pointer;
   outline: none;
   font-family: inherit;
+  -webkit-appearance: none;
+  appearance: none;
 }
 .smart-select:focus {
   border-color: var(--hh-color-accent-focus-border);

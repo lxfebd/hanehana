@@ -105,8 +105,11 @@ async function runBulkScrape(): Promise<void> {
   else {
     const parts = [tf('batch_scraped', { n: r.applied })]
     if (r.pending) parts.push(tf('batch_pending', { n: r.pending }))
+    // 「没找到」与「失败」分开报：前者多半是目录名太野/库里没收录，
+    // 说成失败用户只会觉得「功能坏了」，实际该去改标题或手动搜。
+    if (r.notfound) parts.push(tf('batch_notfound', { n: r.notfound }))
     if (r.failed) parts.push(tf('batch_failed', { n: r.failed }))
-    message[r.applied || r.pending ? 'success' : 'warning'](parts.join('，'))
+    message[r.applied || r.pending ? 'success' : r.notfound && !r.failed ? 'info' : 'warning'](parts.join('，'))
   }
 }
 
@@ -223,6 +226,12 @@ onBeforeUnmount(() => {
   gap: 8px;
   padding: 10px 14px;
   border-radius: var(--hh-radius-panel);
+  /* 溢出根因：主面板此前没有这两条。窗口一窄，一排 9 个按钮被 flex 硬压，
+     按钮缩到比文字窄 → 文字竖排 + 溢出面板外（实测截图：批量刮削四字竖着出框）。
+     max-width 与 overlay 的对齐方式配合（overlay 用 translateX(-50%) 居中），
+     flex-wrap 让按钮在窄窗口自动换行成两行，而不是互相挤压。 */
+  flex-wrap: wrap;
+  max-width: min(720px, 92vw);
 }
 .batch-count {
   font-size: 12.5px;
@@ -248,6 +257,10 @@ onBeforeUnmount(() => {
   align-items: center;
   gap: 5px;
   transition: background var(--hh-motion-med);
+  /* 按钮不许被 flex 压窄、文字不许拆行：一压就竖排出框（实测长相）。
+     窄窗口的解法是整只按钮换行（父级 flex-wrap），不是把按钮挤扁。 */
+  flex: none;
+  white-space: nowrap;
 }
 .b-btn:hover {
   background: var(--hh-color-surface-mid);

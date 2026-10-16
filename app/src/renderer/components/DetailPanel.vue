@@ -792,6 +792,7 @@ function flashCopied(): void {
   display: flex;
   flex-direction: column;
   gap: 4px;
+  flex-shrink: 0;
 }
 .desc {
   font-size: var(--hh-font-body-size);
@@ -799,6 +800,9 @@ function flashCopied(): void {
   color: var(--hh-color-text-mid-high);
   margin: 0;
   white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-wrap: break-word;
+  hyphens: auto;
 }
 .desc.clamped {
   display: -webkit-box;

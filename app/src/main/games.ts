@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
 import { shell } from 'electron'
 import { addGames, findGameByExe, getGame, getGames, removeGame, updateGame } from './gameStore'
+import { dupKeyOf as dupKeyRaw } from './dupKey'
 import { backfillLocalCovers, adoptLocalCover } from './localCover'
 import { scanDir, isValidDir } from './scanner'
 import type { Game, GameVariant, PlaySession, SteamImportResult } from '../shared/types'
@@ -18,6 +19,14 @@ export interface ScanResult {
   added: Game[]
   hits: { dir: string; exePath: string; rawTitle: string }[]
   skipped: number
+  /**
+   * 同款但不同安装目录的命中（实测用户 F:\gg 与 G:\ggame 各放一份）。
+   *
+   * 这些**没有**自动入库——同款多版本（如妹相随彩色版/黑白版）该不该都留着，
+   * 是用户的偏好，不由扫描器替他决定。明细回给扫描结果浮层，列出
+   * 「已入库的那一款 + 这条被跳过的目录」，想留就一键加进来。
+   */
+  dupes: { dir: string; exePath: string; rawTitle: string; kept: string }[]
 }
 
 export interface BatchResult {
@@ -58,6 +67,19 @@ export function cleanTitle(raw: string): string {
   return t || raw.trim()
 }
 
+/**
+ * 同一款游戏的不同安装目录（实测：F:\gg 与 G:\ggame 各放一份）判重键。
+ *
+ * 只按 exePath 去重挡不住这个场景——两条路径不同，款款都当成新游戏入库，
+ * 封面墙上同一个游戏出现 N 份（用户截图实测）。所以再补一层"标题指纹"：
+ * cleanTitle 归一化后小写作键（见 dupKey.ts），把上面的案例压成一条。
+ *
+ * 刻意不去比大小/内容哈希： galgame 动辄几十 GB，扫一次全算哈希界面会卡死。
+ * 归一化标题已能把真实案例分对；用户若想同款不同版本都留在库里，
+ * 走手动添加（handleAddOne）不受这道闸影响。
+ */
+const dupKeyOf = (rawTitle: string, title: string): string => dupKeyRaw(rawTitle, title, cleanTitle)
+
 export async function handleScan(root: string): Promise<ScanResult> {
   if (!(await isValidDir(root))) {
     throw new Error('目录不存在或不可读：' + root)
@@ -65,7 +87,25 @@ export async function handleScan(root: string): Promise<ScanResult> {
   const hits = await scanDir(root)
   // 已入库的 exe 自动去重（addGames 内部按 exe 去重），这里统计跳过数
   const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
-  const fresh = hits.filter((h) => !existing.has(h.exePath.toLowerCase()))
+  // 同款多安装目录：按归一化标题再压一层（见 dupKeyOf 注释）
+  const existingTitles = new Map(getGames().map((g) => [dupKeyOf(g.rawTitle, g.title), g.title]))
+  const seen = new Map<string, string>()
+  const fresh: typeof hits = []
+  const dupes: ScanResult['dupes'] = []
+  for (const h of hits) {
+    const key = dupKeyOf(h.rawTitle, cleanTitle(h.rawTitle))
+    const keptTitle = existingTitles.get(key) ?? seen.get(key)
+    if (existing.has(h.exePath.toLowerCase()) || keptTitle) {
+      // 完全同 exe（重扫同一目录）不算 dupe：那不是"另一份安装"，
+      // 只是重复扫。只有标题撞款、路径不同才是用户要决策的情况。
+      if (!existing.has(h.exePath.toLowerCase())) {
+        dupes.push({ dir: h.dir, exePath: h.exePath, rawTitle: h.rawTitle, kept: keptTitle! })
+      }
+      continue
+    }
+    seen.set(key, cleanTitle(h.rawTitle))
+    fresh.push(h)
+  }
   const added = addGames(
     fresh.map((h) => {
       const title = cleanTitle(h.rawTitle)
@@ -74,7 +114,7 @@ export async function handleScan(root: string): Promise<ScanResult> {
   )
   // 本地封面：目录里有 cover/folder 等图就直接挂上并生成缩略图（不联网）
   backfillLocalCovers(added)
-  return { added, hits, skipped: hits.length - fresh.length }
+  return { added, hits, skipped: hits.length - fresh.length, dupes }
 }
 
 /** 手动添加单款游戏：直接指定一个 exe 入库（T25，不走目录扫描）。 */
@@ -97,7 +137,12 @@ export function handleSteamImport(
   candidates: { dir: string; exePath: string; rawTitle: string; appid?: string }[],
 ): SteamImportResult {
   const existing = new Set(getGames().map((g) => g.exePath.toLowerCase()))
-  const fresh = candidates.filter((c) => !existing.has(c.exePath.toLowerCase()))
+  // 同 handleScan：Steam 候选也可能与库中已装的是同一款（不同目录），
+  // 按归一化标题再压一层，避免封面墙出现同款两份。
+  const existingTitles = new Set(getGames().map((g) => dupKeyOf(g.rawTitle, g.title)))
+  const fresh = candidates.filter(
+    (c) => !existing.has(c.exePath.toLowerCase()) && !existingTitles.has(dupKeyOf(c.rawTitle, cleanTitle(c.rawTitle))),
+  )
   const added = addGames(
     fresh.map((c) => {
       const title = cleanTitle(c.rawTitle)

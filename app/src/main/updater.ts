@@ -15,6 +15,10 @@ import { IDLE_UPDATE_STATUS, type UpdateStatus } from '../shared/types'
 
 let push: (s: UpdateStatus) => void = () => {}
 let checking = false
+// 本轮检查是否已推过终态（非 checking）。用于 checkUpdate 兜底：
+// electron-updater 会缓存 feedInfo，手动「重新检查」时可能不再发任何事件，
+// 渲染层把按钮设成转圈态却永远等不到推送 → 「更新点了没反应」。
+let outcomeSent = false
 
 export function setUpdatePush(fn: (s: UpdateStatus) => void): void {
   push = fn
@@ -25,6 +29,7 @@ export function updateEnabled(): boolean {
 }
 
 function send(s: UpdateStatus): void {
+  if (s.phase !== 'checking') outcomeSent = true
   push(s)
 }
 
@@ -61,12 +66,19 @@ export function initAutoUpdater(): void {
 export async function checkUpdate(): Promise<void> {
   if (!updateEnabled() || checking) return
   checking = true
+  outcomeSent = false
   try {
     await autoUpdater.checkForUpdates()
-    // electron-updater 内部已发 update-not-available / update-available /
-    // download-progress / update-downloaded，无需在此重复构造状态。
+    // 兜底：electron-updater 缓存了 feedInfo，「重新检查」可能不发任何事件，
+    // 或网络半死时只发 checking-for-update 就无声结束。不补终态的话，渲染层
+    // 的「检查中」永远收不起来（按钮一直转圈 = 更新点了没反应）。
+    // 注意不能用 checkForUpdates 返回值里的 updateInfo.version 判断「有无更新」——
+    // 它是 feed 里解析到的版本，「已是最新」时同样非空。真正有新版本时
+    // autoDownload 会立刻触发 update-available→downloading 把 outcomeSent 置真，
+    // 兜底不会误报。走到这里说明本轮没有可用更新的推送，报「已是最新版本」。
+    if (!outcomeSent) send({ phase: 'idle', error: '已是最新版本' })
   } catch (e) {
-    send({ phase: 'idle', error: e instanceof Error ? e.message : String(e) })
+    if (!outcomeSent) send({ phase: 'idle', error: e instanceof Error ? e.message : String(e) })
   } finally {
     checking = false
   }

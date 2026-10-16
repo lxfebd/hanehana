@@ -40,11 +40,17 @@ const bridge = {
   // 游戏库
   listGames: (): Promise<Game[]> => ipcRenderer.invoke(Ipc.GameList),
   statsOverview: () => ipcRenderer.invoke(Ipc.StatsOverview),
-  /** 扫描：成功返回 {hits, added, skipped}；失败返回 {ok:false,error}（与兄弟 err() 同形） */
+  /** 扫描：成功返回 {hits, added, skipped, dupes}；失败返回 {ok:false,error}（与兄弟 err() 同形）。
+   *  dupes = 同款但不同安装目录的命中（未入库，交用户在扫描结果里决定是否也加进来）。 */
   scanDir: (
     root: string,
   ): Promise<
-    | { hits: { dir: string; exePath: string; rawTitle: string }[]; added: Game[]; skipped: number }
+    | {
+        hits: { dir: string; exePath: string; rawTitle: string }[]
+        added: Game[]
+        skipped: number
+        dupes?: { dir: string; exePath: string; rawTitle: string; kept: string }[]
+      }
     | { ok: false; error: string }
   > => ipcRenderer.invoke(Ipc.GameScan, root),
   updateGame: (id: string, patch: Partial<Game>) => ipcRenderer.invoke(Ipc.GameUpdate, id, patch),

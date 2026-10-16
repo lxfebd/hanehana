@@ -7,6 +7,7 @@
 
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 [![CI](https://github.com/lxfebd/hanehana/actions/workflows/ci.yml/badge.svg)](https://github.com/lxfebd/hanehana/actions/workflows/ci.yml)
+[![changelog](https://img.shields.io/badge/changelog-Keep%20a%20Changelog-blue.svg)](CHANGELOG.md)
 ![Electron](https://img.shields.io/badge/Electron-44-2b2e3a.svg)
 ![Vue](https://img.shields.io/badge/Vue-3.5-42b883.svg)
 ![Rust](https://img.shields.io/badge/Rust-tokio%20%2B%20reqwest-000000.svg)
@@ -21,6 +22,8 @@
 外壳 Electron，界面 Vue 3 + Ant Design Vue，视觉走 Windows 11 Mica 毛玻璃 + 玻璃卡片，深色优先、三套配色、跟随系统深浅实时换肤。
 
 > 名称取自 galgame 文化意象，并避开 GitHub 上已存在的同名项目。
+>
+> 📄 版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
 
@@ -32,9 +35,10 @@
 | --- | --- |
 | 导入 | 文件夹扫描（exe / bat / lnk）、手动选 exe 直接入库、Steam 库导入 |
 | 展示 | 竖版封面墙（虚拟化渲染，万级不卡）、网格 / 列表双视图、评分与标签 chip |
-| 元数据 | VNDB 主源 + Bangumi 备源刮削；单源失败只缺一列，不中断整体 |
+| 元数据 | VNDB 主源 + Bangumi 备源刮削；单源失败只缺一列，不中断整体；搜索词清洗梯（目录名带 `【汉化组】`/`[DL版]`/版本尾缀也能命中） |
 | 封面 | 原图 + 320 宽缩略图本地缓存，走自定义 `hh://` 协议，不进 `file://` |
-| 整理 | 分类 / 标签 / 搜索 / 收藏 / 批量编辑（多选改分类、切收藏、移除） |
+| 整理 | 分类 / 标签 / 搜索 / 收藏 / 批量编辑（多选改分类、切收藏、评分、移除） |
+| 去重 | 同一款游戏装在多个目录只进一款；跳过的其它安装位置在扫描结果里列出，可一键「也加进来」 |
 | 启动 | 一键启动；LE 转区、Magpie 缩放每游戏开关；常用安装路径自动探测 |
 | 记录 | 游玩时长与上次游玩（进程监控自动计时）、CSV 导出 |
 | 右键 | 封面右键菜单：启动 / 收藏 / 刮削 / 编辑 / 刷新封面 / 打开目录 / 复制标题 |
@@ -151,10 +155,12 @@ engine-rs (Rust)  ·  分段并发下载 + 校验，每任务一个子进程
 | --- | --- |
 | `npm run typecheck` | `vue-tsc` 双 tsconfig，零错误 |
 | `npm run build` | `electron-vite` 构建产物 |
-| `npm test` | `node:test` 单元测试（引擎行协议 / 错误 / 格式化 / JSON 存储 / 备份 / 刮削） |
+| `npm test` | `node:test` 单元测试（引擎行协议 / 错误 / 格式化 / JSON 存储 / 备份 / 刮削 / 判重去重） |
 | `npm run lint` | ESLint（0 error 闸，警告是渐进债务台账） |
 | `npm run regression:static` | 静态验收闸（结构承诺固化，防改回旧风格） |
 | `npm run regression:download` | 真实引擎下载链路 e2e |
+| `npm run regression:ui` | 真实 App 走查：起进程、像用户一样点封面 → 刮削 → 应用选中，读真实 DOM 与截屏 |
+| `npm run regression:dupe` | 同款不同盘目录扫两次：断言零自动入库 + `dupes` 明细回传 + 「也加进来」真能入库 |
 | `npm run regression` | 上述串联，遇错即停 |
 | `npm run dist:dir && npm run smoke` | 解包产物验收：进程可启动 + IPC 通 + 引擎存在 |
 
@@ -188,6 +194,9 @@ cd app && npm run dist        # NSIS 安装包（--publish never，仅本地产�
 - [x] 设置 + 托盘 + 通知 + 中英双语 + 多主题
 - [x] 全局快捷键 + 快捷键帮助 + 封面右键菜单 + 全屏模式
 - [x] 应用内自动更新（electron-updater + tag 触发 Release）
+- [x] 刮削可用性：搜索词清洗梯 + 双源流式上屏 + 应用落库修复 + 没找到/待确认分开报
+- [x] 同款多安装目录判重去重（扫描结果可一键补入）
+- [x] 真实 UI 走查验收（`regression:ui` / `regression:dupe`）
 - [ ] 浏览器扩展投递下载链接（native messaging 通道）
 - [ ] 安装包代码签名
 

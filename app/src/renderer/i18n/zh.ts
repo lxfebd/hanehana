@@ -194,6 +194,7 @@ export const zh = {
   batch_cancelled: '已取消：完成 {done} 款，待确认 {pending}',
   batch_scraped: '已刮削 {n} 款',
   batch_pending: '{n} 款待确认',
+  batch_notfound: '{n} 款没找到（标题可能太生僻或目录名太杂，试试详情页手动刮削）',
   batch_failed: '{n} 款失败',
   batch_selected: '{n} 款已选',
   batch_scraping: '刮削中 {done}/{total}',
@@ -419,6 +420,10 @@ export const zh = {
   scan_start: '开始扫描',
   scan_hits: '发现的可执行文件（同目录 exe 已自动合并）：',
   scan_more: '… 还有 {n} 个',
+  scan_dupes_title: '同一款游戏的其它安装位置（未入库）：',
+  scan_dupe_kept: '库里已有：{kept}',
+  scan_dupe_add: '也加进来',
+  scan_dupe_added: '已加入',
   scan_hint: '扫描会递归查找目录下所有 .exe/.bat/.lnk，自动排除汉化补丁、安装器等工具文件。',
   // ---- 新建下载 ----
   nd_sum_err:

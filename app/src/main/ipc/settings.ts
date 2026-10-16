@@ -92,6 +92,11 @@ export function registerSettingsHandlers(ctx: IpcCtx): void {
       return err(`代理没能下发到内置浏览器与站点解析：${e instanceof Error ? e.message : String(e)}`)
     }
     s().saveSettings(saved)
+    // 设置是用户显式保存动作，必须同步落盘：jsonStore 默认 400ms 合并写，而
+    // TasksAdd 的 isDestAllowed 读的是磁盘里的 download_dir——保存后立刻下载
+    // （点完保存马上开下载对话框）会读到旧值，被「保存路径不在允许的目录内」
+    // 拒掉，观感就是「改了目录没用、下载用不了」。flush 让磁盘与内存同刻一致。
+    s().flushSettings()
     m().applySettings(saved)
     const effDark = ctx.applyThemeMode(saved.theme_mode)
     ctx.applyThemeToWindow(effDark)

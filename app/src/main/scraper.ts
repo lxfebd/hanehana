@@ -20,6 +20,7 @@ import { coverColorOf } from './coverColor'
 import { coverQualityOk } from './coverQuality'
 import { ensureThumb } from './thumbs'
 import { rememberCoverHost, sanitizeScrapeResult } from './scrapeRules'
+import { queryLadder } from './scrapeQuery'
 import type { Game, ScrapeCandidate } from '../shared/types'
 
 const UA = 'HaneHana/0.1 (galgame manager; contact: lxfebd)'
@@ -122,7 +123,16 @@ function breakerMessage(key: string): string {
   return `${key} 搜索失败`
 }
 
-/** 单源搜索（G20）：带熔断。失败抛中文错误，成功时记住封面域名供 apply 白名单。 */
+/**
+ * 单源搜索（G20）：带熔断 + 搜索词清洗梯。失败抛中文错误，成功时记住封面域名供 apply 白名单。
+ *
+ * 为什么要清洗梯（实测 2026-10-16 打 VNDB search）：VNDB 的 search 是精确标题匹配，
+ * galgame 目录名带【汉化组】/[DL版]/（中文版）/尾缀一律 0 命中——「批量刮削什么都没发生」
+ * 就是这个。做法：原词先搜（干净标题一发命中，不多花请求）；只有 0 结果才按 queryLadder
+ * 逐级放宽（剥括号→剥版本尾缀→截主标题→逐词裁剪），第一个非空即返回。
+ * 注意「空结果」不是错误：继续下一候选；真正的网络/HTTP 错误则立即抛出并计熔断——
+ * 源不通时换词重试没意义（也避免把已挂的 Bangumi 按候选数翻倍打超时）。
+ */
 export async function searchSource(
   source: 'vndb' | 'bangumi',
   title: string,
@@ -131,16 +141,26 @@ export async function searchSource(
     // 熔断中：直接短路，UI 立即看到原因，不发起请求
     return { results: [], warnings: [breakerMessage(source)] }
   }
-  try {
-    const results = source === 'vndb' ? await searchVndb(title) : await searchBangumi(title)
-    breakerSuccess(source)
-    for (const c of results) rememberCoverHost(c.coverUrl)
-    return { results, warnings: [] }
-  } catch (e) {
-    breakerFail(source)
-    // { cause: e } 保留原始错误链：调试时能看到超时/DNS 失败的底层原因
-    throw new Error(reasonText(e), { cause: e })
+  const search = source === 'vndb' ? searchVndb : searchBangumi
+  const ladder = queryLadder(title)
+  for (const q of ladder) {
+    try {
+      const results = await search(q)
+      // 通了就清失败计数（哪怕这条词 0 结果——源是活的，只是这个词没命中）
+      breakerSuccess(source)
+      if (results.length) {
+        for (const c of results) rememberCoverHost(c.coverUrl)
+        return { results, warnings: [] }
+      }
+      // 0 结果：源活着但这个词搜不到，放宽到下一个更干净的候选词
+    } catch (e) {
+      breakerFail(source)
+      // { cause: e } 保留原始错误链：调试时能看到超时/DNS 失败的底层原因
+      throw new Error(reasonText(e), { cause: e })
+    }
   }
+  // 所有候选词都空手而归：正常返回空结果（不报错，UI 显示「没找到」）
+  return { results: [], warnings: [] }
 }
 
 // ---------------------------------------------------------------- VNDB

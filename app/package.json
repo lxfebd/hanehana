@@ -25,7 +25,9 @@
     "format:check": "prettier --check \"src/**/*.{ts,vue}\" \"tests/**/*.ts\"",
     "regression": "node scripts/reg_all.mjs",
     "regression:static": "node scripts/reg_static.mjs",
-    "regression:download": "node scripts/e2e_download.mjs"
+    "regression:download": "node scripts/e2e_download.mjs",
+    "regression:ui": "node scripts/ui_scrape_walkthrough.mjs",
+    "regression:dupe": "node scripts/e2e_dupe_ui.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

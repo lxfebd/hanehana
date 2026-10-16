@@ -19,7 +19,6 @@ function imgErr(e: Event): void {
 }
 
 const query = ref('')
-const searching = ref(false)
 const selected = ref<ScrapeCandidate | null>(null)
 
 const selectedKey = computed(() => (selected.value ? `${selected.value.provider}::${selected.value.id}` : ''))
@@ -28,17 +27,14 @@ watch(open, (v) => {
   if (v) {
     query.value = library.scrapeQuery
     selected.value = null
-    searching.value = true
-    runSearch(query.value).finally(() => (searching.value = false))
+    void runSearch(query.value)
   }
 })
 
 async function doSearch(): Promise<void> {
-  if (!query.value.trim()) return
+  if (!query.value.trim() || library.scrapeLoading) return
   selected.value = null
-  searching.value = true
   await runSearch(query.value.trim())
-  searching.value = false
 }
 
 /** 单选选中，不立即应用 */
@@ -61,11 +57,15 @@ async function apply(): Promise<void> {
         <div class="search-box">
           <input v-model="query" class="path-input" :placeholder="t('sd_ph')" @keyup.enter="doSearch" />
         </div>
-        <button class="search-btn" :disabled="searching" @click="doSearch">{{ t('common_search') }}</button>
+        <button class="search-btn" :disabled="library.scrapeLoading" @click="doSearch">{{ t('common_search') }}</button>
       </div>
 
-      <div v-if="searching" class="center">
+      <div v-if="library.scrapeLoading && !library.scrapeResults.length" class="center">
         <Spin /> <span class="spin-text">{{ t('sd_searching') }}</span>
+      </div>
+
+      <div v-if="library.scrapeLoading && library.scrapeResults.length" class="center-loading-line">
+        <Spin size="small" /> <span class="spin-text">{{ t('sd_searching') }}</span>
       </div>
 
       <div v-if="library.scrapeWarnings.length" class="warnings">
@@ -101,7 +101,9 @@ async function apply(): Promise<void> {
         </div>
       </div>
 
-      <div v-else-if="!searching" class="center hint">{{ t('sd_empty') }}</div>
+      <div v-else-if="!library.scrapeLoading && !library.scrapeResults.length" class="center hint">
+        {{ t('sd_empty') }}
+      </div>
 
       <div class="foot">
         <button class="apply-btn" :disabled="!selected" @click="apply">{{ t('sd_apply') }}</button>
@@ -151,6 +153,16 @@ async function apply(): Promise<void> {
 .center {
   text-align: center;
   padding: 20px 0;
+}
+/* 结果已上屏、另一源还在等：一行小提示，不遮挡结果列表 */
+.center-loading-line {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 4px 0;
+  color: var(--hh-color-text-muted);
+  font-size: var(--hh-font-caption-size);
 }
 .spin-text {
   margin-left: 10px;

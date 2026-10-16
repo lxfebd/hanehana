@@ -458,26 +458,51 @@ export function openScrape(gameId: string, query: string): void {
   // 搜索只由 ScrapeDialog 的 watch(open) 触发，这里不再额外发一次，避免双重搜索竞态
 }
 
+/**
+ * 单源失败的中文提示。主进程 handler 抛错时 Electron 会重新包一层
+ * "Error invoking remote method '<通道名>': Error: "，原样进 UI 就是一串
+ * 英文通道名（实测截图里那条「Error invoking remote method 'hanehana:scrape:
+ * search-source'…」，看着像程序坏了）。剥掉外壳只留主进程给的中文原因，
+ * 再冠上源名——用户看到「Bangumi：网络不可达」，明确只有这一个源挂了、
+ * 另一个源的结果照常在下面。
+ */
+function sourceWarn(label: string, e: unknown): string {
+  let m = e instanceof Error ? e.message : String(e)
+  m = m.replace(/^Error invoking remote method '[^']*':\s*/, '').replace(/^Error:\s*/, '')
+  return `${label}：${m || '搜索失败'}`
+}
+
 export async function runSearch(query: string): Promise<void> {
   library.scrapeLoading = true
   try {
     // 双源并行、先回先上屏（G20）：不再等最慢源。
+    // 实现必须是「每个源各自一回来就落盘」，而不是 Promise.allSettled 等两源
+    // 齐回——后者在慢源超时（Bangumi 本机固定 10s）时把快源的 8 条结果压到
+    // 10s 后才显示，UI 空转 9 秒多还配一条「网络不可达」警告，观感就是
+    // 「刮削没用」。每个源各自 then 立即 push，快源结果秒上屏。
     // 单源失败只进 warnings，不拖累已回来的另一源。
     library.scrapeResults = []
     library.scrapeWarnings = []
-    const [vndb, bgm] = await Promise.allSettled([
-      window.hh.scrapeSearchSource('vndb', query),
-      window.hh.scrapeSearchSource('bangumi', query),
-    ])
-    for (const r of [vndb, bgm]) {
-      if (r.status === 'fulfilled') {
-        library.scrapeResults.push(...r.value.results)
-        library.scrapeWarnings.push(...r.value.warnings)
-      } else {
-        const msg = r.reason instanceof Error ? r.reason.message : String(r.reason)
-        library.scrapeWarnings.push(msg)
-      }
-    }
+    const vndbP = window.hh
+      .scrapeSearchSource('vndb', query)
+      .then((v) => {
+        library.scrapeResults.push(...v.results)
+        library.scrapeWarnings.push(...v.warnings)
+      })
+      .catch((e: unknown) => {
+        library.scrapeWarnings.push(sourceWarn('VNDB', e))
+      })
+    const bgmP = window.hh
+      .scrapeSearchSource('bangumi', query)
+      .then((v) => {
+        library.scrapeResults.push(...v.results)
+        library.scrapeWarnings.push(...v.warnings)
+      })
+      .catch((e: unknown) => {
+        library.scrapeWarnings.push(sourceWarn('Bangumi', e))
+      })
+    // 等两源都结束才收起 loading：期间快源结果已上屏，慢源超时只补充警告
+    await Promise.all([vndbP, bgmP])
   } catch (e) {
     library.scrapeWarnings = [e instanceof Error ? e.message : String(e)]
   } finally {
@@ -488,7 +513,15 @@ export async function runSearch(query: string): Promise<void> {
 export async function applyScrapeResult(result: ScrapeCandidate): Promise<void> {
   let r: { ok: boolean; error?: string } | null = null
   try {
-    r = await window.hh.scrapeApply(library.scrapeTargetId, result)
+    // 必须先拆掉 Vue 响应式代理再进 IPC：selected 取自 reactive 的 scrapeResults，
+    // 深层 Proxy；Electron 的结构化克隆不认 Proxy，直接 invoke 抛
+    // 「An object could not be cloned」——结果搜得到、点「应用选中」却永远写不进库
+    // （实测 2026-10-16，正是用户「刮削用不了」的真病根）。
+    // structuredClone 也不行：HTML 规范对 Proxy 直接抛 DataCloneError（实测），
+    // 且深层 reactive 的嵌套数组同样是 Proxy。JSON 往返穿过取值 trap，出来纯数据
+    // ——候选字段全是 JSON 安全类型，往返无损。
+    const plain: ScrapeCandidate = JSON.parse(JSON.stringify(result))
+    r = await window.hh.scrapeApply(library.scrapeTargetId, plain)
   } catch (e) {
     library.error = e instanceof Error ? e.message : String(e ?? '刮削失败')
     return
@@ -522,6 +555,9 @@ export const batchScrape = reactive({
   done: 0,
   applied: 0,
   failed: 0,
+  /** 搜过但各源都没命中（区别于 failed：网络/应用错误）——UI 必须分开报，
+   * 否则「0 命中」显示成「失败」，用户永远不知道为什么批量刮削没动静 */
+  notfound: 0,
   /** 冲突/低置信：{ id, title, query } 供 overlay 逐个开 ScrapeDialog */
   pending: [] as { id: string; title: string; query: string }[],
   current: '',
@@ -568,9 +604,9 @@ function pickAuto(g: Game, results: ScrapeCandidate[]): ScrapeCandidate | null {
  */
 export async function startBatchScrape(
   ids: string[],
-): Promise<{ applied: number; failed: number; pending: number; cancelled: boolean }> {
+): Promise<{ applied: number; failed: number; notfound: number; pending: number; cancelled: boolean }> {
   const list = ids.filter((id) => library.games.some((g) => g.id === id))
-  const summary = { applied: 0, failed: 0, pending: 0, cancelled: false }
+  const summary = { applied: 0, failed: 0, notfound: 0, pending: 0, cancelled: false }
   if (!list.length || batchScrape.running) return summary
   batchScrape.running = true
   batchScrape.cancel = false
@@ -578,6 +614,7 @@ export async function startBatchScrape(
   batchScrape.done = 0
   batchScrape.applied = 0
   batchScrape.failed = 0
+  batchScrape.notfound = 0
   batchScrape.pending = []
   batchScrape.current = ''
   try {
@@ -608,7 +645,9 @@ export async function startBatchScrape(
         continue
       }
       if (!results.length) {
-        batchScrape.failed += 1
+        // 搜过但没命中：源活着，是标题在库里没有对应条目。计 notfound，
+        // 不混进 failed——UI 分开提示，用户才知道是「没找到」而非「出错」。
+        batchScrape.notfound += 1
         batchScrape.done += 1
         continue
       }
@@ -634,6 +673,7 @@ export async function startBatchScrape(
     await refreshGames()
     summary.applied = batchScrape.applied
     summary.failed = batchScrape.failed
+    summary.notfound = batchScrape.notfound
     summary.pending = batchScrape.pending.length
     return summary
   } finally {

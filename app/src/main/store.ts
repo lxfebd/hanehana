@@ -243,6 +243,16 @@ export class Store {
     this.settingsStore.save(normalizeSettings(s))
   }
 
+  /**
+   * 立即把待写的设置落盘。设置是用户显式保存动作，必须同步生效：
+   * jsonStore 默认 400ms 合并写，而 TasksAdd 的 isDestAllowed 读的是磁盘里的
+   * download_dir——保存后立刻下载会读到旧值被拒（实测：改完目录马上点下载
+   * 报「保存路径不在允许的目录内」）。flush 让磁盘与内存同刻一致。
+   */
+  flushSettings(): void {
+    this.settingsStore.flush()
+  }
+
   // ---------------------------------------------------------------- 游玩会话
   // 统计报表的数据源。只追加不删改：每场会话一条，重放即可聚合。
   loadPlaySessions(): PlaySession[] {

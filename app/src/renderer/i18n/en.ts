@@ -183,6 +183,7 @@ export const en: Record<I18nKey, string> = {
   batch_cancelled: 'Cancelled: {done} done, {pending} pending',
   batch_scraped: 'Scraped {n} games',
   batch_pending: '{n} pending',
+  batch_notfound: '{n} not found (title may be obscure or the folder name messy — try manual scrape from the details page)',
   batch_failed: '{n} failed',
   batch_selected: '{n} selected',
   batch_scraping: 'Scraping {done}/{total}',
@@ -413,6 +414,10 @@ export const en: Record<I18nKey, string> = {
   scan_start: 'Start scan',
   scan_hits: 'Executables found (exes in the same folder merged):',
   scan_more: '… and {n} more',
+  scan_dupes_title: 'Other installs of the same game (not added):',
+  scan_dupe_kept: 'already in library: {kept}',
+  scan_dupe_add: 'Add this too',
+  scan_dupe_added: 'Added',
   scan_hint: 'Scanning looks recursively for .exe/.bat/.lnk, auto-excluding patches, installers and other tool files.',
   // ---- New download ----
   nd_sum_err:

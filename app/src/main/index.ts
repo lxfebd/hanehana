@@ -79,6 +79,15 @@ if (process.env.HANEHANA_SMOKE_PORT && app.isPackaged) {
   app.commandLine.appendSwitch('remote-debugging-port', process.env.HANEHANA_SMOKE_PORT)
 }
 
+// 隔离通道（HANEHANA_DATA_DIR）：Chromium userData 一并挪进隔离目录。
+// 只挪数据文件（games.json 等）是不够的——单实例锁按 userData 目录加锁，
+// 而打包版/dev 版默认同用 %APPDATA%\hanehana。不隔离时，验收脚本/探针
+// 拉起的实例会撞上用户正开着的安装版实例，秒退（症状：CDP 永远连不上）。
+// 打包正常运行不设该变量，行为不变。
+if (process.env.HANEHANA_DATA_DIR) {
+  app.setPath('userData', join(process.env.HANEHANA_DATA_DIR, 'chromium'))
+}
+
 // 单实例锁：避免双开导致数据互踩（两份内存任务表全量覆盖写 tasks.json）。
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
