@@ -2,6 +2,13 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.3] - 2026-10-21
+
+### 新增
+
+- **最近续读条**：打开游戏库不用滚就能看到「上次玩到哪」——hero 下方横向条显示最近玩过的 4 款（小封面 + 标题 + 今天/昨天/日期时间），点击选中进详情。对标 gal-launcher aurora 的 queue-card 续读列表。回归：`verify_recent_strip` 5/5。
+- **回归脚本**：`regression:dlview`（下载页任务列表/筛选/操作组/进度条/状态 chip 5/5）。
+
 ## [0.2.2] - 2026-10-21
 
 ### 新增

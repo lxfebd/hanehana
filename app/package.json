@@ -1,6 +1,6 @@
 {
   "name": "hanehana",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "羽花 HaneHana — galgame 管理器：封面墙游戏库 + 多源元数据刮削 + Rust 下载引擎",
   "main": "./out/main/index.js",
   "author": "HaneHana",
