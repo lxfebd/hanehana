@@ -469,10 +469,10 @@ function applyAccentOverride<T extends Record<string, unknown>>(
 // ---------------------------------------------------------------- 主题套件
 
 const SAKURA_DARK: DarkSeeds = {
-  night: [14, 11, 22],
-  nightPanel: [26, 20, 44],
-  float: [26, 20, 48],
-  input: [20, 15, 38],
+  night: [42, 33, 66],
+  nightPanel: [53, 41, 90],
+  float: [49, 38, 90],
+  input: [47, 36, 90],
   textBase: [244, 241, 255],
   textHot: [255, 252, 255],
   accent: '#FF7BA9',
@@ -513,10 +513,10 @@ const SAKURA_LIGHT: LightSeeds = {
 }
 
 const STARNIGHT_DARK: DarkSeeds = {
-  night: [9, 13, 20],
-  nightPanel: [16, 22, 34],
-  float: [14, 20, 32],
-  input: [12, 17, 28],
+  night: [27, 39, 60],
+  nightPanel: [42, 58, 90],
+  float: [39, 56, 90],
+  input: [36, 51, 84],
   textBase: [222, 230, 240],
   textHot: [246, 250, 255],
   // 钢青（不是荧光青）：低饱和的蓝灰青，避免"AI 荧光"感
@@ -558,10 +558,10 @@ const STARNIGHT_LIGHT: LightSeeds = {
 }
 
 const MINT_DARK: DarkSeeds = {
-  night: [10, 17, 14],
-  nightPanel: [18, 30, 24],
-  float: [15, 26, 21],
-  input: [11, 21, 17],
+  night: [30, 51, 42],
+  nightPanel: [54, 90, 72],
+  float: [45, 78, 63],
+  input: [33, 63, 51],
   textBase: [232, 250, 240],
   textHot: [250, 255, 251],
   accent: '#5EE6A8',
@@ -604,10 +604,10 @@ const MINT_LIGHT: LightSeeds = {
 // ------------------------------------------------- cinema（电影感纯黑舞台 + 暖金）
 
 const CINEMA_DARK: DarkSeeds = {
-  night: [8, 8, 12],
-  nightPanel: [16, 15, 22],
-  float: [18, 17, 26],
-  input: [13, 12, 19],
+  night: [24, 24, 36],
+  nightPanel: [48, 45, 66],
+  float: [54, 51, 78],
+  input: [39, 36, 57],
   textBase: [240, 236, 226],
   textHot: [252, 249, 242],
   // 暖金而非高饱和荧光：电影演职员表的金色，克制、衬字
@@ -651,10 +651,10 @@ const CINEMA_LIGHT: LightSeeds = {
 // ------------------------------------------------- aurora（极光柔光剧照舞台：雾蓝 × 柔粉）
 
 const AURORA_DARK: DarkSeeds = {
-  night: [10, 12, 24],
-  nightPanel: [20, 22, 42],
-  float: [22, 24, 48],
-  input: [15, 16, 34],
+  night: [30, 36, 72],
+  nightPanel: [43, 47, 90],
+  float: [41, 45, 90],
+  input: [40, 42, 90],
   textBase: [228, 232, 250],
   textHot: [248, 250, 255],
   // 雾蓝主 accent + 柔粉点缀（derive 层的 accentSoft/ChipBg 自动承接）
