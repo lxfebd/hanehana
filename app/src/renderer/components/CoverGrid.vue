@@ -533,12 +533,13 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
     border-color var(--hh-motion-med) ease;
   /* 焦点环交给全局 :focus-visible（WCAG 2.4.11），不留 outline:none 掐死它 */
 }
-/* hover 不抬升不缩放：translateY/scale 是"AI 演示动画"手法，
-   桌面工具软件里每张卡都会跳只会让人晕。改为边框提亮 + 底色微亮，
-   信息密度高的界面里，动效越少越显专业。 */
+/* hover：封面微抬（translateY -3px）+ 阴影加深 + 边框提亮。
+   克制原则：不做 scale 放大（相邻封面边缘会露白），抬升幅度小到不晃眼，
+   但足够让封面有"浮起"的手感——纯边框变色在暗色墙上看不出层次。 */
 .cover-card:hover {
   background: var(--hh-color-card-hover);
   border-color: var(--hh-color-accent-selected-border);
+  transform: translateY(-3px);
 }
 .cover-card.multi {
   cursor: pointer;
@@ -560,7 +561,14 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   overflow: hidden;
   position: relative;
   box-shadow: 0 6px 20px var(--hh-color-thumb-shadow);
-  transition: box-shadow var(--hh-motion-med) ease;
+  transition:
+    box-shadow var(--hh-motion-med) ease,
+    transform var(--hh-motion-med) ease;
+}
+/* hover 抬升时封面跟着浮起（与卡片同向，阴影加深制造悬浮感） */
+.cover-card:hover .cover-thumb {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px var(--hh-color-thumb-shadow);
 }
 .cover-thumb img {
   width: 100%;
