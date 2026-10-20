@@ -2,6 +2,21 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.1] - 2026-10-21
+
+### 新增
+
+- **批量刮削端到端验证**：`regression:batchscrape`（中文名「妹相随」+ 英文名「CLANNAD」两款走真实 App 批量刮削 → 断言搜索出结果 + 落库 6/6）——批量路径彻底证明可用。
+- **封面卡 hover 抬升**：封面卡 hover 从"只变边框"升级为微抬升（translateY -3px）+ 封面浮起 + 阴影加深（0 6px 20px → 0 12px 28px）——暗色墙上看得出层次与手感。验证脚本 `verify_cover_hover.mjs`（CDP 真实鼠标 hover 2/2）。
+
+### 变更
+
+- **hero 氛围横带放大到 340px**：封面轨 142→170、左封面 76×104→96×132、缩略图 72→80——默认视图第一眼更剧照，窄窗 226px 折叠保持。
+- **布局留白调大**：三栏 padding 0 12px→0 20px、gap 12→16、content 内 gap 10→12——界面更呼吸感（对标 gal-launcher 的留白尺度）。
+- **深色主题底色提亮**：5 套深色主题 night/nightPanel/float/input 同比例提亮（保持色相），从近纯黑（lum~0.03）提到深蓝灰（lum~0.10），侧栏/面板/浮层从死黑变为有层次（canvas 像素数据定位：深色截图 avgLum 0.20 vs gal-launcher cinema 0.51）。
+- **大标题换衬线族**：hero/空库/剧照舞台标题用 Instrument Serif + Noto Serif SC 衬线族，字号 30-52px——对标 gal-launcher 各主题的 serif display 字体。
+- **刮削对话框接入 YMGal**（0.2.0 后补记）：`runSearch` 从两源扩到三源并行，中文游戏名在对话框/批量界面可搜（实测妹相随 → 8 条带汉化标记）；ScrapeDialog 补 ymgal 绿色徽章、候选封面圆角/阴影/hover 缩放。验证 `verify_scrape_dialog_ui.mjs` 7 断言。
+
 ## [0.2.0] - 2026-10-21
 
 ### 新增
