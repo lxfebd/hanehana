@@ -225,6 +225,11 @@ async function apply(): Promise<void> {
   display: flex;
   align-items: center;
   justify-content: center;
+  box-shadow: 0 3px 10px var(--hh-color-shade-thumb-soft);
+  transition: transform var(--hh-motion-med) ease;
+}
+.result-card:hover .r-cover {
+  transform: scale(1.03);
 }
 .r-cover img {
   width: 100%;
@@ -274,6 +279,10 @@ async function apply(): Promise<void> {
 .r-badge.bangumi {
   background: var(--hh-color-warning-soft-bg);
   color: var(--hh-color-warning);
+}
+.r-badge.ymgal {
+  background: var(--hh-color-success-bg);
+  color: var(--hh-color-success-text);
 }
 .r-desc {
   font-size: var(--hh-font-caption-size);

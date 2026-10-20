@@ -501,8 +501,19 @@ export async function runSearch(query: string): Promise<void> {
       .catch((e: unknown) => {
         library.scrapeWarnings.push(sourceWarn('Bangumi', e))
       })
-    // 等两源都结束才收起 loading：期间快源结果已上屏，慢源超时只补充警告
-    await Promise.all([vndbP, bgmP])
+    // YMGal（月幕）国产源：中文名/汉化版/开发商全覆盖，与 VNDB/Bangumi 并行，
+    // 先回先上屏——中文游戏名搜 VNDB 0 命中时这里兜底（实测「妹相随」→ 8 条）
+    const ymgalP = window.hh
+      .scrapeSearchSource('ymgal', query)
+      .then((v) => {
+        library.scrapeResults.push(...v.results)
+        library.scrapeWarnings.push(...v.warnings)
+      })
+      .catch((e: unknown) => {
+        library.scrapeWarnings.push(sourceWarn('YMGal', e))
+      })
+    // 等三源都结束才收起 loading：期间快源结果已上屏，慢源超时只补充警告
+    await Promise.all([vndbP, bgmP, ymgalP])
   } catch (e) {
     library.scrapeWarnings = [e instanceof Error ? e.message : String(e)]
   } finally {
