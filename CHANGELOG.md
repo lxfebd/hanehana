@@ -2,6 +2,23 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.0] - 2026-10-21
+
+### 新增
+
+- **库顶氛围横带（hero）**：打开游戏库的第一眼不再是空白网格——顶部一条电影感氛围横带，背景用「最近在玩/收藏精选」的封面大图模糊铺满 + 双层遮罩压对比，顶部封面轨可滚轮/拖拽/方向键切换（选中放大 + 白描边），叙事眉标「继续上次的故事 / 从这里开始 / 下一段故事」+ 进度计数，主按钮白底黑字三态。空库或无封面时不渲染。
+- **全屏剧照舞台（客厅模式）**：全屏模式从「深色大网格」升级为电影剧照舞台——中央选中封面竖版大图（min(46vh,380px)）+ 左右 ghost 封面旋转 ±5° 压暗 + 主色双光斑径向光晕 + 衬线大标题 + 发光胶囊启动键；封面墙缩为底部一条封面轨。方向键/手柄切换时标题跟随，舞台整体 300ms scale-in。
+- **影院 / 极光两套主题**：主题套件从 3 套扩到 5 套。影院=纯黑舞台 + 暖金演职员表（`#D8B36A`）；极光=深蓝紫夜 + 雾蓝柔粉光晕（`#8FB7E8`），深浅色各一份种子。设置页主题卡升级为 46px 氛围渐变预览（夜色底 + accent 光晕），文案改为「每套主题不只是配色，是整套氛围与气质」。
+- **封面书架板（P1）**：封面卡底部加暗色书架板（渐变层板 + 投影），hover 时板面泛起 accent 色——封面从"网格里贴图"变成"立上书架"。RecycleScroller 虚拟化度量同步重算。
+- **回归脚本**：`regression:hero`（hero/主题/持久化/窄窗 4 阶段真实 UI 走查）、`regression:fsstage`（全屏剧照舞台 17 项断言，自包含 seed）、`scripts/verify_scrape_live.mjs`（三源搜索真实网络验证）、`scripts/verify_scrape_apply.mjs`（刮削落库全链路：标题/来源/开发商/封面/缩略图/主色/汉化标签）。
+
+### 修复
+
+- **刮削「图不行」的真病根：YMGal（月幕）封面是 WebP VP8X，Electron 的 `nativeImage` 只支持 jpg/png**（[官方 issue #29619](https://github.com/electron/electron/issues/29619)），封面永远下不了。`downloadCover` 改为：webp/avif 存原始字节（渲染层 Chromium 原生支持显示）+ 魔数/字节粗验；jpg/png 走 Chromium 解码转 JPEG 统一落盘。
+- **刮削主色提取对 webp 失败**：`coverColorOf` 改 `createFromBuffer`（Chromium 解码器）优先、createFromPath 兜底；`ensureThumb` 改从刚生成的 JPEG 缩略图取主色（一定可解）→ webp 封面也有主色。
+- **刮削只有两源且中文必备源（Bangumi）固定超时**：新增 YMGal（月幕）国产源——OAuth token 缓存 + `/open/archive/search-game`，中文名/汉化版/开发商全覆盖（实测「妹相随」从 0 结果 → 8 条命中，附「汉化」标签）；三源并行 + 单源 6s 硬超时裁剪（快源先回，体感从"卡 12 秒"变"秒出"），IPC 按源搜索白名单同步扩到三源。
+- **主题卡色板被一条单色条带敷衍**：`preset-preview` 改为夜色底 + accent 光晕的氛围渐变。
+
 ## [0.1.1] - 2026-10-17
 
 ### 修复

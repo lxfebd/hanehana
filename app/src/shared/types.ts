@@ -192,7 +192,7 @@ export interface GameVariant {
 }
 
 export interface ScrapeResult {
-  provider: 'vndb' | 'bangumi'
+  provider: 'vndb' | 'bangumi' | 'ymgal'
   id: string
   title: string
   titleNative?: string
@@ -213,7 +213,7 @@ export interface ScrapeResult {
 }
 
 export interface ScrapeCandidate {
-  provider: 'vndb' | 'bangumi'
+  provider: 'vndb' | 'bangumi' | 'ymgal'
   id: string
   title: string
   titleNative?: string
@@ -347,8 +347,13 @@ export interface Settings {
    * 老 settings.json 没有此字段时回落 'dark'（等于旧行为）。
    */
   theme_mode: ThemeMode
-  /** 主题套件（多主题：樱夜/星海/薄荷）。老文件回落 'sakura'。 */
+  /** 主题套件（多主题：樱夜/星海/薄荷/影院/极光）。老文件回落 'starnight'。 */
   theme_preset: ThemePresetId
+  /**
+   * 自定义主题色（accent）：#rgb / #rrggbb，或空串 = 跟随套件自带强调色。
+   * 与套件解耦：切套件时保留；只影响选中态/链接/按钮/焦点环等点缀面。
+   */
+  theme_accent: string
   /** 自定义背景图路径（绝对路径；空串 = 用动态封面底）。 */
   bg_image: string
   /** 任务下完时弹系统通知（窗口藏在托盘时唯一的告知渠道） */
@@ -393,7 +398,7 @@ export interface Settings {
 export const THEME_MODES = ['system', 'dark', 'light'] as const
 export type ThemeMode = (typeof THEME_MODES)[number]
 
-export const THEME_PRESETS = ['sakura', 'starnight', 'mint'] as const
+export const THEME_PRESETS = ['sakura', 'starnight', 'mint', 'cinema', 'aurora'] as const
 export type ThemePresetId = (typeof THEME_PRESETS)[number]
 
 export const LANGUAGES = ['zh', 'en'] as const
@@ -409,6 +414,7 @@ export const DEFAULT_SETTINGS: Settings = {
   dark: true,
   theme_mode: 'dark',
   theme_preset: 'starnight',
+  theme_accent: '',
   bg_image: '',
   notify_on_finish: true,
   notify_on_error: true,

@@ -6,8 +6,8 @@ import { Ipc } from '../../shared/ipc'
 import { searchScrape, searchSource, applyScrape } from '../scraper'
 import { isId, type IpcCtx } from './shared'
 
-/** 源白名单：渲染层只能按这两个源搜，防拼任意字符串当 key 撞进断流器。 */
-const SOURCES = ['vndb', 'bangumi'] as const
+/** 源白名单：渲染层只能按这几个源搜，防拼任意字符串当 key 撞进断流器。 */
+const SOURCES = ['vndb', 'bangumi', 'ymgal'] as const
 
 export function registerScrapeHandlers(_ctx: IpcCtx): void {
   // title 是渲染层给的搜索词：剥掉控制字符、限长，空串直接返回空结果，

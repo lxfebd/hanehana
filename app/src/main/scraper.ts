@@ -15,6 +15,7 @@
  */
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { nativeImage } from 'electron'
 import { ensureCoversDir, getGame, updateGame } from './gameStore'
 import { coverColorOf } from './coverColor'
 import { coverQualityOk } from './coverQuality'
@@ -25,6 +26,9 @@ import type { Game, ScrapeCandidate } from '../shared/types'
 
 const UA = 'HaneHana/0.1 (galgame manager; contact: lxfebd)'
 const TIMEOUT = 12000
+/** 单源搜索的硬超时：三源并行时，最慢源最多拖这么多（Bangumi 固定 12s 超时
+ * 会让整个搜索 UI 空转到 12s 才出结果——快源先回，慢源裁掉，体感秒出）。 */
+const SEARCH_SOURCE_TIMEOUT = 6000
 
 async function fetchJson(url: string, init: RequestInit): Promise<unknown> {
   const r = await fetch(url, {
@@ -134,18 +138,20 @@ function breakerMessage(key: string): string {
  * 源不通时换词重试没意义（也避免把已挂的 Bangumi 按候选数翻倍打超时）。
  */
 export async function searchSource(
-  source: 'vndb' | 'bangumi',
+  source: 'vndb' | 'bangumi' | 'ymgal',
   title: string,
 ): Promise<{ results: ScrapeCandidate[]; warnings: string[] }> {
   if (isBreakerOpen(source)) {
     // 熔断中：直接短路，UI 立即看到原因，不发起请求
     return { results: [], warnings: [breakerMessage(source)] }
   }
-  const search = source === 'vndb' ? searchVndb : searchBangumi
+  const search = source === 'vndb' ? searchVndb : source === 'ymgal' ? searchYmgal : searchBangumi
   const ladder = queryLadder(title)
   for (const q of ladder) {
     try {
-      const results = await search(q)
+      // 单源硬超时：慢源（Bangumi 固定 12s）在这里被裁到 SEARCH_SOURCE_TIMEOUT，
+      // 整条词梯最多拖这么久，三源并行时快源照常先回。
+      const results = await withTimeout(search(q), SEARCH_SOURCE_TIMEOUT)
       // 通了就清失败计数（哪怕这条词 0 结果——源是活的，只是这个词没命中）
       breakerSuccess(source)
       if (results.length) {
@@ -161,6 +167,21 @@ export async function searchSource(
   }
   // 所有候选词都空手而归：正常返回空结果（不报错，UI 显示「没找到」）
   return { results: [], warnings: [] }
+}
+
+/** 给 Promise 套超时：到点抛「连接超时」（AbortSignal 已在 fetch 内生效，这里兜底）。 */
+async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
+  try {
+    return await Promise.race([
+      p,
+      new Promise<never>((_, rej) => {
+        timer = setTimeout(() => rej(new Error('timeout')), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 // ---------------------------------------------------------------- VNDB
@@ -263,6 +284,92 @@ async function searchBangumi(title: string): Promise<ScrapeCandidate[]> {
   }))
 }
 
+// ---------------------------------------------------------------- YMGal（月幕）
+
+/**
+ * YMGal 月幕 Galgame 开放 API（实测 2026-10-21 全通）：
+ *  - POST /oauth/token?grant_type=client_credentials&client_id=ymgal&client_secret=luna0327&scope=public
+ *    → { access_token, expires_in }（token 约 39 分钟有效，进程内缓存）
+ *  - GET /open/archive/search-game?mode=list&keyword=..&pageNum=1&pageSize=N
+ *    → { success, code:0, data:{ result:[{id,name,chineseName,orgName,releaseDate,mainImg,haveChinese}] } }
+ *
+ * 为什么加它：VNDB 只收日文原名/英文名，Bangumi 在当前网络固定超时——
+ * 中文用户搜中文名/汉化版几乎必挂。YMGal 是国产 galgame 库，chineseName
+ * 直接可搜（实测 CLANNAD → 命中，附 Key 制作社/发售日/haveChinese 汉化标记）。
+ * 封面在 cdn.ymgal.games（https，进 seenCoverHosts 白名单后 applyScrape 可下）。
+ */
+const YMGAL_BASE = 'https://www.ymgal.games'
+const YMGAL_CLIENT = { id: 'ymgal', secret: 'luna0327' }
+
+interface YmTokenResponse {
+  access_token?: string
+  expires_in?: number
+}
+
+let ymToken: { token: string; expiresAt: number } | null = null
+
+/** 取 YMGal token（进程内缓存，过期前复用）。失败抛中文错误，走熔断。 */
+async function ymgalToken(): Promise<string> {
+  const now = Date.now()
+  if (ymToken && ymToken.expiresAt > now + 60_000) return ymToken.token
+  const q = new URLSearchParams({
+    grant_type: 'client_credentials',
+    client_id: YMGAL_CLIENT.id,
+    client_secret: YMGAL_CLIENT.secret,
+    scope: 'public',
+  })
+  const r = await fetch(`${YMGAL_BASE}/oauth/token?${q}`, {
+    headers: { 'User-Agent': UA },
+    signal: AbortSignal.timeout(TIMEOUT),
+  })
+  if (!r.ok) throw new Error(`HTTP ${r.status}：YMGal token 失败`)
+  const j = (await r.json()) as YmTokenResponse
+  if (!j.access_token) throw new Error('YMGal token 响应缺 access_token')
+  ymToken = { token: j.access_token, expiresAt: now + (j.expires_in ?? 1800) * 1000 }
+  return ymToken.token
+}
+
+interface YmListItem {
+  id: number
+  name: string
+  chineseName?: string | null
+  orgName?: string | null
+  releaseDate?: string | null
+  mainImg?: string | null
+  haveChinese?: boolean
+}
+
+async function searchYmgal(title: string): Promise<ScrapeCandidate[]> {
+  const token = await ymgalToken()
+  const q = new URLSearchParams({ mode: 'list', keyword: title, pageNum: '1', pageSize: '8' })
+  const r = await fetch(`${YMGAL_BASE}/open/archive/search-game?${q}`, {
+    headers: {
+      'User-Agent': UA,
+      Accept: 'application/json;charset=utf-8',
+      Authorization: `Bearer ${token}`,
+      version: '1',
+    },
+    signal: AbortSignal.timeout(TIMEOUT),
+  })
+  if (!r.ok) throw new Error(`HTTP ${r.status}：YMGal 搜索失败`)
+  const j = (await r.json()) as { success?: boolean; code?: number; data?: { result?: YmListItem[] } }
+  if (j.code !== 0 || !j.data) {
+    throw new Error(j.code === 401 || j.code === 403 ? 'YMGal 认证失败' : `YMGal code ${j.code}`)
+  }
+  return (j.data.result ?? []).map((it) => ({
+    provider: 'ymgal' as const,
+    id: String(it.id),
+    // 中文名优先：这就是 YMGal 相对 VNDB 的核心价值
+    title: it.chineseName || it.name,
+    titleNative: it.chineseName ? it.name : undefined,
+    releaseDate: it.releaseDate ?? undefined,
+    developer: it.orgName ?? undefined,
+    coverUrl: it.mainImg ?? undefined,
+    // haveChinese 汉化标记折进标签：用户一眼看到「这款有汉化」
+    tags: it.haveChinese ? ['汉化'] : undefined,
+  }))
+}
+
 // ---------------------------------------------------------------- 对外接口
 
 /**
@@ -285,6 +392,10 @@ function scrapeMock(title: string): { results: ScrapeCandidate[]; warnings: stri
  * 多源并行搜索。返回 { results, warnings }：
  *   warnings 记录某个源失败的原因（如「Bangumi 连接超时」），
  *   供 UI 提示，不让用户以为搜索结果就是全部。
+ *
+ * 三源并行（VNDB / Bangumi / YMGal）：每个源自带熔断，searchSource 内部
+ * 用 SEARCH_SOURCE_TIMEOUT 包一层——快源先回、慢源裁掉，不让 Bangumi 的
+ * 12s 超时拖住整个搜索 UI（体感从"卡 12 秒"变"秒出"）。
  */
 export async function searchScrape(title: string): Promise<{ results: ScrapeCandidate[]; warnings: string[] }> {
   const mock = scrapeMock(title)
@@ -292,7 +403,11 @@ export async function searchScrape(title: string): Promise<{ results: ScrapeCand
     for (const c of mock.results) rememberCoverHost(c.coverUrl)
     return mock
   }
-  const [vndb, bgm] = await Promise.allSettled([searchSource('vndb', title), searchSource('bangumi', title)])
+  const [vndb, bgm, ymgal] = await Promise.allSettled([
+    searchSource('vndb', title),
+    searchSource('bangumi', title),
+    searchSource('ymgal', title),
+  ])
 
   const results: ScrapeCandidate[] = []
   const warnings: string[] = []
@@ -306,6 +421,11 @@ export async function searchScrape(title: string): Promise<{ results: ScrapeCand
     results.push(...bgm.value.results)
     warnings.push(...bgm.value.warnings)
   } else warnings.push(`Bangumi：${reasonText(bgm.reason)}`)
+
+  if (ymgal.status === 'fulfilled') {
+    results.push(...ymgal.value.results)
+    warnings.push(...ymgal.value.warnings)
+  } else warnings.push(`YMGal：${reasonText(ymgal.reason)}`)
 
   // 发出去的封面域名记下来，applyScrape 只认这些（见 seenCoverHosts）
   for (const c of results) rememberCoverHost(c.coverUrl)
@@ -398,14 +518,25 @@ export async function applyScrape(gameId: string, raw: unknown): Promise<{ ok: b
   }
 }
 
-/** 下载封面到 covers/{provider}-{id}.jpg，失败不致命（无封面也能用）。 */
+/** 下载封面到 covers/{provider}-{id}.{ext}，失败不致命（无封面也能用）。
+ *
+ * 格式策略（实测 2026-10-21）：nativeImage（Electron）只支持 jpg/png，
+ * webp/avif 一律 isEmpty——YMGal 封面是 WebP，走 nativeImage 全链路
+ * （质量闸/缩略图/主色）必然失败。处理：
+ *  - jpg/png：nativeImage 可解，走完整质量闸 + 转 JPEG 统一落盘
+ *  - webp/avif：存原始字节（渲染层 Chromium 原生支持显示，封面墙照常出图），
+ *    质量闸降级为「文件头 + 字节数」粗验（RIFF/WEBP 魔数 + 非空、非超小），
+ *    缩略图/主色失败走既有兜底（占位色/原图直显）——先让封面显示出来，
+ *    比「下不了」强一整个量级。
+ */
 async function downloadCover(provider: string, id: string, url: string): Promise<string | undefined> {
   try {
     const dir = ensureCoversDir()
-    const ext = /\.png$/i.test(url) ? 'png' : 'jpg'
     // id 来自渲染层，直接拼进文件名就是路径穿越（../../）。只留字母数字。
     const safeId = id.replace(/[^a-z0-9]/gi, '').slice(0, 32)
     if (!safeId) return undefined
+    const extMatch = /\.(png|webp|avif|jpe?g)$/i.exec(url)
+    const ext = extMatch ? extMatch[1]!.toLowerCase() : 'jpg'
     const dest = join(dir, `${provider}-${safeId}.${ext}`)
     // 缓存命中也要过质量闸：老版本可能已把废图（源站错误页/占位图）写进了
     // covers/，直接复用等于把 bug 永久化。不合格就删掉重下。
@@ -431,16 +562,43 @@ async function downloadCover(provider: string, id: string, url: string): Promise
       console.error('[hanehana] 封面超过大小上限，已丢弃：', url.slice(0, 200))
       return undefined
     }
-    writeFileSync(dest, buf)
-    // 质量闸：解码失败（HTML 错误页冒充图片）、几何异常、近纯色占位图
-    // 一律拒绝并删除——废图进库就是「封面墙上一块黑」的老路。
+    // webp/avif：nativeImage 不支持，存原始字节（渲染层能显示）。
+    // 质量粗验：魔数 + 最小字节数（拒 HTML 错误页冒充）。
+    if (ext === 'webp' || ext === 'avif') {
+      const magic = ext === 'webp' ? buf.subarray(0, 4).toString('ascii') === 'RIFF' && buf.subarray(8, 12).toString('ascii') === 'WEBP' : false
+      const avifOk = ext === 'avif' && buf[4] === 0x1a && buf[5] === 0x00 && (buf[0] === 0x00 || buf[0] === 0x24)
+      if (!magic && !avifOk) {
+        console.error('[hanehana] 封面魔数校验失败，已丢弃：', url.slice(0, 200), 'bytes=', buf.length)
+        return undefined
+      }
+      if (buf.length < 5000) {
+        // 小于 5KB 的 webp/avif 基本是图标/占位，不配当封面
+        console.error('[hanehana] 封面过小，已丢弃：', url.slice(0, 200), 'bytes=', buf.length)
+        return undefined
+      }
+      writeFileSync(dest, buf)
+      return dest
+    }
+    // jpg/png：Chromium 解码器解码，转 JPEG 统一落盘（质量闸/缩略图/主色消费同一可解文件）
+    const img = nativeImage.createFromBuffer(buf)
+    if (img.isEmpty()) {
+      const probe = buf.length > 12 ? buf.subarray(0, 12).toString('hex') : ''
+      console.error('[hanehana] 封面解码失败（非图片或格式不支持），已丢弃：', url.slice(0, 200), 'bytes=', buf.length, 'head=', probe)
+      return undefined
+    }
+    const { width: w, height: h } = img.getSize()
+    if (w < 96 || h < 96 || Math.max(w, h) / Math.min(w, h) > 3.5) {
+      console.error('[hanehana] 封面几何不合格，已丢弃：', url.slice(0, 200), `${w}x${h}`)
+      return undefined
+    }
+    writeFileSync(dest, img.toJPEG(88))
     if (!coverQualityOk(dest)) {
+      console.error('[hanehana] 封面质量不合格，已丢弃：', url.slice(0, 200))
       try {
         unlinkSync(dest)
       } catch {
         /* 删不掉也绝不引用 */
       }
-      console.error('[hanehana] 封面质量不合格，已丢弃：', url.slice(0, 200))
       return undefined
     }
     return dest

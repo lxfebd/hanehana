@@ -69,7 +69,7 @@ const bridge = {
   // 元数据刮削
   scrapeSearch: (title: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title),
   /** 按源搜索（G20）：{ results, warnings }，单源失败不拖累另一源 */
-  scrapeSearchSource: (source: 'vndb' | 'bangumi', title: string) =>
+  scrapeSearchSource: (source: 'vndb' | 'bangumi' | 'ymgal', title: string) =>
     ipcRenderer.invoke(Ipc.ScrapeSearchSource, source, title),
   scrapeApply: (gameId: string, result: ScrapeResult) => ipcRenderer.invoke(Ipc.ScrapeApply, gameId, result),
 

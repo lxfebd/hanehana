@@ -61,7 +61,14 @@ export async function ensureThumb(g: Game): Promise<void> {
     mkdirSync(thumbsDir, { recursive: true })
     const dest = join(thumbsDir, `${g.id}.jpg`)
     writeFileSync(dest, thumb.toJPEG(82))
-    updateGame(g.id, { thumbPath: dest, thumbSrc: g.coverPath, color: coverColorOf(g.coverPath) ?? g.color })
+    // 主色优先从刚落盘的 JPEG 缩略图取：coverColorOf 只保证解 jpg/png，
+    // 原始封面若是 webp（YMGal）走 createFromBuffer 可能 isEmpty——缩略图
+    // 已由 Chromium 管线转成 JPEG，一定可解。原图能解才退回原图、再退原值。
+    updateGame(g.id, {
+      thumbPath: dest,
+      thumbSrc: g.coverPath,
+      color: coverColorOf(dest) ?? coverColorOf(g.coverPath) ?? g.color,
+    })
   } catch (e) {
     console.error('[hanehana] 缩略图生成失败：', g.id, e)
   }

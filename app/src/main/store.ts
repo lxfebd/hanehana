@@ -22,6 +22,8 @@ import {
   type ThemeMode,
   type ThemePresetId,
 } from '../shared/types'
+// accent 归一化与渲染层共用一份口径（3/6 位十六进制，大写带 #）
+import { normalizeAccentHex } from '../shared/accent'
 const TASK_STATES: readonly string[] = [
   'queued',
   'idle',
@@ -146,6 +148,13 @@ export function normalizeSettings(raw: unknown): Settings {
     }
     if (typeof d.theme_preset === 'string' && THEME_PRESETS.includes(d.theme_preset as ThemePresetId)) {
       s.theme_preset = d.theme_preset as ThemePresetId
+    }
+    // 自定义主题色：只收 3/6 位十六进制或空串（空 = 跟随套件）。
+    // 渲染层 normalizeAccentHex 只接同样口径，坏值（人手改的）在这里就丢掉。
+    if (typeof d.theme_accent === 'string') {
+      const normalized = normalizeAccentHex(d.theme_accent)
+      if (normalized) s.theme_accent = normalized
+      else if (d.theme_accent.trim() === '') s.theme_accent = ''
     }
     // 自定义背景图：只收存在的路径，防手改坏值
     if (typeof d.bg_image === 'string' && d.bg_image && existsSync(d.bg_image)) s.bg_image = d.bg_image

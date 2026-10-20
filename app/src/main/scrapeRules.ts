@@ -59,7 +59,7 @@ export function sanitizeScrapeResult(raw: unknown): ScrapeResult | null {
   if (!raw || typeof raw !== 'object') return null
   const d = raw as Record<string, unknown>
   const provider = d.provider
-  if (provider !== 'vndb' && provider !== 'bangumi') return null
+  if (provider !== 'vndb' && provider !== 'bangumi' && provider !== 'ymgal') return null
   const id = typeof d.id === 'string' ? d.id.trim().slice(0, 64) : ''
   const title = typeof d.title === 'string' ? d.title.slice(0, 500) : ''
   if (!id || !title) return null
