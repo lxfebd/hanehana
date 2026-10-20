@@ -12,6 +12,7 @@ import { useBoot } from './composables/useBoot'
 import { useGlobalShortcuts, shortcutHelpOpen } from './composables/useGlobalShortcuts'
 import CoverGrid from './components/CoverGrid.vue'
 import LibraryHero from './components/LibraryHero.vue'
+import RecentStrip from './components/RecentStrip.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
 import AddGameDialog from './components/AddGameDialog.vue'
@@ -148,6 +149,9 @@ async function submitAddTask(input: {
 
               <!-- P0 首屏冲击：库顶氛围横带（最近在玩 / 收藏精选），有图才出现 -->
               <LibraryHero />
+
+              <!-- 最近续读条：打开不用滚就能看到「上次玩到哪」（对标 gal-launcher queue-card） -->
+              <RecentStrip />
 
               <div class="cover-wrap">
                 <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />

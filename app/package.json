@@ -35,7 +35,8 @@
     "regression:coveraspect": "node scripts/verify_cover_aspect.mjs",
     "regression:detailpanel": "node scripts/verify_detail_panel.mjs",
     "regression:scancover": "node scripts/verify_scan_cover.mjs",
-    "regression:dlview": "node scripts/verify_download_view.mjs"
+    "regression:dlview": "node scripts/verify_download_view.mjs",
+    "regression:recentstrip": "node scripts/verify_recent_strip.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
