@@ -212,12 +212,20 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       <div class="empty-title">{{ t('cg_loading') }}</div>
     </div>
 
-    <!-- 空态：库里确实没有游戏 -->
-    <div v-else-if="games.length === 0 && filteredEmpty" class="empty glass">
-      <Flower2 class="empty-icon" :size="40" :stroke-width="1.5" />
-      <div class="empty-title">{{ t('lib_empty') }}</div>
-      <div class="empty-hint">{{ t('lib_empty_hint') }}</div>
-      <button class="empty-cta" @click="library.scanOpen = true">{{ t('lib_scan') }}</button>
+    <!-- 空态：库里确实没有游戏（沉浸式引导页：光晕底 + 三步引导 + 主按钮） -->
+    <div v-else-if="games.length === 0 && filteredEmpty" class="empty-wrap">
+      <div class="empty-aurora" aria-hidden="true"></div>
+      <div class="empty glass">
+        <Flower2 class="empty-icon" :size="46" :stroke-width="1.2" />
+        <div class="empty-title">{{ t('lib_empty') }}</div>
+        <div class="empty-hint">{{ t('lib_empty_hint') }}</div>
+        <div class="empty-steps">
+          <div class="step"><span class="step-num">1</span><span class="step-text">{{ t('lib_empty_step1') }}</span></div>
+          <div class="step"><span class="step-num">2</span><span class="step-text">{{ t('lib_empty_step2') }}</span></div>
+          <div class="step"><span class="step-num">3</span><span class="step-text">{{ t('lib_empty_step3') }}</span></div>
+        </div>
+        <button class="empty-cta" @click="library.scanOpen = true">{{ t('lib_scan') }}</button>
+      </div>
     </div>
 
     <!-- 空态：有游戏但被搜索/分类过滤光了 -->
@@ -379,11 +387,29 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 }
 
 /* 空态：单 CTA */
+/* 沉浸式空库引导页：光晕底（accent 双光斑）+ 居中玻璃卡 + 三步引导 */
+.empty-wrap {
+  position: relative;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.empty-aurora {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(46% 34% at 28% 20%, var(--hh-color-accent-soft), transparent 70%),
+    radial-gradient(40% 30% at 74% 82%, var(--hh-color-accent-chip-bg), transparent 70%);
+  filter: blur(46px);
+  opacity: 0.7;
+}
 .empty {
   position: relative;
-  margin: 60px auto;
-  max-width: 380px;
-  padding: 40px 30px;
+  max-width: 420px;
+  padding: 44px 38px;
   text-align: center;
   border-radius: var(--hh-radius-panel);
 }
@@ -436,6 +462,44 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 }
 .empty-cta.ghost:hover {
   background: var(--hh-color-surface-mid);
+}
+
+/* 三步引导（空库引导页）：编号圆点 + 文案，横向排列 */
+.empty-steps {
+  display: flex;
+  justify-content: center;
+  gap: 22px;
+  margin-top: 22px;
+}
+.step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-mid-high);
+}
+.step-num {
+  width: 22px;
+  height: 22px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-accent-bg);
+  color: var(--hh-color-accent-text);
+  font-size: 12px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+.step-text {
+  white-space: nowrap;
+}
+@media (max-width: 560px) {
+  .empty-steps {
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+  }
 }
 
 /* ============ 网格 ============ */
