@@ -18,6 +18,8 @@
 - **刮削主色提取对 webp 失败**：`coverColorOf` 改 `createFromBuffer`（Chromium 解码器）优先、createFromPath 兜底；`ensureThumb` 改从刚生成的 JPEG 缩略图取主色（一定可解）→ webp 封面也有主色。
 - **刮削只有两源且中文必备源（Bangumi）固定超时**：新增 YMGal（月幕）国产源——OAuth token 缓存 + `/open/archive/search-game`，中文名/汉化版/开发商全覆盖（实测「妹相随」从 0 结果 → 8 条命中，附「汉化」标签）；三源并行 + 单源 6s 硬超时裁剪（快源先回，体感从"卡 12 秒"变"秒出"），IPC 按源搜索白名单同步扩到三源。
 - **主题卡色板被一条单色条带敷衍**：`preset-preview` 改为夜色底 + accent 光晕的氛围渐变。
+- **刮削对话框搜中文名仍 0 结果**：`runSearch` 只调 VNDB/Bangumi 两源，用户在对话框/批量刮削界面搜中文游戏名 VNDB 精确匹配 0 命中。接入 YMGal 并行源（先回先上屏），实测「妹相随」在界面内搜出 8 条带汉化标记的候选项；ScrapeDialog 补 ymgal 绿色徽章、候选封面圆角/阴影/hover 缩放。回归脚本 `verify_scrape_dialog_ui.mjs`（7 断言）。
+- **深色主题"死黑"（数据对比定位）**：canvas 像素分析显示深色主题截图 avgLum 0.20（74 格全暗）vs gal-launcher cinema 0.51——深色界面缺乏通透层次。5 套深色主题（樱夜/星海/薄荷/影院/极光）的 night/nightPanel/float/input 种子同比例提亮（保持色相），从近纯黑（lum~0.03）提到深蓝灰（lum~0.10），面板/侧栏/浮层从死黑变为有层次的深色。实测 CSS 变量：aurora night `#0a0c18→#1e2448`。
 
 ## [0.1.1] - 2026-10-17
 
