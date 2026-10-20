@@ -286,8 +286,8 @@ async function submitAddTask(input: {
 .layout {
   flex: 1;
   display: flex;
-  gap: 12px;
-  padding: 0 12px 12px;
+  gap: 16px;
+  padding: 0 20px 20px;
   min-height: 0;
 }
 
@@ -298,7 +298,7 @@ async function submitAddTask(input: {
   min-width: 220px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   overflow: hidden;
 }
