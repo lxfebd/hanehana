@@ -96,6 +96,11 @@ async function apply(): Promise<void> {
                 ><Star :size="11" :fill="starColor" :stroke-width="0" /> {{ r.rating.toFixed(1) }}</span
               >
             </div>
+            <!-- 候选 tags（汉化等决定性标记）：YMGal 的 haveChinese 折成「汉化」tag，
+                 用户在选候选时一眼看到，不用展开简介猜 -->
+            <div v-if="r.tags?.length" class="r-tags">
+              <span v-for="tag in r.tags.slice(0, 3)" :key="tag" class="r-tag" :class="{ hot: tag === '汉化' }">{{ tag }}</span>
+            </div>
             <div v-if="r.description" class="r-desc">{{ r.description.slice(0, 120) }}…</div>
           </div>
         </div>
@@ -288,6 +293,26 @@ async function apply(): Promise<void> {
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-muted);
   line-height: 1.5;
+}
+/* 候选 tags：汉化高亮（决定性标记），其余中性 */
+.r-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 4px 0 2px;
+}
+.r-tag {
+  font-size: 11px;
+  line-height: 16px;
+  padding: 1px 8px;
+  border-radius: var(--hh-radius-xs);
+  background: var(--hh-color-surface-mid);
+  color: var(--hh-color-text-muted-pure);
+}
+.r-tag.hot {
+  background: var(--hh-color-success-bg);
+  color: var(--hh-color-success-text);
+  font-weight: 600;
 }
 
 .foot {

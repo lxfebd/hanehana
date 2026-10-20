@@ -157,6 +157,9 @@ async function main() {
     console.log('  results providers:', JSON.stringify(provs))
     ck('YMGal 结果出现', ymBadges > 0, 'ymgal=' + ymBadges)
     await new Promise((r) => setTimeout(r, 800))
+    // 汉化 tag 可见（YMGal haveChinese 折成「汉化」tag，用户选候选时一眼看到）
+    const hotTags = await ev(`[...document.querySelectorAll('.r-tag.hot')].map(t => t.textContent.trim())`)
+    ck('汉化 tag 显示在候选卡', hotTags.some((t) => t.includes('汉化')), 'tags=' + JSON.stringify(hotTags))
     const ui = JSON.parse(await ev(`JSON.stringify((() => {
       const badge = document.querySelector('.r-badge.ymgal')
       const cover = document.querySelector('.r-cover')
