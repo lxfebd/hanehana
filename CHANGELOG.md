@@ -2,6 +2,12 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.4] - 2026-10-21
+
+### 新增
+
+- **回归脚本**：`regression:stats`（统计页柱状图 SVG/KPI 卡/双图表区/海报导出 5/5）、`regression:gamesites`（游戏站 webview 挂载/搜索框/三站聚合入口 4/4）。
+
 ## [0.2.3] - 2026-10-21
 
 ### 新增
