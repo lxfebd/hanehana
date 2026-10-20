@@ -30,7 +30,8 @@
     "regression:dupe": "node scripts/e2e_dupe_ui.mjs",
     "regression:hero": "node scripts/ui_walkthrough_hero_themes.mjs",
     "regression:fsstage": "node scripts/verify_fs_stage.mjs",
-    "regression:batchscrape": "node scripts/verify_batch_scrape.mjs"
+    "regression:batchscrape": "node scripts/verify_batch_scrape.mjs",
+    "regression:coverrender": "node scripts/verify_cover_render.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
