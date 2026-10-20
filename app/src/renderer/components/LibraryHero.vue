@@ -366,14 +366,16 @@ watch(heroCandidates, (candidates) => {
 }
 
 .hero-title {
-  font-size: var(--hh-font-title-size);
-  line-height: 28px;
-  font-weight: 700;
+  font-family: 'Instrument Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  font-size: 30px;
+  line-height: 1.08;
+  font-weight: 600;
   color: var(--hh-color-on-cover-text);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-shadow: 0 1px 8px var(--hh-shade-text);
+  text-shadow: 0 2px 16px var(--hh-shade-text);
+  letter-spacing: 0.01em;
 }
 
 .hero-sub {

@@ -55,8 +55,13 @@ const base = {
     subtitle: '16px/22px',
     title: '20px/28px',
     display: '28px/36px',
+    displayXl: 'clamp(30px, 3vw, 44px)/1.1',
     family:
       "'Segoe UI Variable','Segoe UI','PingFang SC','Microsoft YaHei UI','Microsoft YaHei','Noto Sans SC',system-ui,sans-serif",
+    /** 大标题衬线族（对标 gal-launcher 各主题的衬线 display 字体）：
+     * 中文 Noto Serif SC 兜底，西文 Instrument Serif / Georgia 垫底。 */
+    displayFamily:
+      "'Instrument Serif','Noto Serif SC','Source Han Serif SC','Songti SC','SimSun',Georgia,serif",
     mono: `ui-monospace,'Cascadia Code',Consolas,monospace`,
   },
   layout: {
@@ -864,7 +869,9 @@ export function applyCssVars(
     }
     if (group === 'type') {
       for (const [k, v] of Object.entries(map)) {
-        if (k === 'family' || k === 'mono') {
+        // family/displayFamily/mono 是字体族（非 `size/lh` 二元组），
+        // 直接铺成 `--hh-font-<name>`；其余 `caption/body/title/…` 存 size/lh 一对。
+        if (k.endsWith('family') || k === 'mono') {
           set(`--hh-font-${kebab(k)}`, v)
         } else {
           const [size, lh] = String(v).split('/')

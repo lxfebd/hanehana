@@ -426,9 +426,11 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   }
 }
 .empty-title {
-  font-size: var(--hh-font-subtitle-size);
+  font-family: 'Instrument Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  font-size: 32px;
+  line-height: 1.2;
   font-weight: 600;
-  margin-bottom: 6px;
+  margin-bottom: 8px;
   color: var(--hh-color-text-glow);
 }
 .empty-hint {

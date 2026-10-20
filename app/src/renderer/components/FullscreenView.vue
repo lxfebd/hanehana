@@ -823,9 +823,10 @@ function imgErr(e: Event): void {
   max-width: 70%;
 }
 .fs-stage-title {
-  font-size: clamp(26px, 3.2vw, 44px);
-  font-weight: 700;
-  line-height: 1.1;
+  font-family: 'Instrument Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  font-size: clamp(30px, 4vw, 52px);
+  font-weight: 600;
+  line-height: 1.05;
   color: var(--fs-ink-fill);
   text-shadow: 0 2px 24px rgba(0, 0, 0, 0.6);
   letter-spacing: 0.01em;
