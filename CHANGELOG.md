@@ -2,6 +2,18 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.2] - 2026-10-21
+
+### 新增
+
+- **刮削候选卡显示"汉化"标记**：YMGal 的 `haveChinese` 折成「汉化」tag 高亮（success 绿），用户在刮削对话框选候选一眼看到哪个有汉化版，不用展开简介猜。回归：`verify_scrape_dialog_ui`（新增汉化 tag 断言，8/8）。
+- **README 界面预览截图墙**：仓库首页加入 5 张真实 UI 截图（星海封面墙/影院/极光/全屏剧照/空库引导），对标 gal-launcher 的 README 首图留人方式。
+- **回归脚本**：`regression:scancover`（扫描导入→本地封面回填→封面非空 4/4）、`regression:coveraspect`（竖版封面比例防压扁 6/6）、`regression:coverrender`（封面墙 hh:// 协议真实渲染 9/9）、`regression:detailpanel`（详情面板 8/8）、`regression:batchscrape`（批量刮削 6/6）。
+
+### 修复
+
+- **smoke 打包验收误报「起不来」**：`smoke_packaged.mjs` spawn 前清 `ELECTRON_RUN_AS_NODE` 残留变量——本机其他工具常设它，Electron 会按 Node 模式启动（不建窗口/不开 CDP/秒退），打包版 smoke 误报。实测设残留变量后 smoke 仍全绿，确认发布版 v0.2.x 实际一直正常（窗口真实存在）。
+
 ## [0.2.1] - 2026-10-21
 
 ### 新增
