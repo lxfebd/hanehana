@@ -19,10 +19,24 @@
 
 封面墙式的游戏库，把「管理已拥有的 galgame」和「下载新游戏」缝在同一件事里：扫描导入或手动选 exe 入库，VNDB / Bangumi 刮削封面与元数据，一键启动（LE 转区 / Magpie 缩放自动集成），进程监控自动计时；下载侧复用 Rust 多线程分段引擎与内嵌游戏站捕获，不用换窗口、不用换工具。
 
-外壳 Electron，界面 Vue 3 + Ant Design Vue，视觉走 Windows 11 Mica 毛玻璃 + 玻璃卡片，深色优先、三套配色、跟随系统深浅实时换肤。
+外壳 Electron，界面 Vue 3 + Ant Design Vue，视觉走 Windows 11 Mica 毛玻璃 + 玻璃卡片，深色优先、五套主题（星海/樱夜/薄荷/影院/极光）、跟随系统深浅实时换肤。
 
 > 名称取自 galgame 文化意象，并避开 GitHub 上已存在的同名项目。
 >
+
+---
+
+## 📸 界面预览
+
+| 星海·电影感封面墙 | 影院主题 |
+| --- | --- |
+| ![星海·电影感封面墙](docs/assets/screenshots/library-aurora-dark.png) | ![影院主题](docs/assets/screenshots/library-cinema.png) |
+| **极光主题** | **全屏剧照舞台** |
+| ![极光主题](docs/assets/screenshots/library-aurora.png) | ![全屏剧照舞台](docs/assets/screenshots/fullscreen-stage.png) |
+| **空库沉浸引导** | |
+| ![空库沉浸引导](docs/assets/screenshots/empty-guide.png) | |
+
+---
 > 📄 版本变更见 [CHANGELOG.md](CHANGELOG.md)。
 
 ---
