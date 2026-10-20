@@ -31,7 +31,8 @@
     "regression:hero": "node scripts/ui_walkthrough_hero_themes.mjs",
     "regression:fsstage": "node scripts/verify_fs_stage.mjs",
     "regression:batchscrape": "node scripts/verify_batch_scrape.mjs",
-    "regression:coverrender": "node scripts/verify_cover_render.mjs"
+    "regression:coverrender": "node scripts/verify_cover_render.mjs",
+    "regression:coveraspect": "node scripts/verify_cover_aspect.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
