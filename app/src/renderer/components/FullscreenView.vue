@@ -20,7 +20,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { Heart, Search, X } from 'lucide-vue-next'
+import { Heart, Play, Search, X } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import {
   categories,
@@ -296,6 +296,19 @@ function placeholderBg(g: Game): string {
   return palette[h % palette.length]
 }
 
+/** 当前选中的游戏（剧照舞台主角） */
+const stageGame = computed(() => games.value[focusIdx.value] ?? null)
+/** 剧照舞台左侧 ghost（前一款） */
+const stagePrev = computed(() => {
+  const i = focusIdx.value - 1
+  return i >= 0 && i < games.value.length ? games.value[i]! : null
+})
+/** 剧照舞台右侧 ghost（后一款） */
+const stageNext = computed(() => {
+  const i = focusIdx.value + 1
+  return i >= 0 && i < games.value.length ? games.value[i]! : null
+})
+
 function fmtSub(g: Game): string {
   if (g.releaseDate) return g.releaseDate
   if (g.playMs <= 0) return ''
@@ -349,49 +362,92 @@ function imgErr(e: Event): void {
       <div class="fs-empty-hint">{{ t('fs_empty') }}</div>
     </div>
 
-    <!-- 封面墙：行级虚拟化（P1-3）。scroller 负责纵向窗口化，行内 flex 排卡片。 -->
-    <RecycleScroller
-      v-else
-      ref="scrollerRef"
-      :key="`fs-${filterFingerprint}`"
-      class="fs-scroller"
-      :items="fsRows"
-      :item-size="FS_ROW_H"
-      key-field="k"
-      :page-mode="false"
-      :buffer="400"
-      item-class="fs-row-item"
-    >
-      <template #default="{ item }">
-        <div class="fs-row" :style="{ width: fsGridW }">
-          <div
-            v-for="entry in item.items"
-            :key="entry.g.id"
-            class="fs-card"
-            :class="{ selected: focusIdx === entry.i }"
-            :data-fs-selected="focusIdx === entry.i"
-            role="button"
-            :tabindex="focusIdx === entry.i ? 0 : -1"
-            @click="selectAt(entry.i)"
-            @dblclick="launchSel()"
-            @keydown.enter.prevent="launchSel()"
-          >
-            <div class="fs-thumb" :style="{ background: placeholderBg(entry.g) }">
-              <img v-if="thumbUrl(entry.g)" :src="thumbUrl(entry.g)" :alt="entry.g.title" @error="imgErr" />
-              <span v-else class="fs-letter">{{ entry.g.title.slice(0, 2) }}</span>
-              <div v-if="entry.g.favorite" class="fs-fav">
-                <Heart :size="11" :fill="'currentColor'" :stroke-width="0" />
-              </div>
-              <div class="fs-shade"></div>
-              <div class="fs-title-zone">
-                <div class="fs-title" :title="entry.g.title">{{ entry.g.title }}</div>
-                <div class="fs-sub" v-if="fmtSub(entry.g)">{{ fmtSub(entry.g) }}</div>
+    <!-- 剧照舞台（aurora 式客厅主视觉）：中央大封面 + 左右 ghost + 大标题 + 启动胶囊。
+         封面墙缩为底部一条封面轨。选中变化时舞台整体随 :key 重挂载播 slide-in。 -->
+    <template v-else>
+      <div :key="`stage-${focusIdx}`" class="fs-stage">
+        <!-- 背景光晕：选中封面模糊铺底 + 径向光晕 -->
+        <div class="fs-stage-bg" :style="stageGame && thumbUrl(stageGame) ? { backgroundImage: `url(${thumbUrl(stageGame)})` } : {}"></div>
+        <div class="fs-stage-glow" :style="stageGame ? { background: `radial-gradient(60% 60% at 30% 20%, ${placeholderBg(stageGame)}66, transparent 70%), radial-gradient(60% 60% at 70% 80%, ${placeholderBg(stageGame)}44, transparent 70%)` } : {}"></div>
+
+        <!-- 中央封面堆叠：ghost 左 / 主角 / ghost 右 -->
+        <div class="fs-stage-stack">
+          <div v-if="stagePrev" class="fs-ghost left" :style="{ backgroundImage: thumbUrl(stagePrev) ? `url(${thumbUrl(stagePrev)})` : '' }"></div>
+          <div class="fs-stage-cover">
+            <img
+              v-if="stageGame && thumbUrl(stageGame)"
+              :src="thumbUrl(stageGame)"
+              :alt="stageGame.title"
+              :key="stageGame.id"
+            />
+            <span v-else class="fs-stage-letter">{{ stageGame ? stageGame.title.slice(0, 2) : '' }}</span>
+          </div>
+          <div v-if="stageNext" class="fs-ghost right" :style="{ backgroundImage: thumbUrl(stageNext) ? `url(${thumbUrl(stageNext)})` : '' }"></div>
+        </div>
+
+        <!-- 大标题 + 元数据 + 启动胶囊 -->
+        <div class="fs-stage-meta">
+          <div class="fs-stage-title" v-if="stageGame">{{ stageGame.title }}</div>
+          <div class="fs-stage-sub" v-if="stageGame">
+            <span v-if="stageGame.developer">{{ stageGame.developer }}</span>
+            <span v-if="stageGame.rating" class="num">★ {{ stageGame.rating.toFixed(1) }}</span>
+            <span v-if="fmtSub(stageGame)">{{ fmtSub(stageGame) }}</span>
+          </div>
+          <div class="fs-stage-actions">
+            <button class="fs-stage-play" @click="launchSel">
+              <Play :size="18" :fill="'currentColor'" />
+              <span>{{ t('detail_launch') }}</span>
+            </button>
+            <button class="fs-stage-fav" :data-faved="!!stageGame?.favorite" @click="favSel">
+              <Heart :size="16" :fill="stageGame?.favorite ? 'currentColor' : 'none'" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 封面墙：缩为底部一条封面轨（行级虚拟化） -->
+      <RecycleScroller
+        ref="scrollerRef"
+        :key="`fs-${filterFingerprint}`"
+        class="fs-scroller"
+        :items="fsRows"
+        :item-size="FS_ROW_H"
+        key-field="k"
+        :page-mode="false"
+        :buffer="400"
+        item-class="fs-row-item"
+      >
+        <template #default="{ item }">
+          <div class="fs-row" :style="{ width: fsGridW }">
+            <div
+              v-for="entry in item.items"
+              :key="entry.g.id"
+              class="fs-card"
+              :class="{ selected: focusIdx === entry.i }"
+              :data-fs-selected="focusIdx === entry.i"
+              role="button"
+              :tabindex="focusIdx === entry.i ? 0 : -1"
+              @click="selectAt(entry.i)"
+              @dblclick="launchSel()"
+              @keydown.enter.prevent="launchSel()"
+            >
+              <div class="fs-thumb" :style="{ background: placeholderBg(entry.g) }">
+                <img v-if="thumbUrl(entry.g)" :src="thumbUrl(entry.g)" :alt="entry.g.title" @error="imgErr" />
+                <span v-else class="fs-letter">{{ entry.g.title.slice(0, 2) }}</span>
+                <div v-if="entry.g.favorite" class="fs-fav">
+                  <Heart :size="11" :fill="'currentColor'" :stroke-width="0" />
+                </div>
+                <div class="fs-shade"></div>
+                <div class="fs-title-zone">
+                  <div class="fs-title" :title="entry.g.title">{{ entry.g.title }}</div>
+                  <div class="fs-sub" v-if="fmtSub(entry.g)">{{ fmtSub(entry.g) }}</div>
+                </div>
               </div>
             </div>
           </div>
-        </div>
-      </template>
-    </RecycleScroller>
+        </template>
+      </RecycleScroller>
+    </template>
 
     <!-- 底部操作提示（客厅场景） -->
     <div class="fs-hints" :class="{ hidden: !showBar }">
@@ -533,11 +589,12 @@ function imgErr(e: Event): void {
   color: var(--fs-ink-fill);
 }
 
-/* 封面墙：RecycleScroller 自己滚，行内 flex 排卡（P1-3） */
+/* 封面墙：缩为底部封面轨（舞台 flex:1 占大头，封面轨固定高）。
+   max 用 34vh 兜底矮窗口：固定 340px 在 720p 矮屏会把剧照舞台挤扁。 */
 .fs-scroller {
-  flex: 1;
+  flex: none;
+  height: min(340px, 34vh);
   min-height: 0;
-  height: auto;
 }
 .fs-row {
   display: flex;
@@ -655,6 +712,183 @@ function imgErr(e: Event): void {
 .fs-empty-hint {
   font-size: var(--hh-font-body-size);
   color: var(--fs-ink-dim);
+}
+
+/* ============ 剧照舞台（aurora 式客厅主视觉） ============ */
+/* 舞台占满剩余空间，封面轨缩为底部一条。选中变化整层重挂载播 slide-in。 */
+.fs-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  overflow: hidden;
+  animation: fs-stage-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes fs-stage-in {
+  from { opacity: 0; transform: scale(0.985); }
+  to { opacity: 1; transform: scale(1); }
+}
+/* 背景：选中封面模糊铺底 */
+.fs-stage-bg {
+  position: absolute;
+  inset: 0;
+  background-size: cover;
+  background-position: center 30%;
+  filter: blur(70px) saturate(1.4);
+  transform: scale(1.15);
+  opacity: 0.4;
+  pointer-events: none;
+}
+/* 径向光晕：选中封面的主色双光斑 */
+.fs-stage-glow {
+  position: absolute;
+  inset: 0;
+  filter: blur(40px);
+  opacity: 0.5;
+  pointer-events: none;
+}
+/* 中央封面堆叠 */
+.fs-stage-stack {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: min(46vh, 380px);
+}
+.fs-stage-cover {
+  position: relative;
+  z-index: 2;
+  height: 100%;
+  aspect-ratio: 3 / 4;
+  border-radius: var(--hh-radius-lg);
+  overflow: hidden;
+  box-shadow:
+    0 30px 60px rgba(0, 0, 0, 0.55),
+    0 0 0 1px var(--fs-glass-border),
+    0 0 80px rgba(255, 255, 255, 0.06);
+  transition: transform 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.fs-stage-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.fs-stage-letter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 64px;
+  font-weight: 700;
+  color: var(--fs-ink-faint);
+}
+/* 左右 ghost 封面：旋转 + 压暗，制造「剧照堆叠」纵深 */
+.fs-ghost {
+  position: absolute;
+  top: 50%;
+  width: 58%;
+  aspect-ratio: 3 / 4;
+  background-size: cover;
+  background-position: center;
+  border-radius: var(--hh-radius-lg);
+  filter: blur(1.5px) brightness(0.7) saturate(0.9);
+  opacity: 0.55;
+  box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+  transform: translateY(-50%);
+  transition: opacity var(--hh-motion-med) ease;
+}
+.fs-ghost.left {
+  left: 6%;
+  transform: translateY(-50%) translateX(-18%) scale(0.92) rotate(-5deg);
+}
+.fs-ghost.right {
+  right: 6%;
+  transform: translateY(-50%) translateX(18%) scale(0.92) rotate(5deg);
+}
+/* 大标题 + 元数据 + 启动胶囊 */
+.fs-stage-meta {
+  position: relative;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  text-align: center;
+  max-width: 70%;
+}
+.fs-stage-title {
+  font-size: clamp(26px, 3.2vw, 44px);
+  font-weight: 700;
+  line-height: 1.1;
+  color: var(--fs-ink-fill);
+  text-shadow: 0 2px 24px rgba(0, 0, 0, 0.6);
+  letter-spacing: 0.01em;
+}
+.fs-stage-sub {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  font-size: var(--hh-font-bodyLg-size);
+  color: var(--fs-ink);
+  text-shadow: 0 1px 8px rgba(0, 0, 0, 0.5);
+  font-variant-numeric: tabular-nums;
+}
+.fs-stage-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 6px;
+}
+/* 发光胶囊启动键（aurora 式） */
+.fs-stage-play {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 34px;
+  border: none;
+  border-radius: var(--hh-radius-pill);
+  background: var(--fs-ink-fill);
+  color: var(--fs-bg);
+  font-size: var(--hh-font-bodyLg-size);
+  font-weight: 700;
+  cursor: pointer;
+  transition:
+    transform 180ms ease,
+    box-shadow 180ms ease;
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.14),
+    0 12px 36px rgba(0, 0, 0, 0.4);
+}
+.fs-stage-play:hover {
+  transform: translateY(-2px);
+  box-shadow:
+    0 0 0 4px rgba(255, 255, 255, 0.22),
+    0 18px 48px rgba(0, 0, 0, 0.5);
+}
+.fs-stage-fav {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--hh-radius-pill);
+  border: 1px solid var(--fs-glass-border);
+  background: var(--fs-glass);
+  color: var(--fs-ink);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background var(--hh-motion-med) ease;
+}
+.fs-stage-fav:hover {
+  background: var(--fs-glass-hover);
+}
+.fs-stage-fav[data-faved='true'] {
+  color: var(--hh-color-star);
 }
 
 /* 底部操作提示 */

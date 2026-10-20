@@ -12,6 +12,7 @@ import type { Settings, TrackEntry, UpdateStatus } from '../../shared/types'
 import { proxyFormatError } from '../../shared/proxy'
 import { fmtSpeed } from '../../shared/format'
 import { THEME_PRESET_IDS } from '../design/tokens'
+import { ACCENT_PRESETS, normalizeAccentHex } from '../../shared/accent'
 import { t, tf } from '../i18n'
 
 import { themePresets } from '../design/tokens'
@@ -41,8 +42,50 @@ function presetName(id: (typeof THEME_PRESET_IDS)[number]): string {
 function presetDesc(id: (typeof THEME_PRESET_IDS)[number]): string {
   return themePresets[id].desc
 }
-function presetSwatch(id: (typeof THEME_PRESET_IDS)[number]): string {
-  return themePresets[id].swatch
+
+/** 当前生效的 accent（自定义 hex 或套件 accent），供色卡高亮与"跟随主题"预览 */
+function activeAccentHex(): string {
+  if (form.theme_accent.trim()) return form.theme_accent.trim()
+  return themePresets[form.theme_preset].swatch
+}
+/** 自定义 hex 输入（受控：非法值不入 form，只作为本地草稿） */
+const accentDraft = ref(props.settings.theme_accent)
+const accentInvalid = computed(() => normalizeAccentHex(accentDraft.value) === null)
+function chooseAccentPreset(id: string): void {
+  if (id === 'preset') {
+    form.theme_accent = ''
+    accentDraft.value = ''
+    return
+  }
+  if (id === 'custom') return // 自定义走输入框
+  const p = ACCENT_PRESETS.find((x) => x.id === id)
+  if (p?.hex) {
+    form.theme_accent = p.hex
+    accentDraft.value = p.hex
+  }
+}
+function applyAccentDraft(): void {
+  const hex = normalizeAccentHex(accentDraft.value)
+  if (hex) form.theme_accent = hex
+}
+
+/**
+ * 主题卡片预览：把该主题的「深色夜底 + accent 光晕」微缩成一张氛围小图，
+ * 让用户一眼看出换的是气质不是颜色。用种子色直接派生：
+ *  - 深色预览 = 夜底色 + accent 径向光晕（右上），底部浮一条亮线
+ *  - 浅色预览 = 米白底 + 浅 accent 柔光
+ * 预览只服务设置页，颜色全部来自 tokens（无裸 hex）。
+ */
+function presetPreview(id: (typeof THEME_PRESET_IDS)[number]): Record<string, string> {
+  const p = themePresets[id]
+  const dark = p.dark
+  const light = p.light
+  const nightCss = `rgb(${dark.night[0]},${dark.night[1]},${dark.night[2]})`
+  const lightCss = `rgb(${light.night[0]},${light.night[1]},${light.night[2]})`
+  return {
+    background: `linear-gradient(135deg, ${nightCss} 0%, ${lightCss} 100%)`,
+    boxShadow: `inset 0 0 0 1px ${p.swatch}22, inset 0 -18px 24px -16px ${p.swatch}55`,
+  }
 }
 
 async function pickBg(): Promise<void> {
@@ -211,6 +254,7 @@ function save(): void {
     dark: form.dark,
     theme_mode: form.theme_mode,
     theme_preset: form.theme_preset,
+    theme_accent: form.theme_accent.trim() ? form.theme_accent.trim() : '',
     bg_image: form.bg_image,
     notify_on_finish: form.notify_on_finish,
     notify_on_error: form.notify_on_error,
@@ -350,6 +394,7 @@ function save(): void {
 
         <div class="card">
           <div class="lbl" style="margin-bottom: 8px">{{ t('set_theme_preset') }}</div>
+          <div class="hint" style="margin: 0 0 8px">{{ t('set_theme_preset_hint') }}</div>
           <div class="preset-row">
             <button
               v-for="id in THEME_PRESET_IDS"
@@ -358,10 +403,41 @@ function save(): void {
               :class="{ active: form.theme_preset === id }"
               @click="form.theme_preset = id"
             >
-              <span class="preset-swatch" :style="{ background: presetSwatch(id) }"></span>
+              <span class="preset-preview" :style="presetPreview(id)"></span>
               <span class="preset-name">{{ presetName(id) }}</span>
               <span class="preset-desc">{{ presetDesc(id) }}</span>
             </button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="lbl" style="margin-bottom: 8px">{{ t('set_theme_accent') }}</div>
+          <div class="hint" style="margin: 0 0 8px">{{ t('set_theme_accent_hint') }}</div>
+          <div class="accent-row">
+            <button
+              v-for="p in ACCENT_PRESETS"
+              :key="p.id"
+              class="accent-chip"
+              :class="{ active: p.id === 'preset' ? !form.theme_accent : form.theme_accent === p.hex }"
+              :disabled="p.id === 'custom'"
+              @click="chooseAccentPreset(p.id)"
+            >
+              <span class="accent-dot" :style="{ background: p.hex || activeAccentHex() }"></span>
+              <span>{{ p.id === 'preset' ? t('set_theme_accent_preset') : p.label }}</span>
+            </button>
+          </div>
+          <div class="row" style="margin-top: 10px">
+            <Input
+              v-model:value="accentDraft"
+              :placeholder="t('set_theme_accent_ph')"
+              class="mono"
+              style="width: 140px"
+              :status="accentInvalid ? 'error' : undefined"
+              @blur="applyAccentDraft"
+              @press-enter="applyAccentDraft"
+            />
+            <Button @click="applyAccentDraft">{{ t('set_theme_accent_apply') }}</Button>
+            <span v-if="accentInvalid" class="hint">{{ t('set_theme_accent_invalid') }}</span>
           </div>
         </div>
 
@@ -644,11 +720,51 @@ function save(): void {
   border-color: var(--hh-color-accent);
   box-shadow: 0 0 0 2px var(--hh-color-accent-ring);
 }
-.preset-swatch {
+.preset-preview {
   width: 100%;
-  height: 28px;
+  height: 46px;
   border-radius: var(--hh-radius-xs);
   display: block;
+  margin-bottom: 4px;
+}
+/* 主题色：一排色块胶囊，与 preset-card 同一套边框/圆角/动效口径 */
+.accent-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.accent-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-card);
+  color: var(--hh-color-text);
+  font-size: var(--hh-font-body-size);
+  cursor: pointer;
+  transition:
+    border-color var(--hh-motion-fast) var(--hh-motion-ease-move),
+    box-shadow var(--hh-motion-fast) var(--hh-motion-ease-move);
+}
+.accent-chip:hover:not(:disabled) {
+  border-color: var(--hh-color-accent-focus-border);
+}
+.accent-chip.active {
+  border-color: var(--hh-color-accent);
+  box-shadow: 0 0 0 2px var(--hh-color-accent-ring);
+}
+.accent-chip:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.accent-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  flex-shrink: 0;
 }
 .preset-name {
   font-size: var(--hh-font-body-size);

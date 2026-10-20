@@ -74,7 +74,7 @@ export function useBoot(): {
         )
       }
       // 深浅/套件主题设置落盘后的渲染层同步（system 模式主进程已按系统校正 dark）
-      applyDarkFromSettings(r.settings.dark, r.settings.theme_preset)
+      applyDarkFromSettings(r.settings.dark, r.settings.theme_preset, r.settings.theme_accent)
       // 界面语言保存后立即生效，不用重启（词典是响应式 ref，setLanguage 即触发重渲染）
       setLanguage(r.settings.language)
       ui.settingsOpen = false

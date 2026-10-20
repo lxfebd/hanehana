@@ -9,18 +9,25 @@
  * - 每套主题 = 一组「种子色」（dark/light 各一份）+ 布局/圆角覆盖。
  * - deriveDark/deriveLight 把种子色派生为完整调色板，key 集合恒定，
  *   组件 CSS 只消费 var(--hh-*)，换主题/换套件不触及组件。
- * - setTheme(darkMode, presetId) 重刷 CSS 变量与响应式 colorState。
+ * - setTheme(darkMode, presetId, accent) 重刷 CSS 变量与响应式 colorState。
+ *
+ * 第三条轴：自定义主题色（accent）。套件定整套氛围，accent 只覆盖
+ * 调色板里的 accent* 键（导航选中/链接/按钮/焦点环），与套件解耦、
+ * 切套件时保留。见 applyAccentOverride 与 lib/accent.ts。
  *
  * 套件：
  * - sakura  樱夜：紫调夜黑 + 樱花粉（视觉重设计定稿基准）
  * - starnight 星海：夜蓝 + 星青，侧栏加宽、圆角收紧
  * - mint    薄荷：墨绿 + 薄荷绿，侧栏收窄、圆角拉满
+ * - cinema  影院：纯黑舞台 + 暖金（电影感衬线标题，BigBox 客厅向）
+ * - aurora  极光：深蓝紫夜 + 雾蓝/柔粉光晕（柔光剧照舞台，画册感）
  */
 import { reactive } from 'vue'
+import { normalizeAccentHex, readableAccent } from '../../shared/accent'
 
 export type ThemeName = 'dark' | 'light'
 export type ThemeMode = 'system' | 'dark' | 'light'
-export type ThemePresetId = 'sakura' | 'starnight' | 'mint'
+export type ThemePresetId = 'sakura' | 'starnight' | 'mint' | 'cinema' | 'aurora'
 
 const base = {
   glass: { blurPanel: '28px', blurFloat: '24px', saturate: '1.6' },
@@ -268,6 +275,25 @@ function deriveDark(s: DarkSeeds) {
     shadeBanner: 'rgba(0,0,0,0.5)',
     bannerScrim: gradToTop(s.bannerBase, 0.55, 0.2),
     palette: s.palette,
+    // 压图前景（hero 压在彩色封面上）：前景一律白字体系，深浅主题同一个值，
+    // 因为压在图上的是物理遮罩而不是主题底色（KoiPage 同思路：text-white 恒定）。
+    // onCover 系列同时服务深色/浅色，放 derive 里只为让 CSS 变量在两种模式都可用。
+    onCoverText: 'rgba(255,255,255,0.96)',
+    onCoverTextSoft: 'rgba(255,255,255,0.74)',
+    onCoverTextDim: 'rgba(255,255,255,0.58)',
+    onCoverRule: 'rgba(255,255,255,0.5)',
+    onCoverChipBorder: 'rgba(255,255,255,0.2)',
+    onCoverChipBg: 'rgba(255,255,255,0.1)',
+    onCoverGlassBorder: 'rgba(255,255,255,0.3)',
+    onCoverGlassBg: 'rgba(255,255,255,0.08)',
+    // hero 遮罩双层：纵向上下压、横向从右往左渐重（文字在左下，右侧留封面原色）。
+    heroScrimV: 'linear-gradient(180deg, rgba(0,0,0,0.72), transparent 38%, rgba(0,0,0,0.78))',
+    heroScrimH: 'linear-gradient(90deg, rgba(0,0,0,0.94), rgba(0,0,0,0.64) 42%, rgba(0,0,0,0.12) 80%)',
+    // hero 封面轨羽化遮罩黑（mask-image 的完全不透明层，语义是遮罩不是颜色）。
+    // hero 主按钮：白底黑字（压图最稳，深/浅主题同值），hover 浅灰。
+    heroMaskBlack: '#000000',
+    heroBtnText: '#111827',
+    heroBtnHover: '#EEEFF4',
   }
 }
 
@@ -367,6 +393,71 @@ function deriveLight(s: LightSeeds) {
     shadeBanner: rgba(tb, 0.28),
     bannerScrim: gradToTop(s.bannerBase, 0.55, 0.2),
     palette: s.palette,
+    // 压图前景（同 dark，压在封面上的白字体系）
+    onCoverText: 'rgba(255,255,255,0.96)',
+    onCoverTextSoft: 'rgba(255,255,255,0.74)',
+    onCoverTextDim: 'rgba(255,255,255,0.58)',
+    onCoverRule: 'rgba(255,255,255,0.5)',
+    onCoverChipBorder: 'rgba(255,255,255,0.2)',
+    onCoverChipBg: 'rgba(255,255,255,0.1)',
+    onCoverGlassBorder: 'rgba(255,255,255,0.3)',
+    onCoverGlassBg: 'rgba(255,255,255,0.08)',
+    // hero 遮罩双层（同 dark）
+    heroScrimV: 'linear-gradient(180deg, rgba(0,0,0,0.72), transparent 38%, rgba(0,0,0,0.78))',
+    heroScrimH: 'linear-gradient(90deg, rgba(0,0,0,0.94), rgba(0,0,0,0.64) 42%, rgba(0,0,0,0.12) 80%)',
+    // hero 封面轨羽化遮罩黑 / 主按钮字色与 hover（同 dark：压在图上与主题无关）
+    heroMaskBlack: '#000000',
+    heroBtnText: '#111827',
+    heroBtnHover: '#EEEFF4',
+  }
+}
+
+// ---------------------------------------------------------------- 自定义 accent 覆盖
+
+/**
+ * 用用户选的 accent 覆盖调色板里的 accent* 键。
+ *
+ * 只碰 accent 相关键，其余（背景/文本/中性阶）保持套件原样——accent 是
+ * 「第三条轴」，不是换皮。前景字 onAccent 由亮度决定（亮底深字、深底白字），
+ * 与套件 seed 的 onColor 同一口径；accentText/link 等浅色用途的键会按
+ * 当前明暗把色阶推向可读的那一侧（见 lib/accent.ts 的 readableAccent）。
+ */
+function applyAccentOverride<T extends Record<string, unknown>>(
+  palette: T,
+  darkMode: boolean,
+  accentInput: string,
+): T {
+  const hex = normalizeAccentHex(accentInput)
+  if (!hex) return palette
+  const [r, g, b] = hexToRgb(hex)
+  const onAccent = onColor(hex)
+  // 深底：accent 文字/链接用途往白提；浅底：往黑压，保证 >= 4.5:1
+  const contrastBase = darkMode ? '#0A0A0B' : '#FFFFFF'
+  const readable = readableAccent(hex, contrastBase, darkMode)
+  return {
+    ...palette,
+    accent: hex,
+    accentHover: mix(hex, 1, 0.18),
+    onAccent,
+    accentBg: `rgba(${r},${g},${b},0.14)`,
+    accentText: darkMode ? mix(readable, 1, 0.2) : mix(readable, -1, 0.25),
+    accentSoft: `rgba(${r},${g},${b},0.1)`,
+    accentCardBg: `rgba(${r},${g},${b},0.1)`,
+    accentSelectedBg: `rgba(${r},${g},${b},0.16)`,
+    accentSelectedRing: `rgba(${r},${g},${b},0.45)`,
+    accentChipBg: `rgba(${r},${g},${b},0.25)`,
+    accentFocusBorder: `rgba(${r},${g},${b},0.75)`,
+    accentFocusRing: `rgba(${r},${g},${b},0.18)`,
+    accentBtnShadow: `rgba(${r},${g},${b},0.35)`,
+    accentRing: `rgba(${r},${g},${b},0.45)`,
+    accentSelectedBorder: `rgba(${r},${g},${b},0.55)`,
+    accentShadow: `rgba(${r},${g},${b},0.35)`,
+    accentShadowHover: `rgba(${r},${g},${b},0.5)`,
+    link: darkMode ? mix(readable, 1, 0.3) : mix(readable, -1, 0.18),
+    selectText: darkMode ? mix(readable, 1, 0.45) : mix(readable, -1, 0.3),
+    selectIcon: darkMode ? mix(readable, 1, 0.3) : mix(readable, -1, 0.15),
+    neutral: darkMode ? mix(readable, 1, 0.45) : mix(readable, 1, 0.55),
+    neutralDim: darkMode ? mix(readable, 1, 0.3) : mix(readable, 1, 0.35),
   }
 }
 
@@ -505,6 +596,100 @@ const MINT_LIGHT: LightSeeds = {
   errorDanger: '#C62828',
 }
 
+// ------------------------------------------------- cinema（电影感纯黑舞台 + 暖金）
+
+const CINEMA_DARK: DarkSeeds = {
+  night: [8, 8, 12],
+  nightPanel: [16, 15, 22],
+  float: [18, 17, 26],
+  input: [13, 12, 19],
+  textBase: [240, 236, 226],
+  textHot: [252, 249, 242],
+  // 暖金而非高饱和荧光：电影演职员表的金色，克制、衬字
+  accent: '#D8B36A',
+  accentHover: '#E6C78A',
+  onAccent: '#1E1506',
+  star: '#F0CE7A',
+  coverFallback: '#1B1726',
+  bannerBase: '#0E0C14',
+  palette: ['#232030', '#1C2834', '#2A2429', '#23302B', '#2B2334', '#1E2630'],
+  success: '#8FD6A5',
+  successText: '#B5E8C4',
+  successDeep: '#5FBA85',
+  warning: '#E0B766',
+  error: '#E88A7A',
+  errorText: '#F2AFA4',
+  errorDanger: '#D96A58',
+}
+const CINEMA_LIGHT: LightSeeds = {
+  night: [247, 245, 240],
+  float: [255, 255, 252],
+  input: [255, 255, 255],
+  textBase: [40, 34, 24],
+  textHot: [40, 34, 24],
+  accent: '#A97F2E',
+  accentHover: '#BC9340',
+  onAccent: '#FFFFFF',
+  star: '#B8860B',
+  coverFallback: '#EDE8DD',
+  bannerBase: '#F2EFE8',
+  palette: ['#E3DDD0', '#D8DDE0', '#E0DAD6', '#D9DED9', '#E2D9E0', '#D8DCE2'],
+  success: '#2E7D4F',
+  successText: '#25613D',
+  successDeep: '#25613D',
+  warning: '#8A6416',
+  error: '#B0402E',
+  errorText: '#B0402E',
+  errorDanger: '#B0402E',
+}
+
+// ------------------------------------------------- aurora（极光柔光剧照舞台：雾蓝 × 柔粉）
+
+const AURORA_DARK: DarkSeeds = {
+  night: [10, 12, 24],
+  nightPanel: [20, 22, 42],
+  float: [22, 24, 48],
+  input: [15, 16, 34],
+  textBase: [228, 232, 250],
+  textHot: [248, 250, 255],
+  // 雾蓝主 accent + 柔粉点缀（derive 层的 accentSoft/ChipBg 自动承接）
+  accent: '#8FB7E8',
+  accentHover: '#A8C9F2',
+  onAccent: '#0A1626',
+  star: '#F0C4D8',
+  coverFallback: '#1C1F3E',
+  bannerBase: '#10122A',
+  palette: ['#242A55', '#1E3350', '#2E2D52', '#283B46', '#3A2A4E', '#24304E'],
+  success: '#7FD8C4',
+  successText: '#A5E8DA',
+  successDeep: '#4FBAA4',
+  warning: '#E3C078',
+  error: '#EB90A8',
+  errorText: '#F5B8C8',
+  errorDanger: '#D96A8C',
+}
+const AURORA_LIGHT: LightSeeds = {
+  night: [244, 247, 252],
+  float: [255, 255, 255],
+  input: [255, 255, 255],
+  textBase: [36, 40, 66],
+  textHot: [36, 40, 66],
+  accent: '#3E6FB0',
+  accentHover: '#4E82C6',
+  onAccent: '#FFFFFF',
+  star: '#C2567E',
+  coverFallback: '#E6EBF6',
+  bannerBase: '#EEF1F9',
+  palette: ['#D8E0F0', '#D3E2EC', '#DCE0F0', '#D6E4E6', '#E4DCEB', '#D6E0EC'],
+  success: '#1E7A62',
+  successText: '#17614E',
+  successDeep: '#17614E',
+  warning: '#8A6416',
+  error: '#B03A5E',
+  errorText: '#B03A5E',
+  errorDanger: '#B03A5E',
+}
+
 export interface ThemePresetMeta {
   name: string
   desc: string
@@ -541,6 +726,24 @@ export const themePresets: Record<ThemePresetId, ThemePresetMeta> = {
     light: MINT_LIGHT,
     layout: { sidebarW: 192 },
     radius: { panel: 20, modal: 20 },
+  },
+  cinema: {
+    name: '影院',
+    desc: '纯黑舞台 + 暖金演职员表',
+    swatch: '#D8B36A',
+    dark: CINEMA_DARK,
+    light: CINEMA_LIGHT,
+    layout: { sidebarW: 220 },
+    radius: { panel: 14, modal: 18 },
+  },
+  aurora: {
+    name: '极光',
+    desc: '深蓝紫夜 + 雾蓝柔粉光晕',
+    swatch: '#8FB7E8',
+    dark: AURORA_DARK,
+    light: AURORA_LIGHT,
+    layout: { sidebarW: 216 },
+    radius: { panel: 18, modal: 18 },
   },
 }
 
@@ -589,15 +792,23 @@ const DEFAULT_DARK = true
 export let currentDarkMode = DEFAULT_DARK
 export let currentPresetId: ThemePresetId = DEFAULT_PRESET
 
-/** 组装一套完整主题：base 常量 + 套件布局/圆角覆盖 + 对应调色板 */
-export function makeTheme(darkMode: boolean, presetId: ThemePresetId = currentPresetId) {
+/** 运行时当前自定义主题色（空串 = 跟随套件）。 */
+export let currentAccent = ''
+
+/** 组装一套完整主题：base 常量 + 套件布局/圆角覆盖 + 对应调色板。
+ *  accentOverride 非空时只替换调色板里的 accent* 键（套件其余部分不动）。 */
+export function makeTheme(
+  darkMode: boolean,
+  presetId: ThemePresetId = currentPresetId,
+  accentOverride?: string | null,
+) {
   const preset = themePresets[presetId]
   const palette = darkMode ? deriveDark(preset.dark) : deriveLight(preset.light)
   return {
     ...base,
     layout: { ...base.layout, ...(preset.layout ?? {}) },
     radius: { ...base.radius, ...(preset.radius ?? {}) },
-    color: palette,
+    color: accentOverride ? applyAccentOverride(palette, darkMode, accentOverride) : palette,
   }
 }
 
@@ -607,10 +818,15 @@ export function makeTheme(darkMode: boolean, presetId: ThemePresetId = currentPr
  * - colorState 原地 Object.assign，Vue 组件里 computed(() => tokens.color.x) 自动刷新
  * - 同步 html[data-theme] 与 color-scheme
  */
-export function setTheme(darkMode: boolean, presetId: ThemePresetId = currentPresetId): void {
+export function setTheme(
+  darkMode: boolean,
+  presetId: ThemePresetId = currentPresetId,
+  accent?: string | null,
+): void {
   currentDarkMode = darkMode
   currentPresetId = presetId
-  const theme = makeTheme(darkMode, presetId)
+  if (accent !== undefined) currentAccent = accent ?? ''
+  const theme = makeTheme(darkMode, presetId, currentAccent)
   Object.assign(colorState, theme.color)
   applyCssVars(darkMode, theme)
   const root = document.documentElement
@@ -624,7 +840,7 @@ export function setTheme(darkMode: boolean, presetId: ThemePresetId = currentPre
  */
 export function applyCssVars(
   darkMode: boolean = currentDarkMode,
-  theme: ReturnType<typeof makeTheme> = makeTheme(darkMode),
+  theme: ReturnType<typeof makeTheme> = makeTheme(darkMode, currentPresetId, currentAccent),
 ): void {
   const root = document.documentElement
   const set = (k: string, v: string | number): void => root.style.setProperty(k, String(v))

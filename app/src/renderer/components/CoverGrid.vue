@@ -11,9 +11,9 @@
  *   - 性能铁律：卡片内无 backdrop-filter；DOM 窗口化靠 RecycleScroller。
  *
  * 虚拟化度量（§3.5 固定）：
- *   - 网格：itemSize 311 = 封面 234.67（184 卡宽 - 8 内边距 = 176 内容宽，3:4 高）
- *     + 上间距 8 + 标题区 40 + 标签行 20 + 卡片垂直 padding 8；
- *     itemSecondarySize 200 = 卡槽 184 + 间距 16；cols = floor((w+16)/200)。
+ *   - 网格：itemSize 328 = 封面 234.67（184 卡宽 - 8 内边距 = 176 内容宽，3:4 高）
+ *     + 上间距 12 + 标题区 40 + 标签行 20 + 卡片垂直 padding 8 + 书架板 12（6 高 + 6 距）
+ *     + 行距增量 4；itemSecondarySize 200 = 卡槽 184 + 间距 16；cols = floor((w+16)/200)。
  *   - 列表：itemSize 72 单列。
  *   - 居中留白：layer wrapper 宽度 = cols*200 - 16，margin auto 居中。
  *     item-view 是绝对定位 transform，居中必须收窄「定位坐标系」本身，
@@ -237,7 +237,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
       :key="`grid-${cols}-${filterFingerprint}`"
       class="scroller"
       :items="gridRows"
-      :item-size="311"
+      :item-size="328"
       key-field="k"
       :page-mode="false"
       :buffer="400"
@@ -295,6 +295,8 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <span v-for="tag in it.g.tags.slice(0, 2)" :key="tag" class="cover-tag">{{ tag }}</span>
               <span v-if="it.g.tags.length > 2" class="cover-tag more">+{{ it.g.tags.length - 2 }}</span>
             </div>
+            <!-- 书架板：封面"立"在一条暗色板面上，行间由 .grid-shelf 层板分隔（书架隐喻，P1） -->
+            <div class="cover-shelf"></div>
           </div>
         </div>
       </template>
@@ -656,6 +658,31 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   background: transparent;
   border-color: transparent;
   color: var(--hh-color-text-dim);
+}
+
+/* 书架板（P1）：封面卡底部的暗色层板，制造「封面立上书架」的纵深。
+   用主题中性色系，不抢封面；行与行之间由 .grid-shelf 横板分隔。 */
+.cover-shelf {
+  height: 6px;
+  margin: 6px 2px 0;
+  border-radius: var(--hh-radius-xs);
+  background: linear-gradient(
+    to bottom,
+    var(--hh-color-surface-strong) 0%,
+    var(--hh-color-surface-hover) 100%
+  );
+  box-shadow:
+    inset 0 1px 0 var(--hh-color-border-ghost-soft),
+    0 4px 8px var(--hh-color-shade-thumb-soft);
+  opacity: 0.9;
+}
+.cover-card:hover .cover-shelf {
+  background: linear-gradient(
+    to bottom,
+    var(--hh-color-accent-selected-border) 0%,
+    var(--hh-color-accent-selected-bg) 100%
+  );
+  opacity: 1;
 }
 
 /* ============ 列表 ============ */

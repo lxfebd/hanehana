@@ -11,6 +11,7 @@ import { t, tf } from './i18n'
 import { useBoot } from './composables/useBoot'
 import { useGlobalShortcuts, shortcutHelpOpen } from './composables/useGlobalShortcuts'
 import CoverGrid from './components/CoverGrid.vue'
+import LibraryHero from './components/LibraryHero.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
 import AddGameDialog from './components/AddGameDialog.vue'
@@ -144,6 +145,9 @@ async function submitAddTask(input: {
                 @export="doExport"
                 @clear-meta="clearMeta()"
               />
+
+              <!-- P0 首屏冲击：库顶氛围横带（最近在玩 / 收藏精选），有图才出现 -->
+              <LibraryHero />
 
               <div class="cover-wrap">
                 <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
