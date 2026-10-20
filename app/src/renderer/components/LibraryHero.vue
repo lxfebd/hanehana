@@ -278,12 +278,13 @@ watch(heroCandidates, (candidates) => {
 
 <style scoped>
 /* 氛围横带：整条是一个圆角卡片，背景封面模糊铺满 + 双层 scrim 压对比。 */
-/* 氛围横带：picker(142) 在上、内容(封面 104 + 底距 16) 在下，合计 262px。
-   少于 262 会挤掉封面或让内容溢出 picker 区。 */
+/* 氛围横带：picker(170) 在上、内容(封面 132 + 底距 16) 在下，合计 340px。
+   340 让默认视图第一眼更有剧照冲击（对比 gal-launcher 的 hero 占视口比例）；
+   少于 340 会挤掉封面或让内容溢出 picker 区。 */
 .hero {
   position: relative;
   flex: none;
-  height: 262px;
+  height: 340px;
   border-radius: var(--hh-radius-panel);
   overflow: hidden;
   display: block;
@@ -332,8 +333,8 @@ watch(heroCandidates, (candidates) => {
 .hero-cover {
   position: relative;
   z-index: 1;
-  width: 76px;
-  height: 104px;
+  width: 96px;
+  height: 132px;
   border-radius: var(--hh-radius-sm);
   overflow: hidden;
   flex-shrink: 0;
@@ -400,7 +401,7 @@ watch(heroCandidates, (candidates) => {
   display: flex;
   align-items: flex-start;
   gap: 12px;
-  height: 142px;
+  height: 170px;
   padding: 8px 22px;
   overflow-x: auto;
   overflow-y: hidden;
@@ -427,8 +428,8 @@ watch(heroCandidates, (candidates) => {
 }
 .hero-thumb {
   display: block;
-  width: 72px;
-  height: 72px;
+  width: 80px;
+  height: 80px;
   overflow: hidden;
   border: 1px solid var(--hh-color-on-cover-chip-border);
   border-radius: var(--hh-radius-md);
@@ -437,10 +438,10 @@ watch(heroCandidates, (candidates) => {
   opacity: 0.72;
   transition: width 280ms cubic-bezier(0.22, 1, 0.36, 1), height 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
 }
-.hero-choice[aria-selected="true"] { flex-basis: 106px; }
+.hero-choice[aria-selected="true"] { flex-basis: 112px; }
 .hero-choice[aria-selected="true"] .hero-thumb {
-  width: 100px;
-  height: 100px;
+  width: 108px;
+  height: 108px;
   opacity: 1;
   border-color: white;
   box-shadow:
@@ -614,8 +615,8 @@ watch(heroCandidates, (candidates) => {
 }
 
 /* 动画容器：承载背景/遮罩/前景/动作区的整体切换 */
-/* 文案与动作区：绝对定位铺满，但顶部让出 picker 的 142px，
-   内容贴底部；否则封面（104px 贴底）会与封面轨重叠 */
+/* 文案与动作区：绝对定位铺满，但顶部让出 picker 的 170px，
+   内容贴底部；否则封面（132px 贴底）会与封面轨重叠 */
 .hero-animated {
   position: absolute;
   inset: 0;
@@ -625,7 +626,7 @@ watch(heroCandidates, (candidates) => {
   align-items: flex-end;
   justify-content: flex-start;
   gap: 18px;
-  padding: 142px 22px 16px;
+  padding: 170px 22px 16px;
 }
 
 /* 进场动画：:key 变化即重新挂载，animation 每次都会播放（无离场，节点直接替换） */
