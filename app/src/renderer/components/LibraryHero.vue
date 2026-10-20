@@ -12,13 +12,36 @@
 
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
 import { Play, Star } from 'lucide-vue-next'
-import type { Game } from '../../shared/types'
+import type { Game, OverviewStats } from '../../shared/types'
 import { library, selectGame, launchGame, thumbUrl } from '../stores/library'
 import { t } from '../i18n'
 import { tokens } from '../design/tokens'
 
 /** 星级色（跟随主题 tokens，同 CoverGrid/DetailPanel 的评级星一致） */
 const starColor = computed(() => tokens.color.star)
+
+/** 库总览统计（hero 右侧统计玻璃卡）：经 statsOverview IPC 拉取 */
+const stats = ref<OverviewStats | null>(null)
+
+/** 时长格式化：毫秒 → 「12.5h」/「45m」 */
+function fmtDuration(ms: number): string {
+  if (!ms || ms <= 0) return '0m'
+  const h = Math.floor(ms / 3600000)
+  const m = Math.floor((ms % 3600000) / 60000)
+  if (h > 0 && m > 0) return `${h}h${m}m`
+  return h > 0 ? `${h}h` : `${m}m`
+}
+
+/** 续读进度：按「最近玩过」候选当前主角的 playMs 估算（无时长显示 0%） */
+const continuePct = computed(() => {
+  const g = heroGame.value
+  if (!g || !g.playMs || g.playMs <= 0) return 0
+  // 粗略锚点：10 小时视为「玩了很久」，进度条只是氛围不是精确统计
+  return Math.min(100, Math.round((g.playMs / (10 * 3600000)) * 100))
+})
+
+/** 已玩数 / 库总数（统计卡副行） */
+const libCount = computed(() => library.games.length)
 
 /** 是否有可展示封面（thumb 或 cover） */
 function hasCover(g: Game): boolean {
@@ -134,6 +157,13 @@ function openDetail(): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown)
+  // 拉库总览统计（hero 右侧统计卡）。失败静默：统计是氛围不是关键路径。
+  void window.hh
+    .statsOverview()
+    .then((s) => {
+      if (s) stats.value = s
+    })
+    .catch(() => {})
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
@@ -219,6 +249,28 @@ watch(heroCandidates, (candidates) => {
             {{ playLabel }}
           </button>
           <button class="hero-detail" @click="openDetail">{{ t('hero_detail') }}</button>
+        </div>
+        <!-- 右侧统计玻璃卡（aurora 式氛围）：总时长 / 已玩 / 本月，续读进度条 -->
+        <div class="hero-stats" aria-hidden="true">
+          <div class="hs-row">
+            <span class="hs-cap">{{ t('hero_stat_total') }}</span>
+            <span class="hs-val num">{{ fmtDuration(stats?.totalMs ?? 0) }}</span>
+          </div>
+          <div class="hs-row">
+            <span class="hs-cap">{{ t('hero_stat_played') }}</span>
+            <span class="hs-val num">{{ stats?.playedGames ?? 0 }} / {{ libCount }}</span>
+          </div>
+          <div class="hs-row">
+            <span class="hs-cap">{{ t('hero_stat_month') }}</span>
+            <span class="hs-val num">{{ fmtDuration(stats?.monthMs ?? 0) }}</span>
+          </div>
+          <div class="hs-prog">
+            <div class="hs-prog-head">
+              <span class="hs-cap">{{ t('hero_stat_continue') }}</span>
+              <span class="num hs-pct">{{ continuePct }}%</span>
+            </div>
+            <div class="hs-bar"><div class="hs-fill" :style="{ width: `${continuePct}%` }"></div></div>
+          </div>
         </div>
       </div>
   </div>
@@ -483,6 +535,76 @@ watch(heroCandidates, (candidates) => {
   backdrop-filter: blur(10px);
 }
 .hero-detail:hover { background: var(--hh-color-on-cover-chip-bg); }
+
+/* ============ 右侧统计玻璃卡（aurora 式氛围） ============ */
+.hero-stats {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 168px;
+  padding: 14px 16px;
+  border-radius: var(--hh-radius-md);
+  border: 1px solid var(--hh-color-on-cover-glass-border);
+  background: var(--hh-color-on-cover-glass-bg);
+  backdrop-filter: blur(14px);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.hs-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.hs-cap {
+  font-size: var(--hh-font-caption-size);
+  letter-spacing: 0.1em;
+  color: var(--hh-color-on-cover-text-soft);
+  white-space: nowrap;
+}
+.hs-val {
+  font-size: var(--hh-font-bodyLg-size);
+  font-weight: 700;
+  color: var(--hh-color-on-cover-text);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.hs-prog {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-top: 2px;
+}
+.hs-prog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.hs-pct {
+  font-size: var(--hh-font-caption-size);
+  font-weight: 600;
+  color: var(--hh-color-on-cover-text);
+}
+.hs-bar {
+  height: 4px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-on-cover-glass-border);
+  overflow: hidden;
+}
+.hs-fill {
+  height: 100%;
+  border-radius: var(--hh-radius-pill);
+  background: linear-gradient(90deg, var(--hh-color-accent), var(--hh-color-on-cover-text));
+  box-shadow: 0 0 8px var(--hh-color-accent-shadow);
+  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* 窄窗：统计卡隐藏（封面轨/内容优先） */
+@media (max-width: 720px) {
+  .hero-stats {
+    display: none;
+  }
+}
 
 .hero.running .hero-play {
   background: var(--hh-success);
