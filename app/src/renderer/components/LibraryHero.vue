@@ -356,7 +356,15 @@ watch(heroCandidates, (candidates) => {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  text-align: center;
+  padding: 0 12px;
+}
+/* tag 保持小写距但居中；标题保留衬线大字（剧照感的核心是居中大字） */
+.hero-tag {
+  text-align: center;
 }
 
 .hero-tag {
@@ -382,6 +390,7 @@ watch(heroCandidates, (candidates) => {
 .hero-sub {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 10px;
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-on-cover-text-soft);
