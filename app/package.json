@@ -38,7 +38,8 @@
     "regression:dlview": "node scripts/verify_download_view.mjs",
     "regression:recentstrip": "node scripts/verify_recent_strip.mjs",
     "regression:settings": "node scripts/verify_settings.mjs",
-    "regression:stats": "node scripts/verify_stats.mjs"
+    "regression:stats": "node scripts/verify_stats.mjs",
+    "regression:gamesites": "node scripts/verify_gamesites.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
