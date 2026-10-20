@@ -33,7 +33,8 @@
     "regression:batchscrape": "node scripts/verify_batch_scrape.mjs",
     "regression:coverrender": "node scripts/verify_cover_render.mjs",
     "regression:coveraspect": "node scripts/verify_cover_aspect.mjs",
-    "regression:detailpanel": "node scripts/verify_detail_panel.mjs"
+    "regression:detailpanel": "node scripts/verify_detail_panel.mjs",
+    "regression:scancover": "node scripts/verify_scan_cover.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
