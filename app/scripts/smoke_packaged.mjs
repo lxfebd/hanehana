@@ -37,10 +37,15 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 async function launchAndProbe() {
   // 打包版带单实例锁：若已有一个 HaneHana 在跑，这里会被弹回前台并退出，
   // CDP 端口也不归它。测试前必须保证没有残留实例。
+  const smokeEnv = { ...process.env }
+  // 本机常残留 ELECTRON_RUN_AS_NODE=1（其他工具设的）：Electron 会按 Node 模式
+  // 启动（--version 报 Node 版本、CDP 不开、进程秒退），打包版 smoke 直接误报
+  // 「起不来」。测试要的是"用户双击能起"，必须清掉这个变量。
+  delete smokeEnv.ELECTRON_RUN_AS_NODE
   const proc = spawn(EXE, [], {
     cwd: UNPACKED,
     env: {
-      ...process.env,
+      ...smokeEnv,
       // 打包版专用 smoke 逃生门（见 index.ts）：默认不带则不开 CDP
       HANEHANA_SMOKE_PORT: String(DEBUG_PORT),
       HANEHANA_DATA_DIR: join(APP_ROOT, '.smoke-data'),
