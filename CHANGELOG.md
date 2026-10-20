@@ -2,6 +2,12 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.5] - 2026-10-21
+
+### 变更
+
+- **hero 内容居中剧照化**：hero 标题从左上改为居中大字（tag/衬线标题/sub 全居中），视觉重心在中央——对标 gal-launcher aurora 的 stage-center 剧照式标题，打开第一眼更剧场感。走查验证无回归。
+
 ## [0.2.4] - 2026-10-21
 
 ### 新增
