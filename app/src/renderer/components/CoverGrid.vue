@@ -22,11 +22,16 @@
 import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { Activity, Check, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
+import { Activity, Check, EyeOff, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
+import { isNsfwGame } from '../../shared/nsfw'
 import { library, selectGame, thumbUrl, toggleSelect, debouncedKeyword } from '../stores/library'
 import { t } from '../i18n'
 import { tokens } from '../design/tokens'
+
+/** 单次显示 NSFW 封面的游戏 id 集合（点击遮盖层临时显示，切换筛选后重置）。
+ * 必须用 ref：普通 Set 的 add() 不触发 Vue 响应式，v-if 不会重求值，遮盖不会消失。 */
+const revealedNsfw = ref(new Set<string>())
 
 const props = defineProps<{
   games: Game[]
@@ -166,6 +171,12 @@ function imgErr(e: Event): void {
   img.style.display = 'none'
 }
 
+/** 临时显示某款 NSFW 封面（点击遮盖层，单次解除；切换筛选/重建后重置）。
+ * ref.value 原地 add → Vue 侦测 Set 变更触发重渲染。 */
+function revealNsfw(id: string): void {
+  revealedNsfw.value.add(id)
+}
+
 /** roving tabindex：方向键移动（grid 按列、list 按行），Enter 选中。
  *  移动后必须真的把焦点交到新卡片：只改 tabindex 不 focus，键盘用户停在原地，
  *  下一次按键仍然作用在旧卡片上，roving 就死了。 */
@@ -285,6 +296,17 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 
               <!-- 压暗渐变只给真图用：占位色块上画只会糊出一团灰雾 -->
               <div v-if="thumbUrl(it.g)" class="cover-shade"></div>
+
+              <!-- NSFW 遮盖：tags 命中成人标签且未临时显示时，封面模糊 + 图标 + 文案 -->
+              <div
+                v-if="isNsfwGame(it.g.tags) && !revealedNsfw.has(it.g.id)"
+                class="cover-nsfw"
+                :title="t('nsfw_hint')"
+                @click.stop="revealNsfw(it.g.id)"
+              >
+                <EyeOff :size="18" :stroke-width="1.5" />
+                <span>{{ t('nsfw_label') }}</span>
+              </div>
             </div>
             <!-- 标题区 32px：标题 + 副行（发行年/时长 + 评分同一行，保持 40px 锁高） -->
             <div class="cover-titlezone">
@@ -648,6 +670,30 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   height: 35%;
   background: linear-gradient(to top, var(--hh-color-shade-thumb), transparent);
   z-index: 1;
+}
+
+/* NSFW 遮盖层：模糊封面 + 图标 + 文案，点击临时显示（ReinaManager 类竞品的遮盖功能） */
+.cover-nsfw {
+  position: absolute;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  background: var(--hh-color-surface-strong);
+  color: var(--hh-color-text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--hh-motion-med) ease;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+.cover-nsfw:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-glow);
 }
 
 /* 标题区 40px：封面下方，非叠图。评分行叠在副行位置（无评分时副行让位），

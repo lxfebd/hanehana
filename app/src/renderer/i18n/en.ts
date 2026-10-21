@@ -156,6 +156,8 @@ export const en: Record<I18nKey, string> = {
   recent_continue: 'Continue reading',
   recent_today: 'Today',
   recent_yesterday: 'Yesterday',
+  nsfw_label: 'Adult',
+  nsfw_hint: 'Click to reveal (adult content covered)',
   set_bg_image: 'Custom background',
   set_bg_pick: 'Choose image',
   set_bg_replace: 'Replace',

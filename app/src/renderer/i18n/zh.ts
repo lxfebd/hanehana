@@ -167,6 +167,8 @@ export const zh = {
   recent_continue: '最近续读',
   recent_today: '今天',
   recent_yesterday: '昨天',
+  nsfw_label: '成人内容',
+  nsfw_hint: '点击显示（成人内容已遮盖）',
   set_bg_image: '自定义背景',
   set_bg_pick: '选择图片',
   set_bg_replace: '更换',
