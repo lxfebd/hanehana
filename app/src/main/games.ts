@@ -13,7 +13,25 @@ import { addGames, findGameByExe, getGame, getGames, removeGame, updateGame } fr
 import { dupKeyOf as dupKeyRaw } from './dupKey'
 import { backfillLocalCovers, adoptLocalCover } from './localCover'
 import { scanDir, isValidDir } from './scanner'
-import type { Game, GameVariant, PlaySession, SteamImportResult } from '../shared/types'
+import type { Game, GameVariant, GameProcessState, PlaySession, SteamImportResult } from '../shared/types'
+
+/**
+ * 进程状态推送钩子（由 index.ts 注入，避免 games.ts 直接依赖窗口）：
+ * 状态一变就推给渲染层，渲染层不再靠轮询猜「启动中」。
+ */
+let pushProcessStateFn: ((id: string, state: GameProcessState) => void) | null = null
+export function setProcessStatePush(fn: ((id: string, state: GameProcessState) => void) | null): void {
+  pushProcessStateFn = fn
+}
+
+/** 记录并广播一次进程状态变化（渲染层的唯一真值来源）。 */
+function setProcState(id: string, state: GameProcessState): void {
+  procStates.set(id, state)
+  pushProcessStateFn?.(id, state)
+}
+
+/** 进程状态表（starting/running/exited），渲染层从这里取一切启动反馈。 */
+const procStates = new Map<string, GameProcessState>()
 
 export interface ScanResult {
   added: Game[]
@@ -371,7 +389,9 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
   // .lnk 不是可执行映像，CreateProcess 会以异步 error 事件炸出来；
   // 快捷方式交给系统壳打开（代价：这条不计游玩时长）
   if (/\.lnk$/i.test(exe)) {
-    void shell.openPath(exe)
+    // 快捷方式交给系统壳（不计游玩时长）；没有进程句柄可跟，只能标 starting→running
+    setProcState(id, { status: 'starting', pid: null })
+    void shell.openPath(exe).then(() => setProcState(id, { status: 'running', pid: null }))
     updateGame(id, { lastPlayed: Date.now() })
     return { ok: true }
   }
@@ -430,6 +450,10 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
     if (g.dir && !existsSync(g.dir)) {
       return { ok: false, error: '启动失败：游戏目录不存在' }
     }
+    // spawn 前先广播 starting：从点击到进程真正落定之间UI需要「启动中…」，
+    // 这段空窗由状态机的 starting 态填补（渲染层的 launching 由它派生）。
+    setProcState(id, { status: 'starting', pid: null })
+
     const proc = spawn(cmd, args, {
       cwd: g.dir,
       detached: true,
@@ -438,6 +462,8 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
     })
     runningProc.set(id, proc)
     runningSince.set(id, Date.now())
+    // 进程句柄已拿到 = 运行中（pid 也一并发给渲染层）
+    setProcState(id, { status: 'running', pid: proc.pid ?? null })
     updateGame(id, { lastPlayed: Date.now() })
 
     // spawn 的失败（ENOENT/EACCES/cwd 无效）走异步 error 事件；
@@ -456,6 +482,8 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
       )
       runningProc.delete(id)
       runningSince.delete(id)
+      // spawn 异步失败（ENOENT/EACCES）：启动失败也要让按钮离开「启动中…」
+      setProcState(id, { status: 'exited', pid: null, error: err.message })
     })
     proc.on('exit', (code, signal) => {
       const since = runningSince.get(id)
@@ -473,6 +501,7 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
       recordExit(id, g.title, g.dir, code, signal)
       runningProc.delete(id)
       runningSince.delete(id)
+      setProcState(id, { status: 'exited', pid: null })
     })
 
     // Magpie 缩放（G2）：游戏起来后拉起 Magpie，置前台接管渲染缩放。
@@ -512,6 +541,8 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
   } catch (e) {
     runningProc.delete(id)
     runningSince.delete(id)
+    // spawn 本身抛错（不是异步 error）：同样要让 UI 离开启动中
+    setProcState(id, { status: 'exited', pid: null, error: e instanceof Error ? e.message : String(e) })
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
   }
 }
@@ -525,6 +556,11 @@ export function handleRunning(): string[] {
     }
   }
   return [...runningProc.keys()]
+}
+
+/** 当前进程状态快照（渲染层启动时对齐 + focus/可见性刷新用）。 */
+export function handleProcessStates(): Record<string, GameProcessState> {
+  return Object.fromEntries(procStates)
 }
 
 /** 应用退出时解除对游戏进程的跟踪。不 kill——用户正在玩的游戏不该被管理器带走。 */

@@ -4,11 +4,15 @@
  * 数据源：store 里的 PlaySession 记录（游戏退出时追加）+ games.json 里的
  * playMs 总量（兼容没有会话记录的老库）。聚合在主进程算，渲染层只消费结果。
  */
-import type { DayStat, Game, PlaySession, OverviewStats } from '../shared/types'
+import type { DayStat, Game, PlaySession, OverviewStats, SessionQuery } from '../shared/types'
 
 export type { OverviewStats } from '../shared/types'
 
 const DAY_MS = 86400000
+/** 会话查询默认/最大条数：界面只要一屏，不要把整份会话表灌进渲染进程。 */
+export const SESSION_LIMIT_DEFAULT = 100
+export const SESSION_LIMIT_MAX = 500
+
 
 /** yyyy-mm-dd（本地时区） */
 function dayKey(ts: number): string {
@@ -86,4 +90,72 @@ export function computeOverview(games: Game[], sessions: PlaySession[]): Overvie
     .slice(0, 10)
 
   return { monthMs, weekMs, totalMs, playedGames, todayMs, days, topGames }
+}
+
+/**
+ * 把渲染层传来的会话查询规整成可信形状。
+ *
+ * window.hh 谁都能调（渲染层是不可信输入），所以类型、NaN、limit=1e9
+ * 都要在这里夹掉：一个坏 limit 会把整份会话表灌进渲染进程。
+ */
+export function normalizeSessionQuery(q: unknown): SessionQuery {
+  const src = q && typeof q === 'object' ? (q as Record<string, unknown>) : {}
+  const out: SessionQuery = {}
+  if (typeof src.gameId === 'string' && src.gameId.trim()) out.gameId = src.gameId
+  if (typeof src.since === 'number' && Number.isFinite(src.since)) out.since = src.since
+  const raw = typeof src.limit === 'number' && Number.isFinite(src.limit) ? src.limit : SESSION_LIMIT_DEFAULT
+  out.limit = Math.max(1, Math.min(SESSION_LIMIT_MAX, Math.floor(raw)))
+  return out
+}
+
+/** 按查询取会话记录，结束时间倒序——活动流要的就是「最近发生的排最前」。 */
+export function selectSessions(sessions: PlaySession[], q: SessionQuery = {}): PlaySession[] {
+  const limit = q.limit ?? SESSION_LIMIT_DEFAULT
+  return sessions
+    .filter(
+      (s) =>
+        (!q.gameId || s.gameId === q.gameId) &&
+        (q.since === undefined || s.end >= q.since) &&
+        Number.isFinite(s.end) &&
+        Number.isFinite(s.ms),
+    )
+    .sort((a, b) => b.end - a.end)
+    .slice(0, limit)
+}
+
+/**
+ * 按日时长序列，**缺日补 0**。
+ *
+ * 补零不是美化：只把有记录的日子排进 X 轴，一条「周末玩了 5 小时」会被
+ * 画成连着一串没玩过的日子，曲线的形状就开始说谎。
+ * 口径与 computeOverview 的 days 相同（按会话结束时间归日，本地时区）。
+ */
+export function dailySeries(
+  sessions: PlaySession[],
+  opts: { gameId?: string; fromTs: number; toTs?: number },
+): DayStat[] {
+  const from = dayStart(opts.fromTs)
+  const to = dayStart(opts.toTs ?? Date.now())
+  const fromKey = dayKey(from)
+  const toKey = dayKey(to)
+  const map = new Map<string, { ms: number; games: Set<string> }>()
+  for (const s of sessions) {
+    if (opts.gameId && s.gameId !== opts.gameId) continue
+    if (!Number.isFinite(s.end) || !Number.isFinite(s.ms) || s.ms <= 0) continue
+    const k = dayKey(s.end)
+    if (k < fromKey || k > toKey) continue
+    const d = map.get(k) ?? { ms: 0, games: new Set<string>() }
+    d.ms += s.ms
+    d.games.add(s.gameId)
+    map.set(k, d)
+  }
+  const span = Math.max(0, Math.round((to - from) / DAY_MS))
+  const out: DayStat[] = []
+  for (let i = span; i >= 0; i--) {
+    const ts = dayStart(to) - i * DAY_MS
+    const k = dayKey(ts)
+    const d = map.get(k)
+    out.push({ date: k, ms: d?.ms ?? 0, games: d?.games.size ?? 0 })
+  }
+  return out
 }

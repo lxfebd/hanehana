@@ -90,16 +90,17 @@ const emit = defineEmits<{
 
     <div class="toolbar-count">{{ filteredCount }} {{ t('count_suffix') }}</div>
 
-    <!-- G14 导出：箭头按钮 + 小菜单（CSV / JSON） -->
+    <!-- G14 导出：主操作带文字（基准口径：图标 + 文字，不纯图标）+ 小菜单（CSV / JSON） -->
     <div class="export-wrap">
       <button
-        class="tool-btn"
+        class="tool-btn labeled"
         :class="{ active: exportMenuOpen }"
         :title="t('toolbar_export')"
         :aria-pressed="exportMenuOpen"
         @click="emit('toggleExport')"
       >
         <ArrowUpFromLine :size="15" />
+        <span class="tool-btn-label">{{ t('btn_export_short') }}</span>
       </button>
       <div v-if="exportMenuOpen" class="export-menu glass" @click.stop>
         <button class="export-item" @click="emit('export', 'csv')">{{ t('toolbar_export_csv') }}</button>
@@ -291,6 +292,17 @@ const emit = defineEmits<{
 .tool-btn:hover {
   background: var(--hh-color-surface-mid);
   color: var(--hh-color-text-glow);
+}
+/* 带文字的主操作按钮：图标 + 短文案（基准要求主操作不许纯图标） */
+.tool-btn.labeled {
+  width: auto;
+  padding: 0 12px;
+  gap: 6px;
+}
+.tool-btn-label {
+  white-space: nowrap;
+  font-size: var(--hh-font-caption-size);
+  font-weight: 600;
 }
 /* 选中态统一口径：低透明 accent 底 + accent 亮字（实色粉铺满显廉价） */
 .tool-btn.active {

@@ -1,6 +1,10 @@
-// 详情面板渲染质量验证：选中游戏 → banner/封面/标题/动作栏/元数据齐全，
-// 收藏切换交互正常（乐观更新 + 回读）。高频界面（用户点封面必看）。
-// 用法：node scripts/verify_detail_panel.mjs
+// 详情面板渲染质量验证（B4 右栏选中态，对标 ReinaManager detail.png/stats.png）：
+//   - banner/封面/标题/动作栏/元数据行（数据来源/开发商/发售日/加入时间/时长/评分）
+//   - 标签区：行内搜索框 + 清除 + 展开/收起（默认折叠到 8 个）
+//   - 四个分页（游玩数据/简介/编辑/存档）+ 默认落在游玩数据
+//   - 游玩数据页：7D/30D/1Y/ALL 区间切换 + 区间副行 + 每游戏时长曲线 + 3 小统计
+//   - 收藏切换交互正常（乐观更新 + 回读）
+// 高频界面（用户点封面必看）。用法：node scripts/verify_detail_panel.mjs
 import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
@@ -123,30 +127,139 @@ async function main() {
         const banner = document.querySelector('.banner')
         const title = document.querySelector('.banner-title')
         const play = document.querySelector('.primary-btn')
-        const meta = [...document.querySelectorAll('.meta-row')].length
+        const metaCells = [...document.querySelectorAll('.dp-meta-cell')]
+        const metaKeys = metaCells.map(c => (c.querySelector('.dp-meta-key')||{}).textContent)
+        const tagsBox = document.querySelector('.dp-tags')
+        const tagChips = document.querySelectorAll('.dp-tags-chips .tag-chip').length
+        const tagTotal = tagsBox ? Number((tagsBox.querySelector('.dp-tags-count') || {}).textContent.split('/').pop()) || 0 : 0
+        const tagSearch = document.querySelector('.dp-tags-search input')
+        const tabs = [...document.querySelectorAll('.dp-tab')]
+        const activeTab = document.querySelector('.dp-tab.active')
         const favBtn = [...document.querySelectorAll('.fav-btn')].find(b => (b.textContent||'').includes('收藏'))
         return {
           panel: !!panel, banner: !!banner, bannerH: banner ? banner.offsetHeight : 0,
           title: title ? title.textContent.trim().slice(0, 20) : '',
-          play: !!play, metaRows: meta,
+          play: !!play, metaCount: metaCells.length, metaKeys: metaKeys,
+          hasTags: !!tagsBox, tagChips: tagChips, tagTotal: tagTotal,
+          hasTagSearch: !!tagSearch,
+          tagsExpand: !!document.querySelector('.dp-tags-toggle'),
+          tabCount: tabs.length,
+          tabLabels: tabs.map(t => t.textContent.trim()),
+          activeTabText: activeTab ? activeTab.textContent.trim() : '',
+          hasRange: document.querySelectorAll('.pc-range .range-chip').length,
+          hasRangeSub: !!document.querySelector('.pc-range-sub'),
+          hasChart: !!document.querySelector('.play-chart'),
+          hasChartSvg: !!document.querySelector('.play-chart svg'),
+          miniStats: document.querySelectorAll('.dp-mini-stats .dp-mini').length,
+          hasTools: !!document.querySelector('.dp-tools'),
+          switches: document.querySelectorAll('.dp-switch input[type=checkbox]').length,
           favBtn: !!favBtn, favText: favBtn ? favBtn.textContent.trim() : '',
           ghostBtns: document.querySelectorAll('.ghost-btn').length,
         }
       })())`),
     )
     ck('详情面板渲染', st.panel && st.banner, 'panel=' + st.panel + ' banner=' + st.banner)
-    ck('banner hero 存在且 224px', st.bannerH >= 220, 'h=' + st.bannerH)
+    // hero 必须保持 224px 不被 flex 列压缩（面板内容超屏时默认 flex-shrink
+    // 会把它压成 32px 一条，封面直接消失——这是真布局缺陷，不是断言写死）
+    ck('banner hero 保持 224px 不被压缩', st.bannerH >= 220, 'h=' + st.bannerH)
     ck('标题有内容', (st.title || '').length > 0, 'title=' + st.title)
     ck('主按钮（启动）存在', st.play === true, 'play=' + st.play)
-    ck('元数据行齐全', st.metaRows >= 4, 'rows=' + st.metaRows)
+    ck('元数据行齐全（来源/开发商/发售/加入/时长/评分）', st.metaCount >= 6, 'cells=' + st.metaCount)
+    ck('元数据 label 与值成对', (st.metaKeys || []).filter(Boolean).length === st.metaCount, JSON.stringify(st.metaKeys))
     ck('次按钮组齐全（刮削/编辑/目录/复制）', st.ghostBtns >= 3, 'ghost=' + st.ghostBtns)
+    // ---- 标签区（全集 + 行内搜索 + 展开）----
+    ck('标签区渲染且 chip 有内容', st.hasTags && st.tagChips >= 1, 'chips=' + st.tagChips)
+    ck('标签行内搜索框存在', st.hasTagSearch === true, 'search=' + st.hasTagSearch)
+    // 展开/收起只在 tag 数超过折叠阈值（8）时出现——种子库每款 3–4 个 tag，
+    // 不出现是正确行为（信息密度达标：默认就两行内）。因此按总数自适应断言。
+    ck(
+      '标签展开按钮按需出现（>8 才有）',
+      st.tagTotal > 8 ? st.tagsExpand === true : true,
+      'total=' + st.tagTotal + ' toggle=' + st.tagsExpand,
+    )
+    // 标签搜索过滤：输入一个不存在的词 → 只剩「没有匹配的标签」；清空 → chip 回来
+    await ev(`(() => {
+      const inp = document.querySelector('.dp-tags-search input')
+      if (!inp) return 'no-input'
+      inp.focus()
+      inp.value = 'zzz-no-such-tag'
+      inp.dispatchEvent(new Event('input', { bubbles: true }))
+      return 'typed'
+    })()`)
+    await new Promise((r) => setTimeout(r, 400))
+    const tagFiltered = await ev(`(() => {
+      const none = document.querySelector('.dp-tags-none')
+      const chips = document.querySelectorAll('.dp-tags-chips .tag-chip').length
+      return { chips: chips, none: none ? none.textContent.trim() : '' }
+    })()`)
+    ck('标签搜索过滤生效（无匹配时给空态文案）', tagFiltered && tagFiltered.chips === 0 && tagFiltered.none.length > 0, JSON.stringify(tagFiltered))
+    await ev(`(() => {
+      const btn = document.querySelector('.dp-tags-clear')
+      if (btn) { btn.click(); return 'cleared' }
+      const inp = document.querySelector('.dp-tags-search input')
+      if (inp) { inp.value = ''; inp.dispatchEvent(new Event('input', { bubbles: true })); return 'cleared-by-input' }
+      return 'no-clear'
+    })()`)
+    await new Promise((r) => setTimeout(r, 400))
+    const tagRestored = await ev(`(() => ({ chips: document.querySelectorAll('.dp-tags-chips .tag-chip').length, none: !!document.querySelector('.dp-tags-none') }))()`)
+    ck('清除搜索后 chip 恢复', tagRestored && tagRestored.chips >= 1 && tagRestored.none === false, JSON.stringify(tagRestored))
+
+    // ---- 分页 ----
+    ck('四个分页齐（游玩数据/简介/编辑/存档）', st.tabCount === 4, 'tabs=' + st.tabCount + ' ' + JSON.stringify(st.tabLabels))
+    ck('默认激活「游玩数据」', st.activeTabText.includes('游玩数据') || st.activeTabText.includes('Game Stats'), 'active=' + st.activeTabText)
+    // ---- 游玩数据页：区间 + 曲线 + 小统计 ----
+    ck('区间切换 7D/30D/1Y/ALL 四枚', st.hasRange === 4, 'chips=' + st.hasRange)
+    ck('区间副行（play_range）存在', st.hasRangeSub === true, 'sub=' + st.hasRangeSub)
+    ck('每游戏时长曲线组件存在', st.hasChart === true, 'chart=' + st.hasChart)
+    ck('时长曲线渲染出 svg', st.hasChartSvg === true, 'svg=' + st.hasChartSvg)
+    ck('三个小统计（总时长/场次/本周）', st.miniStats === 3, 'minis=' + st.miniStats)
+    ck('工具与开关分组常驻（LE/Magpie）', st.hasTools === true && st.switches >= 2, 'switches=' + st.switches)
     ck('收藏按钮存在', st.favBtn, 'fav=' + st.favText)
-    // 收藏切换交互：点收藏 → 文本变"已收藏"
+    // ---- 交互：区间切换后副行/曲线仍在 ----
+    await ev(`(() => { const c=[...document.querySelectorAll('.pc-range .range-chip')].find(x=>(x.textContent||'').trim()==='全部'||(x.textContent||'').trim()==='ALL'); if(c){c.click();return 'ok'} return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 600))
+    const afterRange = await ev(`(() => ({ sub: (document.querySelector('.pc-range-sub')||{}).textContent||'', svg: !!document.querySelector('.play-chart svg') }))()`)
+    ck('切到 ALL 区间后副行更新且曲线仍在', afterRange && afterRange.svg === true && (afterRange.sub || '').includes('–'), JSON.stringify(afterRange))
+    // ---- 交互：切到简介页（BBCode 清洗后的正文）----
+    await ev(`(() => { const t=[...document.querySelectorAll('.dp-tab')].find(x=>(x.textContent||'').includes('简介')||(x.textContent||'').includes('Introduction')); if(t){t.click();return 'ok'} return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 600))
+    const intro = await ev(`(() => {
+      const d = document.querySelector('.desc')
+      const txt = d ? d.textContent : ''
+      return { hasDesc: !!d, bb: /\\[[a-z]/i.test(txt), text: txt.trim().slice(0, 60) }
+    })()`)
+    ck('简介页渲染正文', intro && (intro.hasDesc === true || (intro.text || '').length > 0), JSON.stringify(intro))
+    ck('简介无 BBCode 残留（对基准的优势项）', !intro || intro.bb === false, JSON.stringify(intro && intro.text))
+    // ---- 交互：切到存档页（备份开关 + 记录入口）----
+    await ev(`(() => { const t=[...document.querySelectorAll('.dp-tab')].find(x=>(x.textContent||'').includes('存档')||(x.textContent||'').includes('Save')); if(t){t.click();return 'ok'} return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 500))
+    const saves = await ev(`(() => ({ switch: !!document.querySelector('.dp-switch input[type=checkbox]'), btn: !![...document.querySelectorAll('.dp-pane-btn')].find(b=>(b.textContent||'').includes('备份')) }))()`)
+    ck('存档页有备份开关与记录入口', saves && saves.switch === true && saves.btn === true, JSON.stringify(saves))
+    // ---- 收藏切换交互：点收藏 → 文案翻转 ----
+    // 不能假定初始是「未收藏」：seed_layout.mjs 会给部分游戏打 favorite，
+    // 断言写成「点后必须变成已收藏」在已收藏的种子上会反向失败。
+    // 要验的是「点了文案就翻面」这个交互本身，所以先读初始态再比翻转。
+    const favBefore = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
     await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
     await new Promise((r) => setTimeout(r, 800))
-    const favAfter = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏') || (x.textContent||'').includes('已收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
-    ck('收藏切换交互正常（乐观更新）', (favAfter || '').includes('已收藏') || (favAfter || '').includes('Faved'), 'text=' + favAfter)
-    console.log('  面板状态:', JSON.stringify({ title: st.title, bannerH: st.bannerH, metaRows: st.metaRows, fav: favAfter }))
+    const favAfter = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
+    ck(
+      '收藏切换交互正常（文案翻转 = 乐观更新生效）',
+      favBefore !== 'no-btn' && favBefore !== favAfter && ((favAfter || '').includes('收藏') || (favAfter || '').includes('Faved')),
+      'before=' + favBefore + ' after=' + favAfter,
+    )
+    console.log(
+      '  面板状态:',
+      JSON.stringify({
+        title: st.title,
+        bannerH: st.bannerH,
+        meta: st.metaCount,
+        tagChips: st.tagChips,
+        tabs: st.tabLabels,
+        minis: st.miniStats,
+        fav: favAfter,
+      }),
+    )
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()

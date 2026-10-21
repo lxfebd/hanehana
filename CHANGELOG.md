@@ -2,6 +2,26 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.7] - 2026-10-21
+
+### 新增
+
+- **ReinaManager 对标改造（B1–B7）**：整窗信息密度与结构完整度对齐基准（深色玻璃体系保留）。
+  - 设计基线（B1）：字号层上一档（caption 13 / body 14，新增 pageHead 28 / kpi 26）；深色分层分离度提高（card/cardBorder/surfaceStrong/borderFaint）；封面比例统一竖版 `--hh-layout-cover-ratio`（3/4，官方封面实测比例）。
+  - 共享原语（B2）：`PageHeader`（面包屑+大标题+主操作槽）、`KpiStrip`（自适应 KPI 卡，数字不截断）、`ActivityFeed`（右栏默认可见的按日游玩动态时间线）、`PlayChart`（补零日序列 SVG 时长曲线）；新 IPC `StatsSessions`（会话明细，主进程校验夹取）+ `stores/sessions.ts` 数据层。
+  - 游戏库首屏（B3）：页头+KPI 条；封面卡评分+排名徽章叠封面左下（`★9.2 #2`）、开发商副行、无封面海报式占位；hero 封面轨竖版不叠字、右下统计卡并入 KpiStrip；工具栏主操作带文字。
+  - 右栏（B4）：未选中 → 游玩动态（今天/昨天分组时间线+本周时长）；选中 → 详情密度：元数据行（数据源/开发商/发售日/加入时间/通关时长/评分）、标签全集+搜索+展开、四分页（游玩数据/简介/编辑/存档）、每游戏时长曲线 7D/30D/1Y/ALL、LE/Magpie 开关常驻。
+  - 统计页（B5）：周/月周期切换 + 6 KPI（与主进程 computeOverview 同源口径，日均按活跃天数）+ 总趋势线（缺日补零）+ Top10 带封面缩略 + 0–23 时段分布。
+  - 下载页/收藏夹（B6）：页头 + 4 KPI（进行中不含已暂停）；收藏夹独立浏览页（按开发商/系列分组卡+计数，点组复用库页筛选链路）。
+  - 明确优于基准：口径一致（无「首页 1666h / 统计 538.6h」矛盾）、曲线缺日补零、简介 BBCode 清洗、单复数词典、文本 clamp 防截断。
+- **启动进程状态机**（对标 KoiPage）：主进程权威 `starting/running/exited` 快照+推送，UI 启动按钮四态（启动中转 spinner），窗口聚焦补拉；取代 5s 轮询。
+- **回归脚本**：`regression:process`（进程状态机走查）、`regression:accent`（主题色三轴走查）、`regression:batchedit`（批量编辑 6/6）、`regression:collection`（下载页 27 断言 + 收藏夹分组页）、`regression:reina`（四屏验收截图）。
+
+### 修复
+
+- 详情面板 banner 被 flex 列压缩（内容超屏时 224px hero 被压成 32px）：`.banner` 加 `flex: none`，断言 >=220 防回归。
+- 主题推送丢 accent 覆盖（系统深浅切换时自定义主题色被清空）：`onThemeChanged` 推送带上 `ui.accent`。
+
 ## [0.2.6] - 2026-10-21
 
 ### 新增

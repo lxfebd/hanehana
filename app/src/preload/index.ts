@@ -15,6 +15,7 @@ import type {
   BackupStats,
   CloudSyncResult,
   Game,
+  GameProcessState,
   HelloInfo,
   SaveSettingsResult,
   ScrapeResult,
@@ -40,6 +41,9 @@ const bridge = {
   // 游戏库
   listGames: (): Promise<Game[]> => ipcRenderer.invoke(Ipc.GameList),
   statsOverview: () => ipcRenderer.invoke(Ipc.StatsOverview),
+  /** 游玩会话明细（结束时间倒序）：活动流与每游戏时长曲线共用，入参见 SessionQuery */
+  statsSessions: (q?: import('../shared/types').SessionQuery): Promise<import('../shared/types').PlaySession[]> =>
+    ipcRenderer.invoke(Ipc.StatsSessions, q ?? {}),
   /** 扫描：成功返回 {hits, added, skipped, dupes}；失败返回 {ok:false,error}（与兄弟 err() 同形）。
    *  dupes = 同款但不同安装目录的命中（未入库，交用户在扫描结果里决定是否也加进来）。 */
   scanDir: (
@@ -95,6 +99,13 @@ const bridge = {
   // 启动与目录
   launchGame: (id: string) => ipcRenderer.invoke(Ipc.GameLaunch, id),
   runningGames: (): Promise<string[]> => ipcRenderer.invoke(Ipc.GameRunning),
+  /** 进程状态快照（Record<gameId, GameProcessState>）：启动对齐用 */
+  processStates: (): Promise<Record<string, GameProcessState>> =>
+    ipcRenderer.invoke(Ipc.GameProcesses),
+  /** 进程状态推送订阅：主进程权威，状态一变就推（starting/running/exited） */
+  onProcessChanged: (
+    cb: (e: { gameId: string; state: GameProcessState }) => void,
+  ): (() => void) => onPush(Ipc.GameProcessChanged, cb),
   openDir: (dir: string) => ipcRenderer.invoke(Ipc.OpenDir, dir),
   /** 打开下载产物本身（exe 跑起来 / 压缩包交系统默认程序） */
   openTaskFile: (dest: string) => ipcRenderer.invoke(Ipc.OpenTaskFile, dest),

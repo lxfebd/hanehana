@@ -1,6 +1,6 @@
 {
   "name": "hanehana",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "羽花 HaneHana — galgame 管理器：封面墙游戏库 + 多源元数据刮削 + Rust 下载引擎",
   "main": "./out/main/index.js",
   "author": "HaneHana",
@@ -41,7 +41,12 @@
     "regression:stats": "node scripts/verify_stats.mjs",
     "regression:gamesites": "node scripts/verify_gamesites.mjs",
     "regression:nsfw": "node scripts/verify_nsfw.mjs",
-    "regression:track": "node scripts/verify_track.mjs"
+    "regression:track": "node scripts/verify_track.mjs",
+    "regression:process": "node scripts/ui_walkthrough_process.mjs",
+    "regression:accent": "node scripts/ui_walkthrough_accent.mjs",
+    "regression:batchedit": "node scripts/verify_batch_edit.mjs",
+    "regression:collection": "node scripts/verify_dlview.mjs",
+    "regression:reina": "node scripts/ui_walkthrough_reina.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

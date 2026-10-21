@@ -8,31 +8,23 @@
  * 2) Hero 可交互切换：顶部封面轨可滚轮/拖拽/方向键切换，切换时封面与文案做 300ms 交叉滑入滑出。
  * 3) 压图可读性：双层定向 scrim（纵向上下压、横向从右往左渐重）+ 封面左右羽化（mask-image）。
  * 4) 主按钮白底黑字（压图最稳），次按钮玻璃拟态；启动按钮三态文案（启动中… / 运行中 / 继续游玩 / 启动游戏）。
+ * 5) B3：封面轨与主角封面统一竖版比例（var(--hh-layout-cover-ratio)）；标题/正文区在
+ *    picker 之下分区不重叠；氛围 bloom 降一档；总时长类 KPI 并入首屏 KpiStrip，hero 只留续读进度。
  */
 
 import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
-import { Play, Star } from 'lucide-vue-next'
-import type { Game, OverviewStats } from '../../shared/types'
-import { library, selectGame, launchGame, thumbUrl } from '../stores/library'
+import { Loader2, Play, Star } from 'lucide-vue-next'
+import type { Game } from '../../shared/types'
+import { selectGame, launchGame, thumbUrl, filteredGames, launchingGames, runningGames } from '../stores/library'
 import { t } from '../i18n'
 import { tokens } from '../design/tokens'
 
 /** 星级色（跟随主题 tokens，同 CoverGrid/DetailPanel 的评级星一致） */
 const starColor = computed(() => tokens.color.star)
 
-/** 库总览统计（hero 右侧统计玻璃卡）：经 statsOverview IPC 拉取 */
-const stats = ref<OverviewStats | null>(null)
-
-/** 时长格式化：毫秒 → 「12.5h」/「45m」 */
-function fmtDuration(ms: number): string {
-  if (!ms || ms <= 0) return '0m'
-  const h = Math.floor(ms / 3600000)
-  const m = Math.floor((ms % 3600000) / 60000)
-  if (h > 0 && m > 0) return `${h}h${m}m`
-  return h > 0 ? `${h}h` : `${m}m`
-}
-
-/** 续读进度：按「最近玩过」候选当前主角的 playMs 估算（无时长显示 0%） */
+/** 续读进度：按「最近玩过」候选当前主角的 playMs 估算（无时长显示 0%）。
+ *  首屏总时长/已玩/本月等 KPI 已并入 App.vue 的 KpiStrip（lead 负责），
+ *  hero 只留这一条与"继续游玩"叙事直接相关的进度。 */
 const continuePct = computed(() => {
   const g = heroGame.value
   if (!g || !g.playMs || g.playMs <= 0) return 0
@@ -40,17 +32,20 @@ const continuePct = computed(() => {
   return Math.min(100, Math.round((g.playMs / (10 * 3600000)) * 100))
 })
 
-/** 已玩数 / 库总数（统计卡副行） */
-const libCount = computed(() => library.games.length)
-
 /** 是否有可展示封面（thumb 或 cover） */
 function hasCover(g: Game): boolean {
   return !!(g.thumbPath || g.coverPath)
 }
 
-/** 候选集：上次玩过的优先（时间倒序），其次从未玩过的（收藏+评分+入库时间） */
+/**
+ * 候选集：跟随当前过滤视图（搜索/分类/智能列表/元数据聚合）。
+ *
+ * 刻意不做「视图为空时回退全量」：实测（用户截图）那样会出现上面横幅在讲
+ * 某部游戏、下面正文却写「没有匹配的游戏」的自相矛盾画面——横幅与封面墙
+ * 必须说同一件事，视图空了就一起空，空态由正文去表达。
+ */
 const heroCandidates = computed<Game[]>(() => {
-  const games = library.games
+  const games = filteredGames.value
   if (!games.length) return []
   const played = games.filter((g) => hasCover(g) && !!g.lastPlayed).sort((a, b) => (b.lastPlayed ?? 0) - (a.lastPlayed ?? 0))
   const unplayed = games
@@ -84,7 +79,7 @@ const isLastPlayed = computed(() => !!heroGame.value?.lastPlayed)
 const isNeverPlayed = computed(() => !heroGame.value?.lastPlayed)
 
 /** 运行中状态 */
-const running = computed(() => !!heroGame.value && library.runningIds.has(heroGame.value.id))
+const running = computed(() => !!heroGame.value && runningGames.value.has(heroGame.value.id))
 
 /** 滚轮累积量节流（鼠标一格 = 1 次切换，触控板细颗粒累积） */
 let wheelAccumulated = 0
@@ -129,10 +124,12 @@ function onKeyDown(event: KeyboardEvent): void {
   else if (event.key === 'End') { event.preventDefault(); selectIndex(heroCandidates.value.length - 1) }
 }
 
-/** 启动按钮文案三态：运行中 / 继续游玩 / 启动游戏 */
+/** 启动按钮文案四态：启动中 / 运行中 / 继续游玩 / 启动游戏 */
+const launching = computed(() => !!heroGame.value && launchingGames.value.has(heroGame.value.id))
 const playLabel = computed(() => {
   const g = heroGame.value
   if (!g) return t('hero_launch')
+  if (launching.value) return t('hero_launching')
   if (running.value) return t('detail_running')
   return g.playMs > 0 ? t('hero_launch_ctd') : t('hero_launch')
 })
@@ -157,13 +154,6 @@ function openDetail(): void {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown)
-  // 拉库总览统计（hero 右侧统计卡）。失败静默：统计是氛围不是关键路径。
-  void window.hh
-    .statsOverview()
-    .then((s) => {
-      if (s) stats.value = s
-    })
-    .catch(() => {})
 })
 onUnmounted(() => {
   window.removeEventListener('keydown', onKeyDown)
@@ -244,26 +234,16 @@ watch(heroCandidates, (candidates) => {
           </div>
         </div>
         <div class="hero-actions">
-          <button class="hero-play" @click="launch">
-            <Play :size="16" :fill="'currentColor'" />
+          <button class="hero-play" :disabled="launching || running" :aria-busy="launching" @click="launch">
+            <Loader2 v-if="launching" :size="16" class="hero-spin" />
+            <Play v-else :size="16" :fill="'currentColor'" />
             {{ playLabel }}
           </button>
           <button class="hero-detail" @click="openDetail">{{ t('hero_detail') }}</button>
         </div>
-        <!-- 右侧统计玻璃卡（aurora 式氛围）：总时长 / 已玩 / 本月，续读进度条 -->
+        <!-- 续读进度玻璃条：总时长/已玩/本月 KPI 已并入首屏 KpiStrip（App.vue），
+             hero 只留与续读叙事挂钩的进度一条 -->
         <div class="hero-stats" aria-hidden="true">
-          <div class="hs-row">
-            <span class="hs-cap">{{ t('hero_stat_total') }}</span>
-            <span class="hs-val num">{{ fmtDuration(stats?.totalMs ?? 0) }}</span>
-          </div>
-          <div class="hs-row">
-            <span class="hs-cap">{{ t('hero_stat_played') }}</span>
-            <span class="hs-val num">{{ stats?.playedGames ?? 0 }} / {{ libCount }}</span>
-          </div>
-          <div class="hs-row">
-            <span class="hs-cap">{{ t('hero_stat_month') }}</span>
-            <span class="hs-val num">{{ fmtDuration(stats?.monthMs ?? 0) }}</span>
-          </div>
           <div class="hs-prog">
             <div class="hs-prog-head">
               <span class="hs-cap">{{ t('hero_stat_continue') }}</span>
@@ -298,9 +278,11 @@ watch(heroCandidates, (candidates) => {
   inset: 0;
   background-size: cover;
   background-position: center 32%;
-  filter: blur(34px) saturate(1.35);
+  filter: blur(30px) saturate(1.3);
   transform: scale(1.15);
-  opacity: 0.5;
+  /* 氛围层降一档：KPI 并入首屏 KpiStrip 后，hero 背景只是陪衬，
+     大面积 bloom 会把注意力从主角封面抢走 */
+  opacity: 0.35;
   pointer-events: none;
 }
 
@@ -333,8 +315,9 @@ watch(heroCandidates, (candidates) => {
 .hero-cover {
   position: relative;
   z-index: 1;
-  width: 96px;
-  height: 132px;
+  width: 99px;
+  /* 竖版封面统一走 token（99 × 4/3 = 132，与 .hero-animated 的构图注释一致） */
+  aspect-ratio: var(--hh-layout-cover-ratio);
   border-radius: var(--hh-radius-sm);
   overflow: hidden;
   flex-shrink: 0;
@@ -372,6 +355,8 @@ watch(heroCandidates, (candidates) => {
   letter-spacing: 0.14em;
   color: var(--hh-color-on-cover-text-soft);
   font-weight: 600;
+  /* 眉标是短标签（继续上次的故事…），绝不折行：折成三行会挤垮标题区 */
+  white-space: nowrap;
 }
 
 .hero-title {
@@ -437,8 +422,10 @@ watch(heroCandidates, (candidates) => {
 }
 .hero-thumb {
   display: block;
-  width: 80px;
-  height: 80px;
+  /* 封面轨竖版化：宽高走 --hh-layout-cover-ratio（72 → 96；选中 96 → 128，
+     128 + gap 8 + caption 18 + padding 8 = 162 ≤ picker 170，轨与文字区不重叠） */
+  width: 72px;
+  aspect-ratio: var(--hh-layout-cover-ratio);
   overflow: hidden;
   border: 1px solid var(--hh-color-on-cover-chip-border);
   border-radius: var(--hh-radius-md);
@@ -449,8 +436,7 @@ watch(heroCandidates, (candidates) => {
 }
 .hero-choice[aria-selected="true"] { flex-basis: 112px; }
 .hero-choice[aria-selected="true"] .hero-thumb {
-  width: 108px;
-  height: 108px;
+  width: 96px;
   opacity: 1;
   border-color: white;
   box-shadow:
@@ -531,6 +517,10 @@ watch(heroCandidates, (candidates) => {
 .hero-play:hover { background: var(--hh-color-hero-btn-hover); box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
 .hero-play:focus-visible { outline: 2px solid white; outline-offset: 4px; }
 .hero-play:disabled { opacity: 0.6; cursor: wait; }
+/* 启动中：图标旋转，让空窗期有明确反馈（按钮禁用防重复启动） */
+.hero-spin { animation: hero-spin 900ms linear infinite; }
+@keyframes hero-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .hero-spin { animation: none; } }
 
 /* 次按钮：玻璃拟态 */
 .hero-detail {
@@ -548,13 +538,13 @@ watch(heroCandidates, (candidates) => {
 }
 .hero-detail:hover { background: var(--hh-color-on-cover-chip-bg); }
 
-/* ============ 右侧统计玻璃卡（aurora 式氛围） ============ */
+/* ============ 续读进度玻璃条（KPI 已并入首屏 KpiStrip，这里只留续读） ============ */
 .hero-stats {
   position: relative;
   z-index: 1;
   flex-shrink: 0;
   width: 168px;
-  padding: 14px 16px;
+  padding: 12px 14px;
   border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-on-cover-glass-border);
   background: var(--hh-color-on-cover-glass-bg);
@@ -563,24 +553,11 @@ watch(heroCandidates, (candidates) => {
   flex-direction: column;
   gap: 10px;
 }
-.hs-row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
-}
 .hs-cap {
   font-size: var(--hh-font-caption-size);
   letter-spacing: 0.1em;
   color: var(--hh-color-on-cover-text-soft);
   white-space: nowrap;
-}
-.hs-val {
-  font-size: var(--hh-font-bodyLg-size);
-  font-weight: 700;
-  color: var(--hh-color-on-cover-text);
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 .hs-prog {
   display: flex;
@@ -658,11 +635,11 @@ watch(heroCandidates, (candidates) => {
   .hero-picker { height: 122px; gap: 10px; padding: 8px 16px; }
   .hero-counter { top: 6px; right: 16px; }
   .hero-animated { padding: 122px 16px 12px; gap: 12px; }
-  .hero-cover { width: 62px; height: 88px; }
+  .hero-cover { width: 66px; }
   .hero-detail { display: none; }
-  .hero-thumb { width: 64px; height: 64px; border-radius: var(--hh-radius-md); }
+  .hero-thumb { width: 54px; border-radius: var(--hh-radius-md); }
   .hero-choice { flex: 0 0 68px; }
   .hero-choice[aria-selected="true"] { flex-basis: 92px; }
-  .hero-choice[aria-selected="true"] .hero-thumb { width: 88px; height: 88px; border-radius: var(--hh-radius-md); }
+  .hero-choice[aria-selected="true"] .hero-thumb { width: 66px; border-radius: var(--hh-radius-md); }
 }
 </style>

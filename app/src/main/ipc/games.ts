@@ -13,6 +13,7 @@ import {
   handleBatchRemove,
   handleLaunch,
   handleRunning,
+  handleProcessStates,
   handleOpenDir,
   handleAddOne,
 } from '../games'
@@ -84,6 +85,8 @@ export function registerGamesHandlers(ctx: IpcCtx): void {
   })
 
   ipcMain.handle(Ipc.GameRunning, () => handleRunning())
+  // 进程状态快照：渲染层启动时取一次对齐，之后靠 GameProcessChanged 推送增量
+  ipcMain.handle(Ipc.GameProcesses, () => handleProcessStates())
 
   // 打开目录只接受磁盘上真实存在的路径
   ipcMain.handle(Ipc.OpenDir, (_e, dir: unknown) => {

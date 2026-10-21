@@ -10,7 +10,9 @@ import { reactive } from 'vue'
 import { setTheme } from '../design/tokens'
 
 export const ui = reactive({
-  page: 'library' as 'library' | 'downloads' | 'games' | 'stats',
+  /** 当前页。collection = 收藏夹浏览页（B6 新增：favOnly 只是库内筛选，
+      收藏夹本身是「按开发商/系列分组的浏览页」，不是又一个筛选开关） */
+  page: 'library' as 'library' | 'downloads' | 'games' | 'stats' | 'collection',
   settingsOpen: false,
   dark: true,
   /** 主题套件 id（settings.theme_preset）。默认星海：

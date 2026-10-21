@@ -1,16 +1,24 @@
 <script setup lang="ts">
 /**
- * 详情面板（樱夜 hero 化）。
+ * 详情面板（右栏选中态）。
+ *
+ * 结构对标基准 detail.png / stats.png 的右栏密度：
  *   - 横幅 224px hero：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
- *   - 前景左 cover 104x156；右列标题 20/26 两行 clamp + 原名 + chips
- *   - 主按钮满宽 40（Play/运行中）、次行两 ghost 等宽（刮削/打开目录）
- *   - 元数据两栏：时长、上次、目录（link 色）、来源
- *   - 标签 chips（accentBg 底）；分类 toggle chips；简介 6 行 clamp + 展开/收起
+ *   - 元数据行：数据来源 / 开发商 / 发售日 / 加入时间 / 预计时长 / 评分一行摊开
+ *     （label caption 小灰字、值正文色；空值统一「—」）
+ *   - 标签区：tag 全集 + 行内搜索（实时过滤）+ 清除 + 展开/收起（默认折叠到 8 个）
+ *   - 四个分页（手写 segmented，无 Modal 闸）：游玩数据 / 简介 / 编辑 / 存档
+ *   - 游玩数据页：7D/30D/1Y/ALL 区间切换 + 副行区间两端 + 每游戏时长曲线
+ *     （缺日补零的日序列，交给 stores/sessions 的 dailyFromSessions）
+ *   - 工具与开关：useLE / useMagpie 常驻小分组，不折进 More 菜单
+ *
+ * 对基准的优势项：简介里的 BBCode（[url=…][/url]、[b]/[i] 等源站标记）在渲染前
+ * 剥干净只留正文——基准把 `[From url=…]Wikipedia[/url]]` 直接怼到界面上。
  */
 import { computed, ref, watch } from 'vue'
 import {
   Activity,
-  Archive,
+  Check,
   ClipboardCopy,
   DatabaseBackup,
   Flower2,
@@ -19,8 +27,10 @@ import {
   PanelRightClose,
   Pencil,
   Play,
+  Search,
   Star,
   Wand2,
+  X,
 } from 'lucide-vue-next'
 import {
   applyPatch,
@@ -29,13 +39,18 @@ import {
   openEdit,
   openScrape,
   refreshGames,
+  runningGames,
   selectedGame,
   thumbUrl,
   toggleFavorite,
   filterByMeta,
 } from '../stores/library'
-import { t, tf } from '../i18n'
+import { dailyFromSessions, loadSessions } from '../stores/sessions'
+import PlayChart from './PlayChart.vue'
+import { t, tf, type I18nKey } from '../i18n'
 import { tokens } from '../design/tokens'
+import { ONE_DAY_MS } from '../../shared/format'
+import type { DayStat, PlaySession } from '../../shared/types'
 
 const emit = defineEmits<{ collapse: [] }>()
 const g = computed(() => selectedGame.value)
@@ -49,10 +64,13 @@ const bannerFailed = ref(false)
 function imgErr(): void {
   bannerFailed.value = true
 }
-// 切到别的游戏时重来：banner-letter 的兜底状态不能带过去，简介展开态也要复位
+// 切到别的游戏时重来：banner-letter 的兜底状态不能带过去，展开态/搜索/tab 也复位
 watch(g, () => {
   bannerFailed.value = false
   descExpanded.value = false
+  tagQuery.value = ''
+  tagsExpanded.value = false
+  dpTab.value = 'stats'
 })
 
 function fmtPlay(ms: number): string {
@@ -94,8 +112,43 @@ function bannerFallback(): string {
     linear-gradient(160deg, ${c}cc, ${c}22 60%, ${tokens.color.bannerBase} 100%)`
 }
 
-/** 简介是否超过 6 行阈值（粗略按字符估算，180 字约 6 行） */
-const descTruncated = computed(() => !!g.value?.description && g.value.description.length > 180)
+/**
+ * 简介是否超过 6 行阈值（粗略按字符估算，180 字约 6 行）。
+ * 按清洗后的正文算——剥掉的 BBCode 不该占行数。
+ */
+const descTruncated = computed(() => (cleanDesc.value ?? '').length > 180)
+
+/**
+ * BBCode 清洗（对基准的优势项）。
+ *
+ * 源站（VNDB/Bangumi/YMGal）的 description 是 BBCode 富文本：`[url=http://…]Wikipedia[/url]`、
+ * `[b]`/`[i]`、`[quote]`、`[list]`/`[*]` 这类标记在 galgame 管理器里没有渲染器，
+ * 直接上屏就是把「源码」给用户看。规则是「剥标记、留正文」：
+ *   - `[url=x]text[/url]` → text（链接语义在窄栏里没用，文字留下）
+ *   - `[img]…[/img]` 整块删（外链图在窄栏只会拖慢/破版）
+ *   - 其余成对/自成标记一律剥掉，剩下纯正文
+ */
+function stripBbcode(src: string): string {
+  let s = src
+  // 源站自己写歪的变体也要吃下：VNDB 的 description 里出现过 `[From url=…]Wikipedia[/url]`
+  // （标签名是 From 不是 url，严格 `[url=` 的正则会漏过去，把半截标记漏给用户）。
+  s = s.replace(/\[[a-z][a-z0-9]*\s+url=([^\]]*)\]([\s\S]*?)\[\/url\]/gi, '$2')
+  s = s.replace(/\[[a-z][a-z0-9]*\s+url=([^\]]*)\]/gi, '')
+  s = s.replace(/\[url=([^\]]*)\]([\s\S]*?)\[\/url\]/gi, '$2')
+  s = s.replace(/\[url\]([\s\S]*?)\[\/url\]/gi, '$1')
+  s = s.replace(/\[img\][\s\S]*?\[\/img\]/gi, '')
+  // 通用标记：[b]/[/b]、[color=…]、[size=20]、[quote]、[*]（列表项）…
+  s = s.replace(/\[\/?[a-z][a-z0-9=#_:.-]*\]/gi, '')
+  s = s.replace(/\[\/?\*\]/gi, '')
+  // 连续 3 个以上换行压成两个：正文空段是分节不是排版
+  s = s.replace(/\n{3,}/g, '\n\n')
+  return s.trim()
+}
+
+const cleanDesc = computed(() => {
+  const d = g.value?.description
+  return d ? stripBbcode(d) : ''
+})
 
 async function toggleCategory(): Promise<void> {
   const game = g.value
@@ -191,6 +244,124 @@ function flashCopied(): void {
     copyTimer = null
   }, 1200)
 }
+
+// ---------------------------------------------------------------- 分页（手写 segmented）
+
+type TabKey = 'stats' | 'intro' | 'edit' | 'saves'
+const dpTab = ref<TabKey>('stats')
+/** 四个 tab 的 i18n 键（顺序即展示顺序：游玩数据 / 简介 / 编辑 / 存档） */
+const dpTabs: { key: TabKey; label: I18nKey }[] = [
+  { key: 'stats', label: 'dp_tab_stats' },
+  { key: 'intro', label: 'dp_tab_intro' },
+  { key: 'edit', label: 'dp_tab_edit' },
+  { key: 'saves', label: 'dp_tab_saves' },
+]
+
+// ---------------------------------------------------------------- 标签全集 + 搜索
+
+const tagQuery = ref('')
+const tagsExpanded = ref(false)
+/** 折叠阈值：约 2 行 chip（360px 栏宽下每行 3–4 个中文标签） */
+const TAG_COLLAPSED = 8
+
+const filteredTags = computed(() => {
+  const all = g.value?.tags ?? []
+  const q = tagQuery.value.trim().toLowerCase()
+  return q ? all.filter((tag) => tag.toLowerCase().includes(q)) : all
+})
+
+const visibleTags = computed(() =>
+  tagsExpanded.value ? filteredTags.value : filteredTags.value.slice(0, TAG_COLLAPSED),
+)
+
+/** 搜索结果为空时给一句「没有匹配的标签」，而不是一块空白 */
+const tagsEmpty = computed(() => filteredTags.value.length === 0)
+/** 过滤后仍超出折叠阈值才给展开按钮 */
+const tagsOverflow = computed(() => filteredTags.value.length > TAG_COLLAPSED)
+
+// ---------------------------------------------------------------- 游玩数据（曲线 + 小统计）
+
+/** 当前选中游戏的会话明细（最近 500 条；主进程 limit ≤ 500） */
+const sessions = ref<PlaySession[]>([])
+const sessionsLoading = ref(false)
+
+async function loadFor(id: string): Promise<void> {
+  sessionsLoading.value = true
+  try {
+    const list = await loadSessions({ gameId: id, limit: 500 })
+    sessions.value = Array.isArray(list) ? list : []
+  } catch {
+    // 取数失败不弹窗：曲线退化为 act_empty 空态，小统计显示「—」
+    sessions.value = []
+  } finally {
+    sessionsLoading.value = false
+  }
+}
+
+// 选中游戏变化 → 重拉该游戏的会话（immediate：首次进入也要拉）
+watch(
+  g,
+  (ng, old) => {
+    if (ng && ng.id !== old?.id) void loadFor(ng.id)
+    else if (!ng) sessions.value = []
+  },
+  { immediate: true },
+)
+
+type RangeKey = 'play_7d' | 'play_30d' | 'play_1y' | 'play_all'
+const range = ref<RangeKey>('play_30d')
+/** 区间切换（基准 Game Stats 右上角 7D/30D/M/1Y/ALL，我们用 7D/30D/1Y/ALL 键） */
+const ranges: { key: RangeKey; label: I18nKey; days: number }[] = [
+  { key: 'play_7d', label: 'play_7d', days: 7 },
+  { key: 'play_30d', label: 'play_30d', days: 30 },
+  { key: 'play_1y', label: 'play_1y', days: 365 },
+  { key: 'play_all', label: 'play_all', days: 0 },
+]
+
+const rangeDays = computed(() => ranges.find((r) => r.key === range.value)?.days ?? 30)
+const rangeFromTs = computed(() =>
+  rangeDays.value > 0 ? Date.now() - rangeDays.value * ONE_DAY_MS : 0,
+)
+
+/**
+ * 每游戏时长曲线序列：缺日补零、升序（dailyFromSessions 的契约）。
+ * 空区间也给一条：PlayChart 全零序列仍画出日历轴，不会跳日期（基准在这里犯错）。
+ */
+const series = computed<DayStat[]>(() => {
+  const game = g.value
+  if (!game) return []
+  return dailyFromSessions(sessions.value, { fromTs: rangeFromTs.value, gameId: game.id })
+})
+
+/** 区间两端日期（图表副行 play_range） */
+const rangeFromText = computed(() => series.value[0]?.date?.replace(/-/g, '/') ?? '—')
+const rangeToText = computed(() => series.value[series.value.length - 1]?.date?.replace(/-/g, '/') ?? '—')
+
+/** 本周一 00:00（epoch ms）：小统计「本周」的口径 */
+const weekStartTs = computed(() => {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  const dow = (d.getDay() + 6) % 7
+  return d.getTime() - dow * ONE_DAY_MS
+})
+
+const gameSessions = computed(() => {
+  const id = g.value?.id
+  return id ? sessions.value.filter((s) => s.gameId === id) : []
+})
+
+const sessionCount = computed(() => gameSessions.value.length)
+const weekMs = computed(() =>
+  gameSessions.value.reduce((acc, s) => (s.end >= weekStartTs.value ? acc + (s.ms || 0) : acc), 0),
+)
+
+// ---------------------------------------------------------------- 元数据行（一行摊开）
+
+/** 数据来源：sources 第一个 provider 名（vndb/bangumi/ymgal…），无则「—」 */
+const sourceText = computed(() => g.value?.sources?.[0]?.provider ?? '')
+const releaseText = computed(() => g.value?.releaseDate ?? '')
+const addedText = computed(() => (g.value?.addedAt ? fmtDate(g.value.addedAt) : ''))
+const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) : ''))
 </script>
 
 <template>
@@ -219,8 +390,8 @@ function flashCopied(): void {
 
         <div class="banner-cover">
           <!-- 加载失败即卸载（bannerFailed 置位），切游戏复位后自动重挂载——
-              不直接改 style.display，避免「display 按元素记、bannerFailed 按 ref 记」
-              的错位（切到有图游戏封面仍隐藏的 bug 根源）。 -->
+               不直接改 style.display，避免「display 按元素记、bannerFailed 按 ref 记」
+               的错位（切到有图游戏封面仍隐藏的 bug 根源）。 -->
           <img v-if="bannerImg() && !bannerFailed" :src="bannerImg()" class="banner-img" @error="imgErr" />
           <div v-show="!bannerImg() || bannerFailed" class="banner-letter">{{ g.title.slice(0, 1) }}</div>
         </div>
@@ -240,7 +411,7 @@ function flashCopied(): void {
       <!-- 动作栏：主按钮满宽 + 双 ghost 次行 -->
       <div class="actions">
         <button class="primary-btn" @click="launchGame(g.id)">
-          <span v-if="library.runningIds.has(g.id)"><Activity :size="16" /> {{ t('detail_running') }}</span>
+          <span v-if="runningGames.has(g.id)"><Activity :size="16" /> {{ t('detail_running') }}</span>
           <span v-else><Play :size="16" :fill="'currentColor'" /> {{ t('detail_launch') }}</span>
         </button>
       </div>
@@ -257,29 +428,77 @@ function flashCopied(): void {
         </button>
       </div>
 
-      <!-- G13+G17 版本/语言包切换：默认 exePath + 每个变体一个 chip -->
-      <div v-if="g.variants?.length" class="variants">
-        <span class="meta-key variants-key">{{ t('dp_version') }}</span>
-        <div class="variants-chips">
-          <button
-            class="variant-chip"
-            :class="{ on: (g.activeVariant ?? 0) === 0 }"
-            :title="g.exePath"
-            @click="setVariant(0)"
+      <!-- 元数据行：数据来源 / 开发商 / 发售日 / 加入时间 / 预计时长 / 评分（基准一行摊开） -->
+      <div class="dp-meta" :aria-label="t('dp_source')">
+        <div class="dp-meta-cell">
+          <span class="dp-meta-key">{{ t('dp_source') }}</span>
+          <span class="dp-meta-val" :title="sourceText || '—'">{{ sourceText || '—' }}</span>
+        </div>
+        <div class="dp-meta-cell">
+          <span class="dp-meta-key">{{ t('dp_developer') }}</span>
+          <a
+            v-if="g.developer"
+            class="dp-meta-val link"
+            :title="t('dp_same_dev')"
+            @click="filterByMeta('developer', g.developer)"
+            >{{ g.developer }}</a
           >
-            {{ t('dp_default') }}
-          </button>
+          <span v-else class="dp-meta-val">—</span>
+        </div>
+        <div class="dp-meta-cell">
+          <span class="dp-meta-key">{{ t('dp_release') }}</span>
+          <span class="dp-meta-val" :title="releaseText || '—'">{{ releaseText || '—' }}</span>
+        </div>
+        <div class="dp-meta-cell">
+          <span class="dp-meta-key">{{ t('dp_added') }}</span>
+          <span class="dp-meta-val" :title="addedText || '—'">{{ addedText || '—' }}</span>
+        </div>
+        <div class="dp-meta-cell">
+          <span class="dp-meta-key">{{ t('dp_length') }}</span>
+          <span class="dp-meta-val" :title="lengthText || '—'">{{ lengthText || '—' }}</span>
+        </div>
+        <div class="dp-meta-cell">
+          <span class="dp-meta-key">{{ t('dp_rating') }}</span>
+          <span class="dp-meta-val dp-meta-num" :title="ratingText || '—'">
+            <Star v-if="ratingText" :size="11" :fill="starColor" :stroke-width="0" class="dp-meta-star" />
+            {{ ratingText || '—' }}
+          </span>
+        </div>
+      </div>
+
+      <!-- 标签区：tag 全集 + 行内搜索/清除 + 展开收起 -->
+      <div class="dp-tags">
+        <div class="dp-tags-head">
+          <span class="dp-tags-title">{{ t('dp_tags') }}</span>
+          <span class="dp-tags-count">{{ filteredTags.length }} / {{ g.tags.length }}</span>
+        </div>
+        <div class="dp-tags-search">
+          <Search :size="13" class="dp-tags-search-icon" />
+          <input
+            v-model="tagQuery"
+            class="dp-tags-input"
+            type="text"
+            :placeholder="t('dp_tags_search_ph')"
+            :aria-label="t('dp_tags_search_ph')"
+          />
           <button
-            v-for="(v, i) in g.variants"
-            :key="i"
-            class="variant-chip"
-            :class="{ on: (g.activeVariant ?? 0) === i + 1 }"
-            :title="v.exePath"
-            @click="setVariant(i + 1)"
+            v-if="tagQuery"
+            class="dp-tags-clear"
+            type="button"
+            :title="t('dp_tags_clear')"
+            :aria-label="t('dp_tags_clear')"
+            @click="tagQuery = ''"
           >
-            {{ v.label }}
+            <X :size="12" />
           </button>
         </div>
+        <div class="dp-tags-chips">
+          <span v-for="tag in visibleTags" :key="tag" class="tag-chip" :title="tag">{{ tag }}</span>
+          <span v-if="tagsEmpty" class="dp-tags-none">{{ t('dp_tags_none') }}</span>
+        </div>
+        <button v-if="tagsOverflow" class="dp-tags-toggle" type="button" @click="tagsExpanded = !tagsExpanded">
+          {{ tagsExpanded ? t('dp_tags_collapse') : t('dp_tags_expand') }}
+        </button>
       </div>
 
       <!-- 收藏行 -->
@@ -288,105 +507,169 @@ function flashCopied(): void {
           <Heart :size="13" :fill="g.favorite ? 'currentColor' : 'none'" />
           {{ g.favorite ? t('detail_faved') : t('detail_fav') }}
         </button>
+      </div>
+
+      <!-- 分页：游玩数据 / 简介 / 编辑 / 存档（手写 segmented，不用 Modal 壳） -->
+      <div class="dp-tabs" role="tablist" :aria-label="t('dp_tab_stats')">
         <button
-          class="fav-btn"
-          :class="{ on: g.backupEnabled }"
-          :aria-pressed="!!g.backupEnabled"
-          @click="toggleBackup"
+          v-for="tb in dpTabs"
+          :key="tb.key"
+          class="dp-tab"
+          :class="{ active: dpTab === tb.key }"
+          role="tab"
+          :aria-selected="dpTab === tb.key"
+          :aria-controls="'dp-pane-' + tb.key"
+          type="button"
+          @click="dpTab = tb.key"
         >
-          <Archive :size="13" />
-          {{ g.backupEnabled ? t('detail_backup_on') : t('detail_backup') }}
-        </button>
-        <button
-          class="fav-btn"
-          :class="{ on: library.backupOpen }"
-          :aria-pressed="library.backupOpen"
-          @click="openBackups"
-        >
-          <DatabaseBackup :size="13" />
-          {{ t('detail_backup_records') }}
+          {{ t(tb.label) }}
         </button>
       </div>
 
-      <!-- 元数据两栏 -->
-      <div class="meta">
-        <div class="meta-row">
-          <span class="meta-key">{{ t('dp_playtime') }}</span
-          ><span class="meta-val">{{ fmtPlay(g.playMs) }}</span>
-        </div>
-        <div class="meta-row" v-if="lengthText">
-          <span class="meta-key">{{ t('dp_length') }}</span
-          ><span class="meta-val">{{ lengthText }}</span>
-        </div>
-        <div class="meta-row">
-          <span class="meta-key">{{ t('dp_last_played') }}</span
-          ><span class="meta-val">{{ fmtDate(g.lastPlayed) }}</span>
-        </div>
-        <div class="meta-row" v-if="g.variants?.length">
-          <span class="meta-key">{{ t('dp_launch_target') }}</span>
-          <span class="meta-val">{{ variantName }}</span>
-        </div>
-        <div class="meta-row" v-if="g.developer">
-          <span class="meta-key">{{ t('dp_developer') }}</span>
-          <a
-            class="meta-val link"
-            :title="t('dp_same_dev')"
-            @click="filterByMeta('developer', g.developer as string)"
-            >{{ g.developer }}</a
-          >
-        </div>
-        <div class="meta-row">
-          <span class="meta-key">{{ t('dp_dir') }}</span
-          ><a class="meta-val link" @click="openDir">{{ g.dir.split(/[\\/]/).pop() }}</a>
-        </div>
-        <div class="meta-row" v-if="g.sources.length">
-          <span class="meta-key">{{ t('dp_source') }}</span
-          ><span class="meta-val">{{ g.sources.map((s) => s.provider).join(' / ') }}</span>
-        </div>
-      </div>
-
-      <!-- 系列 chips（series 关联：前作/续作/外传，点击聚合筛选同系列） -->
-      <div v-if="g.series?.length" class="series">
-        <span class="meta-key series-key">{{ t('dp_series') }}</span>
-        <div class="series-chips">
+      <!-- ============ 游玩数据 ============ -->
+      <div v-if="dpTab === 'stats'" id="dp-pane-stats" class="dp-pane" role="tabpanel">
+        <div class="pc-range">
           <button
-            v-for="s in g.series.slice(0, 6)"
-            :key="s"
-            class="series-chip"
-            :class="{ on: library.metaKey === 'series' && library.metaValue === s }"
-            :title="t('dp_same_series')"
-            @click="filterByMeta('series', s)"
+            v-for="r in ranges"
+            :key="r.key"
+            class="range-chip"
+            :class="{ on: range === r.key }"
+            type="button"
+            :aria-pressed="range === r.key"
+            @click="range = r.key"
           >
-            {{ s }}
+            {{ t(r.label) }}
           </button>
         </div>
+        <div class="pc-range-sub">{{ tf('play_range', { from: rangeFromText, to: rangeToText }) }}</div>
+        <PlayChart :series="series" :height="150" />
+        <div class="dp-mini-stats">
+          <div class="dp-mini">
+            <span class="dp-mini-label">{{ t('dp_playtime') }}</span>
+            <span class="dp-mini-val">{{ fmtPlay(g.playMs) }}</span>
+          </div>
+          <div class="dp-mini">
+            <span class="dp-mini-label">{{ t('kpi_sessions') }}</span>
+            <span class="dp-mini-val">{{ sessionCount || '—' }}</span>
+          </div>
+          <div class="dp-mini">
+            <span class="dp-mini-label">{{ t('kpi_week') }}</span>
+            <span class="dp-mini-val">{{ fmtPlay(weekMs) }}</span>
+          </div>
+        </div>
+        <div v-if="sessionsLoading" class="dp-mini-note">{{ t('cg_loading') }}</div>
+        <div v-if="g.lastPlayed" class="dp-mini-note">
+          {{ t('dp_last_played') }}：{{ fmtDate(g.lastPlayed) }}
+        </div>
+
+        <!-- 工具与开关：基准藏在 More 菜单里，我们做成常驻小分组（不折叠，比基准更直接） -->
+        <div class="dp-tools">
+          <div class="dp-tools-title">{{ t('dp_more_tools') }}</div>
+          <label class="dp-switch">
+            <input :checked="!!g.useLE" type="checkbox" @change="toggleFlag('useLE')" />
+            <span class="dp-switch-box" aria-hidden="true"></span>
+            <span class="dp-switch-label">{{ t('dp_switch_le') }}</span>
+          </label>
+          <label class="dp-switch">
+            <input :checked="!!g.useMagpie" type="checkbox" @change="toggleFlag('useMagpie')" />
+            <span class="dp-switch-box" aria-hidden="true"></span>
+            <span class="dp-switch-label">{{ t('dp_switch_magpie') }}</span>
+          </label>
+        </div>
       </div>
 
-      <!-- 别名行 -->
-      <div v-if="g.aliases?.length" class="aliases">
-        <span class="meta-key">{{ t('dp_aliases') }}</span
-        ><span class="aliases-text" :title="g.aliases.join('，')">{{ g.aliases.slice(0, 6).join('，') }}</span>
+      <!-- ============ 简介（BBCode 已剥干净） ============ -->
+      <div v-else-if="dpTab === 'intro'" id="dp-pane-intro" class="dp-pane" role="tabpanel">
+        <!-- 系列 chips（series 关联：前作/续作/外传，点击聚合筛选同系列） -->
+        <div v-if="g.series?.length" class="series">
+          <span class="meta-key series-key">{{ t('dp_series') }}</span>
+          <div class="series-chips">
+            <button
+              v-for="s in g.series.slice(0, 6)"
+              :key="s"
+              class="series-chip"
+              :class="{ on: library.metaKey === 'series' && library.metaValue === s }"
+              :title="t('dp_same_series')"
+              @click="filterByMeta('series', s)"
+            >
+              {{ s }}
+            </button>
+          </div>
+        </div>
+        <!-- 别名行 -->
+        <div v-if="g.aliases?.length" class="aliases">
+          <span class="meta-key">{{ t('dp_aliases') }}</span
+          ><span class="aliases-text" :title="g.aliases.join('，')">{{ g.aliases.slice(0, 6).join('，') }}</span>
+        </div>
+        <div v-if="cleanDesc" class="desc-wrap">
+          <p class="desc" :class="{ clamped: !descExpanded }">{{ cleanDesc }}</p>
+          <button v-if="descTruncated" class="desc-toggle" @click="descExpanded = !descExpanded">
+            {{ descExpanded ? t('dp_collapse') : t('dp_expand') }}
+          </button>
+        </div>
+        <p v-else class="dp-pane-empty">{{ t('act_empty') }}</p>
       </div>
 
-      <!-- 标签 chips -->
-      <div v-if="g.tags.length" class="tags">
-        <span v-for="t in g.tags.slice(0, 12)" :key="t" class="tag-chip">{{ t }}</span>
-      </div>
-
-      <!-- 分类 toggle chips -->
-      <div class="cats">
-        <button class="cat-chip" :class="{ on: g.categories.includes('已通关') }" @click="toggleCategory">
-          {{ t('batch_cleared') }}
+      <!-- ============ 编辑（原文字段编辑：复用 EditDialog 触发） ============ -->
+      <div v-else-if="dpTab === 'edit'" id="dp-pane-edit" class="dp-pane" role="tabpanel">
+        <button class="dp-pane-btn" type="button" @click="openEdit(g.id)">
+          <Pencil :size="14" /> {{ t('detail_edit') }}
         </button>
-        <button class="cat-chip" :class="{ on: g.useLE }" @click="toggleFlag('useLE')">{{ t('dp_le') }}</button>
-        <button class="cat-chip" :class="{ on: g.useMagpie }" @click="toggleFlag('useMagpie')">Magpie</button>
+        <button class="dp-pane-btn" type="button" @click="openScrape(g.id, g.rawTitle || g.title)">
+          <Wand2 :size="14" /> {{ t('detail_scrape') }}
+        </button>
+        <button class="dp-pane-btn" type="button" :title="t('dp_copy_title')" @click="copyGameInfo">
+          <ClipboardCopy :size="14" /> {{ copyDone ? t('dp_copied') : t('dp_copy') }}
+        </button>
+        <button class="dp-pane-btn" type="button" @click="openDir">
+          <FolderOpen :size="14" /> {{ t('dp_dir') }}
+        </button>
+        <!-- 已通关分类 toggle（原 cats 区的功能，随编辑能力一起收进本页） -->
+        <button class="dp-pane-btn" type="button" :aria-pressed="g.categories.includes('已通关')" @click="toggleCategory">
+          <Check :size="14" /> {{ t('batch_cleared') }}
+        </button>
+        <!-- G13+G17 版本/语言包切换：默认 exePath + 每个变体一个 chip -->
+        <div v-if="g.variants?.length" class="variants">
+          <span class="meta-key variants-key">{{ t('dp_version') }}</span>
+          <div class="variants-chips">
+            <button
+              class="variant-chip"
+              :class="{ on: (g.activeVariant ?? 0) === 0 }"
+              :title="g.exePath"
+              type="button"
+              @click="setVariant(0)"
+            >
+              {{ t('dp_default') }}
+            </button>
+            <button
+              v-for="(v, i) in g.variants"
+              :key="i"
+              class="variant-chip"
+              :class="{ on: (g.activeVariant ?? 0) === i + 1 }"
+              :title="v.exePath"
+              type="button"
+              @click="setVariant(i + 1)"
+            >
+              {{ v.label }}
+            </button>
+          </div>
+        </div>
+        <div class="dp-pane-note">
+          {{ t('dp_launch_target') }}：{{ variantName }}
+        </div>
       </div>
 
-      <!-- 简介：6 行 clamp + 展开/收起 -->
-      <div v-if="g.description" class="desc-wrap">
-        <p class="desc" :class="{ clamped: !descExpanded }">{{ g.description }}</p>
-        <button v-if="descTruncated" class="desc-toggle" @click="descExpanded = !descExpanded">
-          {{ descExpanded ? t('dp_collapse') : t('dp_expand') }}
+      <!-- ============ 存档（备份开关 + 备份记录入口） ============ -->
+      <div v-else id="dp-pane-saves" class="dp-pane" role="tabpanel">
+        <label class="dp-switch">
+          <input :checked="!!g.backupEnabled" type="checkbox" @change="toggleBackup" />
+          <span class="dp-switch-box" aria-hidden="true"></span>
+          <span class="dp-switch-label">
+            {{ g.backupEnabled ? t('detail_backup_on') : t('detail_backup') }}
+          </span>
+        </label>
+        <button class="dp-pane-btn" type="button" :aria-pressed="!!library.backupOpen" @click="openBackups">
+          <DatabaseBackup :size="14" /> {{ t('detail_backup_records') }}
         </button>
       </div>
     </template>
@@ -451,6 +734,10 @@ function flashCopied(): void {
   overflow: hidden;
   position: relative;
   height: 224px;
+  /* 固定高度的 hero 不许被 flex 列压缩：面板内容（元数据/标签/分页/曲线）
+     远超视口高度时，默认 flex-shrink:1 会把它压成一条（实测 32px），
+     封面就没了。flex:none = 保持 224px，溢出交给 .detail-panel 滚动。 */
+  flex: none;
   display: flex;
   align-items: flex-end;
   gap: 14px;
@@ -600,7 +887,155 @@ function flashCopied(): void {
   background: var(--hh-color-surface-hover-soft);
 }
 
-/* 收藏行 */
+/* ============ 元数据行（数据来源/开发商/发售日/加入时间/时长/评分） ============ */
+.dp-meta {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--hh-space-x2) var(--hh-space-x3);
+  padding: var(--hh-space-x2) var(--hh-space-x3);
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: var(--hh-radius-panel);
+}
+.dp-meta-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.dp-meta-key {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-meta-val {
+  font-size: var(--hh-font-body-size);
+  color: var(--hh-color-text-strong);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 数字要醒目（评分/时长）上一档字号，仍走 token 不硬写 */
+.dp-meta-num {
+  font-size: var(--hh-font-bodyLg-size);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--hh-color-text-glow);
+}
+.dp-meta-star {
+  color: var(--hh-color-star);
+  flex: none;
+}
+
+/* ============ 标签区（全集 + 搜索 + 展开） ============ */
+.dp-tags {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hh-space-x2);
+}
+.dp-tags-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--hh-space-x2);
+}
+.dp-tags-title {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim-strong);
+}
+.dp-tags-count {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* 行内嵌搜索框：与 chip 同一行开始，占满栏宽（不弹浮层、不压内容） */
+.dp-tags-search {
+  display: flex;
+  align-items: center;
+  gap: var(--hh-space-x2);
+  height: 28px;
+  padding: 0 var(--hh-space-x2);
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  border-radius: var(--hh-radius-sm);
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-mid);
+}
+.dp-tags-search:focus-within {
+  border-color: var(--hh-color-accent-selected-border);
+  background: var(--hh-color-surface-hover-soft);
+}
+.dp-tags-search-icon {
+  flex: none;
+}
+.dp-tags-input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: var(--hh-color-text-glow);
+  font-size: var(--hh-font-caption-size);
+  font-family: inherit;
+}
+.dp-tags-input::placeholder {
+  color: var(--hh-color-text-dim);
+}
+.dp-tags-clear {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: var(--hh-radius-xs);
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-mid);
+  cursor: pointer;
+  padding: 0;
+}
+.dp-tags-clear:hover {
+  background: var(--hh-color-surface-strong);
+  color: var(--hh-color-text-glow);
+}
+.dp-tags-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.tag-chip {
+  font-size: 11px;
+  padding: 3px 9px;
+  border-radius: var(--hh-radius-xs);
+  background: var(--hh-color-accent-bg);
+  color: var(--hh-color-accent-text);
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dp-tags-none {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+.dp-tags-toggle {
+  align-self: flex-start;
+  border: none;
+  background: none;
+  color: var(--hh-color-accent);
+  font-size: var(--hh-font-caption-size);
+  cursor: pointer;
+  padding: 0;
+}
+.dp-tags-toggle:hover {
+  color: var(--hh-color-accent-hover);
+}
+
+/* ============ 收藏行 ============ */
 .fav-row {
   display: flex;
 }
@@ -630,28 +1065,203 @@ function flashCopied(): void {
   font-weight: 600;
 }
 
-/* ============ 元数据 ============ */
-.meta {
+/* ============ 分页（手写 segmented） ============ */
+.dp-tabs {
+  display: flex;
+  gap: var(--hh-space-x1);
+  padding: 3px;
+  background: var(--hh-color-surface-soft);
+  border: 1px solid var(--hh-color-border-faint);
+  border-radius: var(--hh-radius-md);
+  flex: none;
+}
+.dp-tab {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  /* 边框常驻（透明）：激活态换色不改盒尺寸，四个 tab 不跳 */
+  border: 1px solid transparent;
+  border-radius: var(--hh-radius-sm);
+  background: transparent;
+  color: var(--hh-color-text-mid);
+  font-size: var(--hh-font-caption-size);
+  font-family: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
+}
+.dp-tab:hover {
+  color: var(--hh-color-text-glow);
+  background: var(--hh-color-surface-hover-soft);
+}
+.dp-tab.active {
+  background: var(--hh-color-select-bg);
+  border-color: var(--hh-color-accent-selected-border);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
+}
+
+/* ============ 分页内容 ============ */
+.dp-pane {
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  font-size: 12.5px;
+  gap: var(--hh-space-x3);
 }
-.meta-row {
+
+/* 区间切换（7D/30D/1Y/ALL） */
+.pc-range {
   display: flex;
-  justify-content: space-between;
-  gap: 10px;
+  gap: var(--hh-space-x1);
+  flex-wrap: wrap;
 }
-.meta-key {
+.range-chip {
+  height: 26px;
+  padding: 0 var(--hh-space-x2);
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  border-radius: var(--hh-radius-xs);
+  background: transparent;
+  color: var(--hh-color-text-mid);
+  font-size: var(--hh-font-caption-size);
+  cursor: pointer;
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
+}
+.range-chip:hover {
+  background: var(--hh-color-surface-mid);
+  color: var(--hh-color-text-glow);
+}
+.range-chip.on {
+  background: var(--hh-color-select-bg);
+  border-color: var(--hh-color-accent-selected-border);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
+}
+.pc-range-sub {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 小统计（总时长 / 场次 / 本周） */
+.dp-mini-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--hh-space-x2);
+}
+.dp-mini {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: var(--hh-space-x2);
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: var(--hh-radius-sm);
+}
+.dp-mini-label {
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim-strong);
-  flex-shrink: 0;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
-.meta-val {
+.dp-mini-val {
+  font-size: var(--hh-font-bodyLg-size);
+  font-weight: 600;
+  color: var(--hh-color-text-glow);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.dp-mini-note {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+
+/* 工具与开关（基准的 More 菜单 → 常驻小分组） */
+.dp-tools {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hh-space-x2);
+  padding: var(--hh-space-x2) var(--hh-space-x3);
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-card-border);
+  border-radius: var(--hh-radius-panel);
+}
+.dp-tools-title {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim-strong);
+}
+.dp-switch {
+  display: flex;
+  align-items: center;
+  gap: var(--hh-space-x2);
+  cursor: pointer;
+  font-size: var(--hh-font-body-size);
   color: var(--hh-color-text-strong);
-  text-align: right;
+  user-select: none;
+}
+/* 原生 checkbox：视觉隐藏但保留可聚焦与语义（读屏/键盘都能用） */
+.dp-switch input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.dp-switch-box {
+  flex: none;
+  position: relative;
+  width: 32px;
+  height: 18px;
+  border-radius: var(--hh-radius-pill);
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  background: var(--hh-color-surface-soft);
+  transition:
+    background var(--hh-motion-med),
+    border-color var(--hh-motion-med);
+}
+.dp-switch-box::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-text-mid);
+  transition:
+    transform var(--hh-motion-med),
+    background var(--hh-motion-med);
+}
+.dp-switch input:checked + .dp-switch-box {
+  background: var(--hh-color-select-bg);
+  border-color: var(--hh-color-accent-selected-border);
+}
+.dp-switch input:checked + .dp-switch-box::after {
+  transform: translateX(14px);
+  background: var(--hh-color-accent);
+}
+.dp-switch input:focus-visible + .dp-switch-box {
+  outline: 2px solid var(--hh-color-accent-ring);
+  outline-offset: 2px;
+}
+.dp-switch-label {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ============ 元数据（简介页） ============ */
+.meta-key {
+  color: var(--hh-color-text-dim-strong);
+  flex-shrink: 0;
 }
 .link {
   color: var(--hh-color-link);
@@ -667,9 +1277,11 @@ function flashCopied(): void {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .variants-key {
   flex-shrink: 0;
+  font-size: var(--hh-font-caption-size);
 }
 .variants-chips {
   display: flex;
@@ -706,13 +1318,6 @@ function flashCopied(): void {
   flex-wrap: wrap;
   gap: 6px;
 }
-.tag-chip {
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: var(--hh-radius-xs);
-  background: var(--hh-color-accent-bg);
-  color: var(--hh-color-accent-text);
-}
 /* ============ 系列（G12） ============ */
 .series {
   display: flex;
@@ -720,7 +1325,7 @@ function flashCopied(): void {
   gap: 5px;
 }
 .series-key {
-  font-size: 12.5px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim-strong);
 }
 .series-chips {
@@ -756,35 +1361,47 @@ function flashCopied(): void {
   gap: 4px;
   flex-wrap: wrap;
 }
+.aliases .meta-key {
+  font-size: inherit;
+}
 .aliases-text {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 100%;
 }
-/* ============ 分类 ============ */
-.cats {
+
+/* ============ 编辑/存档页按钮 ============ */
+.dp-pane-btn {
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.cat-chip {
-  font-size: 11.5px;
-  padding: 5px 10px;
-  border-radius: var(--hh-radius-sm);
-  border: 1px solid var(--hh-color-surface-hover);
-  background: transparent;
-  color: var(--hh-color-text-mid-high);
+  align-items: center;
+  gap: var(--hh-space-x2);
+  height: 36px;
+  padding: 0 var(--hh-space-x3);
+  border: 1px solid var(--hh-color-border-ghost-soft);
+  border-radius: var(--hh-radius-md);
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-strong);
+  font-size: var(--hh-font-body-size);
+  font-family: inherit;
   cursor: pointer;
-  transition: all var(--hh-motion-med);
+  transition: background var(--hh-motion-med);
 }
-.cat-chip:hover {
-  background: var(--hh-color-surface-mid);
+.dp-pane-btn:hover {
+  background: var(--hh-color-surface-hover-soft);
+  color: var(--hh-color-text-glow);
 }
-.cat-chip.on {
-  background: var(--hh-color-success-bg);
+/* 激活态（已通关 toggle / 备份记录入口）：成功色描边，不用 accent 实色铺满 */
+.dp-pane-btn[aria-pressed='true'] {
   border-color: var(--hh-color-success-border);
   color: var(--hh-color-success-text);
+  font-weight: 600;
+}
+.dp-pane-note,
+.dp-pane-empty {
+  margin: 0;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
 }
 
 /* ============ 简介 ============ */

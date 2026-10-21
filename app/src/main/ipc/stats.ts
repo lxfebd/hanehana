@@ -4,12 +4,18 @@
 import { dialog, ipcMain } from 'electron'
 import { writeFileSync } from 'node:fs'
 import { Ipc } from '../../shared/ipc'
+import type { PlaySession } from '../../shared/types'
 import { getGames } from '../gameStore'
-import { computeOverview } from '../stats'
+import { computeOverview, normalizeSessionQuery, selectSessions } from '../stats'
 import { err, type IpcCtx } from './shared'
 
 export function registerStatsHandlers(ctx: IpcCtx): void {
   ipcMain.handle(Ipc.StatsOverview, () => computeOverview(getGames(), ctx.store().loadPlaySessions()))
+
+  // 会话明细：查询先过 normalizeSessionQuery 再落到 store——渲染层是不可信输入。
+  ipcMain.handle(Ipc.StatsSessions, (_e, query: unknown): PlaySession[] =>
+    selectSessions(ctx.store().loadPlaySessions(), normalizeSessionQuery(query)),
+  )
 
   ipcMain.handle(Ipc.StatsPosterExport, async (_e, dataUrl: unknown) => {
     const src = typeof dataUrl === 'string' ? dataUrl : ''

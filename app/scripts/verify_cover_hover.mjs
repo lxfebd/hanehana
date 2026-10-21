@@ -112,6 +112,11 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500))
     }
     await new Promise((r) => setTimeout(r, 1000))
+    // 页头 + KPI 条 + hero + 续读条会占满首屏，封面墙第一行在视口下方——
+    // 不滚过去 CDP 鼠标就移到窗口外，hover 根本不触发（elementFromPoint = null）。
+    // 这是「首屏有了内容」的必然结果，不是卡片回归。
+    await ev(`(() => { const el = document.querySelector('.cover-card'); el?.scrollIntoView({ block: 'center' }); return true })()`)
+    await new Promise((r) => setTimeout(r, 600))
     // 读 hover 前 transform
     const before = JSON.parse(
       await ev(`JSON.stringify((() => { const cs = getComputedStyle(document.querySelector('.cover-card')); return { transform: cs.transform, shadow: getComputedStyle(document.querySelector('.cover-thumb')).boxShadow.slice(0, 30) } })())`),

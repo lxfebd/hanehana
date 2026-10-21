@@ -76,7 +76,8 @@ function luminance(hex: string): number {
     .reduce((sum, c, i) => sum + c * [0.2126, 0.7152, 0.0722][i]!, 0)
 }
 
-function contrast(first: string, second: string): number {
+/** WCAG 对比度（1..21）。导出以便测试直接断言"结果可读"这一契约。 */
+export function contrast(first: string, second: string): number {
   const a = luminance(first)
   const b = luminance(second)
   return (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)

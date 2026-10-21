@@ -7,7 +7,9 @@
  *     没有才退回哈希调色板。
  *   - hover 抬起 + 封面微缩放（transform 走 GPU，不碰布局），
  *     选中态用主色描边 + 外发光。
- *   - 标题叠在封面底部渐晕上，白字带阴影，比放图下方干净。
+ *   - 评分 + 排名徽章叠在封面左下（深色 scrim 上白字，对标基准库图），
+ *     卡片下方只留标题一行 + 开发商小字副行。
+ *   - 无封面 = 主色底 + 海报式大字标题占位（不再是糊成一团的字母块）。
  *   - 性能铁律：卡片内无 backdrop-filter；DOM 窗口化靠 RecycleScroller。
  *
  * 虚拟化度量（§3.5 固定）：
@@ -25,7 +27,7 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Check, EyeOff, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { isNsfwGame } from '../../shared/nsfw'
-import { library, selectGame, thumbUrl, toggleSelect, debouncedKeyword } from '../stores/library'
+import { library, selectGame, thumbUrl, toggleSelect, debouncedKeyword, runningGames, ratingRanks } from '../stores/library'
 import { t } from '../i18n'
 import { tokens } from '../design/tokens'
 
@@ -142,10 +144,16 @@ function placeholderBg(g: Game): string {
   return palette[h % palette.length]
 }
 
-/** 副行：发行年 or 时长（tabular-nums） */
+/** 副行：开发商优先，退回发行年 / 时长（tabular-nums） */
 function fmtSub(g: Game): string {
+  if (g.developer) return g.developer
   if (g.releaseDate) return g.releaseDate
   return fmtPlay(g.playMs)
+}
+
+/** 评分名次（ratingRanks：有评分游戏间 id→名次，1 基；无评分不占徽章位）。 */
+function rankOf(id: string): number | undefined {
+  return ratingRanks.value.get(id)
 }
 
 function fmtPlay(ms: number): string {
@@ -282,9 +290,13 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           >
             <div class="cover-thumb" :style="{ background: placeholderBg(it.g) }">
               <img v-if="thumbUrl(it.g)" :src="thumbUrl(it.g)" loading="lazy" :alt="it.g.title" @error="imgErr" />
-              <span v-else class="cover-letter">{{ it.g.title.slice(0, 2) }}</span>
+              <!-- 无封面：主色底 + 渐变层 + 大字标题占位（海报占位，不是糊图） -->
+              <template v-else>
+                <div class="cover-poster-grad" aria-hidden="true"></div>
+                <span class="cover-letter" :title="it.g.title">{{ it.g.title }}</span>
+              </template>
 
-              <div v-if="library.runningIds.has(it.g.id)" class="cover-running">
+              <div v-if="runningGames.has(it.g.id)" class="cover-running">
                 <Activity :size="10" :stroke-width="2.5" /> {{ t('detail_running') }}
               </div>
               <div v-if="it.g.favorite" class="cover-fav" :title="t('detail_faved')">
@@ -297,6 +309,15 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <!-- 压暗渐变只给真图用：占位色块上画只会糊出一团灰雾 -->
               <div v-if="thumbUrl(it.g)" class="cover-shade"></div>
 
+              <!-- 封面左下叠徽章（基准库图口径）：评分 星+分数，同排排名 #N；深色 scrim 上白字 -->
+              <div v-if="it.g.rating" class="cover-badges">
+                <span class="cover-rating-badge" :title="t('dp_rating')">
+                  <Star class="rt-star" :size="11" :fill="starColor" :stroke-width="0" />
+                  <span class="num">{{ it.g.rating.toFixed(1) }}</span>
+                </span>
+                <span v-if="rankOf(it.g.id)" class="cover-rank-badge">#{{ rankOf(it.g.id) }}</span>
+              </div>
+
               <!-- NSFW 遮盖：tags 命中成人标签且未临时显示时，封面模糊 + 图标 + 文案 -->
               <div
                 v-if="isNsfwGame(it.g.tags) && !revealedNsfw.has(it.g.id)"
@@ -308,16 +329,12 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
                 <span>{{ t('nsfw_label') }}</span>
               </div>
             </div>
-            <!-- 标题区 32px：标题 + 副行（发行年/时长 + 评分同一行，保持 40px 锁高） -->
+            <!-- 标题区 40px 锁高：标题一行（clamp + title 防截断） + 卡底小字副行（开发商优先）。
+                 评分/排名已叠到封面左下，不再占副行位置。 -->
             <div class="cover-titlezone">
               <div class="cover-title" :title="it.g.title">{{ it.g.title }}</div>
               <div class="cover-subrow">
                 <span class="cover-sub" v-if="fmtSub(it.g)">{{ fmtSub(it.g) }}</span>
-                <!-- 评分：星星 + 分数（数据来自刮削，无评分不占位） -->
-                <span v-if="it.g.rating" class="cover-rating" :title="t('dp_rating')">
-                  <Star class="rt-star" :size="10" :fill="starColor" :stroke-width="0" />
-                  <span class="num">{{ it.g.rating.toFixed(1) }}</span>
-                </span>
               </div>
             </div>
             <!-- 标签 chips：最多 2 个，超出用 +N 收尾（提升网格信息密度，又不刷屏） -->
@@ -362,7 +379,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           <div class="list-thumb" :style="{ background: placeholderBg(item) }">
             <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
             <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
-            <div v-if="library.runningIds.has(item.id)" class="list-running">
+            <div v-if="runningGames.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
             </div>
             <div v-if="item.favorite" class="list-fav" :title="t('detail_faved')">
@@ -374,17 +391,19 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           </div>
           <div class="list-body">
             <div class="list-title" :title="item.title">{{ item.title }}</div>
+            <!-- 行内紧凑徽章（评分 + 排名），与封面卡徽章同一口径，只是压在行 meta 上 -->
             <div class="list-meta">
-              <span v-if="item.releaseDate || fmtPlay(item.playMs)">{{ fmtSub(item) }}</span>
+              <span v-if="item.rating" class="list-rating" :title="t('dp_rating')">
+                <Star class="rt-star" :size="10" :fill="starColor" :stroke-width="0" />
+                <span class="num">{{ item.rating.toFixed(1) }}</span>
+              </span>
+              <span v-if="rankOf(item.id)" class="list-rank">#{{ rankOf(item.id) }}</span>
+              <span v-if="fmtSub(item)" class="list-sub">{{ fmtSub(item) }}</span>
             </div>
           </div>
-          <!-- 右侧三列 caption tabular-nums：发行 / 评分 / 时长 -->
+          <!-- 右侧两列 caption tabular-nums：发行 / 时长（评分已移到行内徽章） -->
           <div class="list-cols">
             <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
-            <span v-else></span>
-            <span v-if="item.rating"
-              ><Star class="num" :size="11" :fill="starColor" :stroke-width="0" /> {{ item.rating.toFixed(1) }}</span
-            >
             <span v-else></span>
             <span v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</span>
             <span v-else></span>
@@ -578,7 +597,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 }
 
 .cover-thumb {
-  aspect-ratio: 3 / 4;
+  aspect-ratio: var(--hh-layout-cover-ratio);
   border-radius: var(--hh-radius-sm);
   overflow: hidden;
   position: relative;
@@ -603,15 +622,36 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   /* 只做极轻微的提亮（1.02），不做放大——缩放会让相邻封面边缘露白 */
   filter: brightness(1.06);
 }
+/* 无封面占位：主色底（.cover-thumb 的 inline background）上叠主题中性渐变做出
+   海报纵深，标题大字居中衬线——像一张没有美术的封面，而不是一块糊字母。
+   -webkit-box + line-clamp：多行标题最多 5 行，超出省略。 */
+.cover-poster-grad {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  background:
+    linear-gradient(150deg, var(--hh-color-on-cover-chip-bg), transparent 55%),
+    linear-gradient(to top, var(--hh-color-shade-thumb-soft), transparent 62%);
+}
 .cover-letter {
   position: absolute;
   inset: 0;
-  display: flex;
-  align-items: center;
+  z-index: 2;
+  padding: 18px 14px;
+  box-sizing: border-box;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 5;
+  overflow: hidden;
   justify-content: center;
-  font-size: 24px;
+  text-align: center;
+  font-family: 'Instrument Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
+  font-size: 21px;
+  line-height: 1.35;
   font-weight: 600;
-  color: var(--hh-color-text-mid);
+  color: var(--hh-color-on-cover-text);
+  text-shadow: 0 2px 14px var(--hh-shade-text);
+  word-break: break-all;
 }
 
 /* 运行中徽章（评分不上卡） */
@@ -717,18 +757,38 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   flex: 1;
   min-width: 0;
 }
-.cover-rating {
+/* 封面左下徽章带（评分 + #排名）：自身带一条从底往上的深色 scrim，
+   不依赖 .cover-shade（占位卡也要有徽章底）。白字 + 金星星，tabular-nums。 */
+.cover-badges {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 2;
   display: flex;
   align-items: center;
-  gap: 2px;
-  flex: none;
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-secondary);
+  gap: 8px;
+  padding: 18px 9px 6px;
+  background: linear-gradient(to top, var(--hh-color-shade-thumb) 34%, transparent);
+  color: var(--hh-color-on-cover-text);
+  font-size: 12.5px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
+  pointer-events: none;
 }
-.cover-rating .rt-star {
+.cover-rating-badge {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  min-width: 0;
+}
+.cover-rating-badge .rt-star {
   flex: none;
-  color: var(--hh-color-star);
+}
+/* 排名比评分弱一档：同排但降透明度，视觉主次分明 */
+.cover-rank-badge {
+  color: var(--hh-color-on-cover-text-soft);
+  font-weight: 600;
 }
 .cover-title {
   font-size: var(--hh-font-body-size);
@@ -905,16 +965,45 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   text-overflow: ellipsis;
 }
 .list-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-muted);
   margin-top: 3px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
+}
+/* 行内评分徽章：紧凑 chip，星级金色 + 分数 */
+.list-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+  padding: 1px 7px;
+  border-radius: var(--hh-radius-pill);
+  border: 1px solid var(--hh-color-border-faint);
+  background: var(--hh-color-surface-mid);
+  color: var(--hh-color-text-secondary);
+}
+.list-rating .rt-star {
+  flex: none;
+  color: var(--hh-color-star);
+}
+.list-rank {
+  flex: none;
+  color: var(--hh-color-text-tertiary);
+  font-weight: 600;
+}
+.list-sub {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
 }
-/* 右侧三列 caption tabular-nums：发行 / 评分 / 时长。
-   窄视口下永不挤压标题区：左、中两列可整体收缩换行，右列为空时让位。 */
+/* 右侧两列 caption tabular-nums：发行 / 时长。
+   窄视口下永不挤压标题区：列可整体收缩，右列为空时让位。 */
 .list-cols {
   display: flex;
   align-items: center;
@@ -936,14 +1025,8 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   vertical-align: -1px;
 }
 
-/* 窄视口让位：次要列逐级退场，标题区永远保有足够宽度。
-   时长列先退，评分列再退，最低只留发行年。 */
+/* 窄视口让位：次要列逐级退场，标题区永远保有足够宽度。时长列先退，最低只留发行年。 */
 @media (max-width: 1100px) {
-  .list-cols span:nth-child(3) {
-    display: none;
-  }
-}
-@media (max-width: 960px) {
   .list-cols span:nth-child(2) {
     display: none;
   }

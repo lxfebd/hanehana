@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import { App as AntApp, ConfigProvider } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Flower2, X, ChevronLeft } from 'lucide-vue-next'
+import { Flower2, X, ChevronLeft, Plus, ScanSearch } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { filteredGames, library, selectedGame, thumbUrl } from './stores/library'
 import { addTask, downloads } from './stores/downloads'
@@ -32,6 +32,11 @@ import NavSidebar from './components/NavSidebar.vue'
 import LibraryToolbar from './components/LibraryToolbar.vue'
 import ShortcutHelp from './components/ShortcutHelp.vue'
 import GameContextMenu from './components/GameContextMenu.vue'
+import PageHeader from './components/PageHeader.vue'
+import KpiStrip, { type KpiItem } from './components/KpiStrip.vue'
+import ActivityFeed from './components/ActivityFeed.vue'
+import CollectionView from './components/CollectionView.vue'
+import { fmtDurMs } from '../shared/format'
 
 // 启动编排（hello/刷新/订阅/窄窗口折叠/全屏控制）收在 useBoot 里，
 // 组件只拿结果：bootInfo 标题栏版本号、全屏/保存回调、gamesMounted 保活开关。
@@ -48,6 +53,27 @@ const gameCtxMenu = ref<InstanceType<typeof GameContextMenu> | null>(null)
 provide('gameCtxMenu', gameCtxMenu)
 
 const filteredCount = computed(() => filteredGames.value.length)
+
+// ---------------------------------------------------------------- 首屏 KPI
+// 口径与主进程 computeOverview 对齐（都是 Game 累计字段 + play-sessions 派生），
+// 不另起一套：基准 ReinaManager 首页 1666h / 统计页 538.6h 自相矛盾，
+// 我们不重演。数字格式全部过 shared/format 的 fmtDurMs（展示层唯一入口）。
+const WEEK_MS = 7 * 24 * 60 * 60 * 1000
+const DAY_MS = 24 * 60 * 60 * 1000
+const kpiItems = computed<KpiItem[]>(() => {
+  const games = library.games
+  const now = Date.now()
+  const weekMs = games.reduce((a, g) => (g.lastPlayed && g.lastPlayed >= now - WEEK_MS ? a + g.playMs : a), 0)
+  const todayMs = games.reduce((a, g) => (g.lastPlayed && g.lastPlayed >= now - DAY_MS ? a + g.playMs : a), 0)
+  const played = games.filter((g) => g.playMs > 0).length
+  return [
+    { key: 'kpi_total_games', value: String(games.length) },
+    { key: 'kpi_total_time', value: fmtDurMs(games.reduce((a, g) => a + g.playMs, 0)) },
+    { key: 'kpi_played', value: String(played) },
+    { key: 'kpi_week', value: fmtDurMs(weekMs) },
+    { key: 'kpi_today', value: fmtDurMs(todayMs) },
+  ]
+})
 
 /** 整窗动态底：自定义背景图 > 选中游戏封面（Steam 式）。无图时透明，露出系统 Mica。 */
 function fileUrl(p: string): string {
@@ -138,6 +164,25 @@ async function submitAddTask(input: {
           <!-- 中栏 -->
           <main class="content">
             <template v-if="page === 'library'">
+              <!-- 页头（面包屑 + 大标题 + 右上主操作）：页面要有名字，
+                   工具栏是工具不是导航——此前工具栏直接顶到标题栏下的问题在这里修 -->
+              <PageHeader :crumbs="['nav_home', 'nav_library']" :title="'nav_library'">
+                <template #actions>
+                  <button class="tool-btn labeled" type="button" @click="library.scanOpen = true">
+                    <ScanSearch :size="14" />
+                    <span>{{ t('lib_scan') }}</span>
+                  </button>
+                  <button class="tool-btn labeled" type="button" @click="ui.addGameOpen = true">
+                    <Plus :size="14" />
+                    <span>{{ t('lib_add_one') }}</span>
+                  </button>
+                </template>
+              </PageHeader>
+
+              <!-- 首屏 KPI 条：总款数/总时长/已玩/本周/今日。hero 右下那张
+                   4 行统计卡并入这一条后已简化删除，数据只此一处展示 -->
+              <KpiStrip :items="kpiItems" />
+
               <!-- 工具栏（G17 拆出 LibraryToolbar：搜索/分类/智能列表/导出/视图） -->
               <LibraryToolbar
                 :filtered-count="filteredCount"
@@ -166,6 +211,11 @@ async function submitAddTask(input: {
               </div>
             </template>
 
+            <template v-else-if="page === 'collection'">
+              <!-- 收藏夹浏览页（B6）：按开发商/系列分组的浏览，不是库内又一个筛选开关 -->
+              <CollectionView />
+            </template>
+
             <template v-else-if="page === 'downloads'">
               <DownloadView />
             </template>
@@ -180,11 +230,17 @@ async function submitAddTask(input: {
             <GameSites v-if="gamesMounted" v-show="page === 'games'" />
           </main>
 
-          <!-- 右侧详情面板：只在游戏库页显示。收起时留竖条，点击展开 -->
+          <!-- 右侧栏：库页常驻。选中游戏 → 详情面板；未选中 → 游玩动态活动流
+               （对标 home.png 右栏 Activity：未选中任何东西时右栏也有内容，
+                不是一朵花图标 + 一句话。此前整块空白是本轮最大的视觉损失） -->
           <DetailPanel
-            v-if="page === 'library' && !ui.detailCollapsed"
+            v-if="page === 'library' && !ui.detailCollapsed && selectedGame"
             class="detail"
             @collapse="ui.detailCollapsed = true"
+          />
+          <ActivityFeed
+            v-else-if="page === 'library' && !ui.detailCollapsed"
+            class="detail"
           />
           <button
             v-if="page === 'library' && ui.detailCollapsed"
@@ -335,8 +391,37 @@ async function submitAddTask(input: {
 }
 
 .detail {
-  width: 360px;
+  width: var(--hh-layout-detail-w);
   position: relative;
+}
+
+/* 页头右侧主操作：图标 + 文字（基准 §0-8）。带文字才叫「主操作」，
+   纯图标按钮是工具栏 toggle 的待遇，不是页面级动作。 */
+.tool-btn.labeled {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--hh-space-x2);
+  height: 32px;
+  padding: 0 var(--hh-space-x3);
+  border: 1px solid var(--hh-color-float-border);
+  border-radius: var(--hh-radius-sm);
+  background: var(--hh-color-card);
+  color: var(--hh-color-text-bright);
+  font-size: var(--hh-font-body-size);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
+}
+.tool-btn.labeled:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-glow);
+}
+.tool-btn.labeled:first-child {
+  background: var(--hh-color-accent-bg);
+  border-color: var(--hh-color-accent-focus-border);
+  color: var(--hh-color-accent-text);
 }
 
 .detail-collapsed {

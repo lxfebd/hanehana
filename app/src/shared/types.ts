@@ -86,6 +86,21 @@ export interface DayStat {
   games: number
 }
 
+/**
+ * 游玩会话查询（右栏活动流与详情页每游戏时长曲线共用）。
+ *
+ * 三个字段都可省；渲染层传进来的一律当不可信输入处理（主进程校验/夹取），
+ * 因为 window.hh 谁都能调，limit 传个 1e9 就会把整份会话表灌进渲染进程。
+ */
+export interface SessionQuery {
+  /** 只要这一款（省 = 全库） */
+  gameId?: string
+  /** 只要这之后的会话（epoch ms；省 = 不按时间筛） */
+  since?: number
+  /** 最多回多少条，按结束时间倒序取前 N（省 = 100，上限 500） */
+  limit?: number
+}
+
 export interface GameStat {
   gameId: string
   title: string
@@ -397,6 +412,31 @@ export interface Settings {
 
 export const THEME_MODES = ['system', 'dark', 'light'] as const
 export type ThemeMode = (typeof THEME_MODES)[number]
+
+// ---------------------------------------------------------------- 进程状态机
+
+/**
+ * 游戏进程状态（对标 KoiPage 的 GameProcessState）。
+ *
+ * 权威在主进程：spawn 成功即 running、error 即启动失败、exit 即结束。
+ * 渲染层只消费，不自己推断——否则「启动中」的准确性只能依赖 IPC 往返时序。
+ * launching 由本模块从状态派生，不是另一个独立集合。
+ */
+export const GAME_PROCESS_STATUSES = ['starting', 'running', 'exited'] as const
+export type GameProcessStatus = (typeof GAME_PROCESS_STATUSES)[number]
+
+export interface GameProcessState {
+  status: GameProcessStatus
+  /** 进程 pid（starting 阶段可能还没有） */
+  pid: number | null
+  /** 启动失败原因（启动失败时带，正常退出不带） */
+  error?: string
+}
+
+/** 派生：是否处于启动中。只有 starting 才算，其余状态一律 false。 */
+export function isLaunching(state: GameProcessState | undefined): boolean {
+  return state?.status === 'starting'
+}
 
 export const THEME_PRESETS = ['sakura', 'starnight', 'mint', 'cinema', 'aurora'] as const
 export type ThemePresetId = (typeof THEME_PRESETS)[number]

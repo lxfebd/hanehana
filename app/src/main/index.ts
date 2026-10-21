@@ -34,7 +34,7 @@ import { explainError } from '../shared/errors'
 import { fileName, fmtSize, fmtSpeed } from '../shared/format'
 import type { TaskProgressPush, TaskRow, TrackCheckResult } from '../shared/types'
 import { loadGames, getGames, ensureCoversDir, flushPersist } from './gameStore'
-import { detachAllRunning, setSessionSink, setCrashNotifier, setAutoBackup, setToolPaths } from './games'
+import { detachAllRunning, setSessionSink, setCrashNotifier, setAutoBackup, setToolPaths, setProcessStatePush } from './games'
 import { createSnapshot, rotateSnapshots } from './saves'
 import { engineStatus } from './engine'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
@@ -440,6 +440,11 @@ function wireIpc(): void {
   registerScrapeHandlers(ctx)
   registerTasksHandlers(ctx)
   registerStatsHandlers(ctx)
+
+  // 进程状态推送：权威在主进程，状态一变就发给渲染层（launching 由它派生）
+  setProcessStatePush((gameId, state) => {
+    win?.webContents.send(Ipc.GameProcessChanged, { gameId, state })
+  })
 }
 
 // ---------------------------------------------------------------- 生命周期

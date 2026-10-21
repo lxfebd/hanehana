@@ -79,3 +79,32 @@ export function fmtTime(ts: number | null | undefined): string {
   const pad = (x: number) => String(x).padStart(2, '0')
   return `${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
+
+/**
+ * 时长（毫秒）→「42h 30min / 23min / 0min」。展示层时长唯一格式化入口
+ * （KPI、活动流、图表轴、详情共用），口径与主进程 computeOverview 一致。
+ */
+export function fmtDurMs(ms: number | null | undefined): string {
+  if (!ms || !Number.isFinite(ms) || ms <= 0) return '0min'
+  const totalMin = Math.floor(ms / 60000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  if (h > 0) return m > 0 ? `${h}h ${m}min` : `${h}h`
+  return `${totalMin}min`
+}
+
+/** 本地时区 yyyy-mm-dd（会话归日/日序列分组用，与主进程 stats.ts 同一口径）。 */
+export function dayKey(ts: number): string {
+  const d = new Date(ts)
+  const pad = (x: number): string => String(x).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+
+/** 本地时区当日零点（epoch ms）。日序列补零的锚点。 */
+export function dayStart(ts: number): number {
+  const d = new Date(ts)
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+export const ONE_DAY_MS = 24 * 60 * 60 * 1000

@@ -403,7 +403,7 @@ await sleep(1000)
 
 // ============================================================ 阶段3：窄窗响应式（hero 720px 折叠分支）
 // LibraryHero @media (max-width: 720px)：hero 高 226（封面轨 122 + 封面 88 + 底距 16）、
-// 封面 62x88、详情按钮隐藏。用阶段1 的有封面库 + CDP 模拟 720px 视口验证折叠。
+// 封面 66x88（宽 66 走 --hh-layout-cover-ratio 3/4）、详情按钮隐藏。用阶段1 的有封面库 + CDP 模拟 720px 视口验证折叠。
 console.log('==== 阶段3：窄窗响应式折叠 ====')
 seedPhase1()
 const app3 = await launchApp()
@@ -437,7 +437,7 @@ const narrow = JSON.parse(await app3.ev(`JSON.stringify((() => {
   }
 })())`))
 pass('窄窗下 hero 仍渲染', narrow.hero && narrow.heroH === 226, `heroH=${narrow.heroH}（期望 226）`)
-pass('窄窗下封面缩至 62x88', narrow.coverW === 62 && narrow.coverH === 88, `cover=${narrow.coverW}x${narrow.coverH}（期望 62x88）`)
+pass('窄窗下封面缩至 66x88（竖版 token 比例）', narrow.coverW === 66 && narrow.coverH === 88, `cover=${narrow.coverW}x${narrow.coverH}（期望 66x88）`)
 pass('窄窗下详情按钮隐藏', narrow.detailHidden, `detailDisplay=${narrow.detailDisplay}`)
 // 阶段1 seed：ATRI 是"上次玩过"候选首位 → 眉标叙事文案"继续上次的故事"
 pass('窄窗下 hero 标签仍正确', narrow.tag === '继续上次的故事', `tag=${narrow.tag}`)

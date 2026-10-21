@@ -121,6 +121,10 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500))
     }
     await new Promise((r) => setTimeout(r, 1000))
+    // 首屏被页头 + KPI 条 + hero + 续读条占满，封面在视口下方；先滚进视口
+    // 再点（否则 CDP 点的是窗口外，遮盖层收不到 click）。
+    await ev(`(() => { const n = document.querySelector('.cover-nsfw'); n?.scrollIntoView({ block: 'center' }); return true })()`)
+    await new Promise((r) => setTimeout(r, 600))
     const st = JSON.parse(
       await ev(`JSON.stringify((() => {
         const nsfw = document.querySelectorAll('.cover-nsfw')

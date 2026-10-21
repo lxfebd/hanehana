@@ -1,109 +1,137 @@
 <script setup lang="ts">
 /**
- * 统计页（G5）：游玩时长日/周/月聚合 + 按游戏排行。
- * 图表全部自绘（SVG），不引入图表库依赖。
+ * 统计页（G5 + B5 对标 ReinaManager statistics.png）。
+ *
+ * 结构：页头（面包屑 + 标题 + 导出海报动作）→ 周期切换（周/月）→ 6 张 KPI
+ * → 总趋势折线（缺日补零）→ Top10 时长排行 → 时段分布（0–23 时）。
+ *
+ * 口径统一（基准「首页 1666h / 统计 538.6h」自相矛盾，我们不许）：
+ * 所有周期 KPI 由同一份会话数据（sessions store）+ 同一周期边界派生，
+ * 与主进程 computeOverview 的 weekMs/monthMs 同源同规则（按会话结束时间归段）。
+ * 累计时长/已玩/Top10 仍取 overview 全量口径（那里含老库 playMs），
+ * 这些是「历史总计」语义，与周期 KPI 分工不重叠；页面 subtitle 已说明是回顾。
  */
-import { computed, onMounted, ref } from 'vue'
-import { BarChart3, Clock, Gamepad2, ImageDown, Trophy } from 'lucide-vue-next'
-import type { OverviewStats } from '../../shared/types'
-import { tokens } from '../design/tokens'
+import { computed, onMounted, reactive, ref } from 'vue'
+import {
+  BarChart3,
+  CalendarCheck,
+  Clock,
+  Gamepad2,
+  ImageDown,
+  Layers,
+  Sparkles,
+  TrendingUp,
+} from 'lucide-vue-next'
+import type { DayStat, GameStat, OverviewStats } from '../../shared/types'
+import { ONE_DAY_MS, dayStart, fmtDurMs } from '../../shared/format'
 import { ui } from '../stores/ui'
 import { message } from 'ant-design-vue'
 import { t, tf } from '../i18n'
+import { library } from '../stores/library'
+import { dailyFromSessions, refreshActivity, sessionsState } from '../stores/sessions'
+import { tokens } from '../design/tokens'
+import PageHeader from './PageHeader.vue'
+import KpiStrip, { type KpiItem } from './KpiStrip.vue'
+import PlayChart from './PlayChart.vue'
+
+type Period = 'week' | 'month'
 
 const stats = ref<OverviewStats | null>(null)
 const error = ref('')
 const posterBusy = ref(false)
+/** 周期切换：默认月（基准 statistics.png 也是月度视角）。 */
+const period = ref<Period>('month')
 
 onMounted(async () => {
   try {
-    stats.value = await window.hh.statsOverview()
+    const [ov] = await Promise.all([window.hh.statsOverview(), refreshActivity()])
+    stats.value = ov
   } catch (e) {
     error.value = e instanceof Error ? e.message : String(e)
   }
 })
 
-const accent = computed(() => tokens.color.accent)
-const textDim = computed(() => tokens.color.textTertiary)
-const barMax = computed(() => Math.max(1, ...(stats.value?.days.map((d) => d.ms) ?? [1])))
-const maxGameMs = computed(() => Math.max(1, ...(stats.value?.topGames.map((g) => g.ms) ?? [1])))
+/** 周期长度（天）：周 = 近 7 天，月 = 近 30 天，含今天。 */
+const PERIOD_DAYS: Record<Period, number> = { week: 7, month: 30 }
+
+/** 周期起点（当日零点）。切换周期或刷新会话时自动重算。 */
+const periodStart = computed(() => {
+  const now = Date.now()
+  return dayStart(now) - (PERIOD_DAYS[period.value] - 1) * ONE_DAY_MS
+})
+
+/** 区间展示文案（{from} – {to}，mm-dd）。 */
+const rangeLabel = computed(() => {
+  const from = new Date(periodStart.value)
+  const to = new Date()
+  const f = `${String(from.getMonth() + 1).padStart(2, '0')}-${String(from.getDate()).padStart(2, '0')}`
+  const d = `${String(to.getMonth() + 1).padStart(2, '0')}-${String(to.getDate()).padStart(2, '0')}`
+  return tf('play_range', { from: f, to: d })
+})
+
+/** 周期内会话（结束时间 >= 周期起点）。 */
+const periodSessions = computed(() => sessionsState.list.filter((s) => s.end >= periodStart.value))
+
+/** 周期内总时长（ms）。与 overview.weekMs/monthMs 同源同规则。 */
+const periodMs = computed(() => periodSessions.value.reduce((a, s) => a + s.ms, 0))
+
+/** 周期内会话场次。 */
+const sessionCount = computed(() => periodSessions.value.length)
+
+/** 周期内玩过的游戏数（按 gameId 去重；同一天连开两场同一款算一款）。 */
+const playedInPeriod = computed(() => new Set(periodSessions.value.map((s) => s.gameId)).size)
+
+/** 周期内新增（addedAt 落在区间内）。库数据由 library store 持有。 */
+const addedInPeriod = computed(() => {
+  const from = periodStart.value
+  const to = Date.now()
+  return library.games.filter((g) => g.addedAt >= from && g.addedAt <= to).length
+})
+
+/** 周期内日序列（缺日补零、升序）——趋势线与活跃天数同源。 */
+const daily = computed<DayStat[]>(() => dailyFromSessions(sessionsState.list, { fromTs: periodStart.value }))
+
+/** 活跃天数（周期内有会话记录的天数）。 */
+const activeDays = computed(() => daily.value.filter((d) => d.ms > 0).length)
+
+/** 日均 = 周期内总时长 / 活跃天数（按活跃天算才可比：拿 30 天总时长除以
+ *  7 天活跃天会得到比周视图更大的「日均」，同一张卡自己跟自己打架）。 */
+const avgPerActiveDay = computed(() => (activeDays.value > 0 ? periodMs.value / activeDays.value : 0))
+
+const kpiItems = computed<KpiItem[]>(() => [
+  { key: 'kpi_total_time', value: fmtDurMs(periodMs.value), icon: Clock, sub: rangeLabel.value },
+  { key: 'kpi_played', value: String(playedInPeriod.value), icon: Gamepad2, sub: rangeLabel.value },
+  { key: 'kpi_sessions', value: String(sessionCount.value), icon: Layers, sub: rangeLabel.value },
+  { key: 'kpi_new_added', value: String(addedInPeriod.value), icon: Sparkles, sub: rangeLabel.value },
+  { key: 'kpi_active_days', value: String(activeDays.value), icon: CalendarCheck, sub: rangeLabel.value },
+  { key: 'kpi_avg_day', value: fmtDurMs(avgPerActiveDay.value), icon: TrendingUp, sub: rangeLabel.value },
+])
+
+/** Top10：扩到 10 条，缩略图取自库内同一 id 的 thumb（没有就中性色块兜底）。 */
+const topGames = computed<GameStat[]>(() => (stats.value?.topGames ?? []).slice(0, 10))
+const topMax = computed(() => Math.max(1, ...topGames.value.map((g) => g.ms)))
+
+/** 缩略图加载失败的组卡：换成中性色块（无封面的组不糊图）。 */
+const thumbFailed = reactive<Record<string, boolean>>({})
+function thumbOf(id: string): string {
+  const g = library.games.find((it) => it.id === id)
+  return g?.thumbPath ? `hh://thumb/${id}` : ''
+}
+
+/** 时段分布：0–23 时聚合（会话按结束时刻的本地小时归段）。 */
+const hourBuckets = computed(() => {
+  const bins = new Array(24).fill(0) as number[]
+  for (const s of periodSessions.value) {
+    if (!Number.isFinite(s.end) || s.ms <= 0) continue
+    bins[new Date(s.end).getHours()] += s.ms
+  }
+  return bins
+})
+const hourMax = computed(() => Math.max(1, ...hourBuckets.value))
 
 /** 空态引导 CTA：跳回游戏库（用户要去那儿启动游戏才会产生记录） */
 function goLibrary(): void {
   ui.page = 'library'
-}
-
-function fmtDur(ms: number): string {
-  if (ms <= 0) return tf('dp_minutes', { m: 0 })
-  const h = Math.floor(ms / 3600000)
-  const m = Math.floor((ms % 3600000) / 60000)
-  if (h <= 0) return tf('dp_minutes', { m })
-  if (m === 0) return tf('st_hour', { h })
-  return tf('dp_hours_min', { h, m })
-}
-
-function fmtShort(ms: number): string {
-  if (ms <= 0) return '0m'
-  const h = Math.floor(ms / 3600000)
-  const m = Math.round((ms % 3600000) / 60000)
-  if (h <= 0) return `${m}m`
-  return `${h}h${m > 0 ? m : ''}`
-}
-
-/** 柱状图：30 根竖条 + hover 提示。
- *  内插的 d.date / g.title 来自统计与刮削源（用户可控），先转义再拼 SVG，
- *  不能直接进 v-html——否则一条 `<img onerror>` 或 `<foreignObject>` 标题就能
- *  在统计页注入内容（CSP 兜底但别依赖它）。 */
-function esc(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
-}
-
-function barChart(): string {
-  const days = stats.value?.days ?? []
-  const W = 640
-  const H = 200
-  const pad = 4
-  const bw = (W - pad * 2) / Math.max(1, days.length)
-  const parts = days.map((d, i) => {
-    const h = Math.max(2, (d.ms / barMax.value) * (H - 30))
-    const x = pad + i * bw
-    const y = H - h - 8
-    return `<g>
-      <rect x="${x}" y="${y}" width="${bw - 2}" height="${h}" rx="2" fill="${accent.value}" opacity="0.85">
-        <title>${esc(d.date)} · ${fmtShort(d.ms)}</title>
-      </rect>
-    </g>`
-  })
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${t('st_aria_bars')}">
-    ${parts.join('')}
-  </svg>`
-}
-
-function topBars(): string {
-  const games = stats.value?.topGames ?? []
-  const W = 640
-  const H = games.length * 26 + 10
-  const bw = 340
-  const parts = games.map((g, i) => {
-    const w = Math.max(4, (g.ms / maxGameMs.value) * bw)
-    const y = i * 26
-    const label = g.title.length > 14 ? g.title.slice(0, 14) + '…' : g.title
-    return `<g>
-      <text x="0" y="${y + 15}" font-size="12" fill="${textDim.value}">${esc(label)}</text>
-      <rect x="150" y="${y + 4}" width="${w}" height="14" rx="3" fill="${accent.value}" opacity="0.8">
-        <title>${esc(g.title)} · ${fmtDur(g.ms)}</title>
-      </rect>
-      <text x="496" y="${y + 15}" font-size="11" fill="${textDim.value}">${fmtShort(g.ms)}</text>
-    </g>`
-  })
-  return `<svg viewBox="0 0 ${W} ${H}" width="100%" role="img" aria-label="${t('st_aria_rank')}">
-    ${parts.join('')}
-  </svg>`
 }
 
 /** hex → rgba() 字符串（Canvas 合成透明色用，SVG/页面 CSS 变量在离屏画布上不存在）。 */
@@ -170,10 +198,10 @@ function drawPosterPng(): string {
 
   // KPI 卡片：5 张横排
   const kpis: [string, string][] = [
-    [t('st_today'), fmtDur(s.todayMs)],
-    [t('st_week7'), fmtDur(s.weekMs)],
-    [t('st_month30'), fmtDur(s.monthMs)],
-    [t('st_total'), fmtDur(s.totalMs)],
+    [t('st_today'), fmtDurMs(s.todayMs)],
+    [t('st_week7'), fmtDurMs(s.weekMs)],
+    [t('st_month30'), fmtDurMs(s.monthMs)],
+    [t('st_total'), fmtDurMs(s.totalMs)],
     [t('st_played'), tf('st_played_n', { n: s.playedGames })],
   ]
   const kpiW = (innerW - 4 * 14) / 5
@@ -265,7 +293,7 @@ function drawPosterPng(): string {
     ctx.globalAlpha = 1
     ctx.fillStyle = dim
     ctx.font = `12px ${font}`
-    ctx.fillText(fmtShort(g.ms), PAD + 240 + rankW + 12, y + 16)
+    ctx.fillText(fmtDurMs(g.ms), PAD + 240 + rankW + 12, y + 16)
   })
 
   // 水印
@@ -300,14 +328,24 @@ async function exportPoster(): Promise<void> {
 <template>
   <div class="stats-page">
     <div v-if="error" class="error-banner glass">{{ error }}</div>
+
+    <!-- 页头：面包屑 + 标题 + 导出海报（带文字的主操作） -->
+    <PageHeader :crumbs="['nav_home', 'nav_stats']" title="nav_stats" :subtitle="t('st_page_sub')">
+      <template #actions>
+        <button class="poster-btn" :disabled="posterBusy" @click="exportPoster">
+          <ImageDown :size="14" /> {{ posterBusy ? t('st_poster_busy') : t('st_export_poster') }}
+        </button>
+      </template>
+    </PageHeader>
+
     <div v-if="!stats && !error" class="empty glass">
       <BarChart3 class="empty-icon" :size="36" :stroke-width="1.5" />
       <div class="empty-text">{{ t('st_loading') }}</div>
     </div>
+
     <template v-else-if="stats">
-      <!-- 空态引导：库里一款都没玩过时，5 个 KPI 全是 0、柱状图全平，
-           一屏数字没有任何信息量。换成「怎么开始记录」的引导，
-           把用户带到真正能产生数据的地方（启动游戏 / 扫描入库）。 -->
+      <!-- 空态引导：库里一款都没玩过时 KPI 全是 0、曲线全平，一屏数字没有
+           信息量。换成「怎么开始记录」的引导，把用户带到能产生数据的地方。 -->
       <div v-if="stats.totalMs <= 0 && stats.playedGames === 0" class="empty-guide glass">
         <BarChart3 class="guide-ic" :size="40" :stroke-width="1.5" />
         <div class="guide-title">{{ t('st_empty_title') }}</div>
@@ -328,60 +366,79 @@ async function exportPoster(): Promise<void> {
         </div>
         <button class="guide-cta" @click="goLibrary">{{ t('st_empty_cta') }}</button>
       </div>
+
       <template v-else>
-      <div class="stats-head">
-        <div class="stats-title">{{ t('st_title') }}</div>
-        <button class="poster-btn" :disabled="posterBusy" @click="exportPoster">
-          <ImageDown :size="14" /> {{ posterBusy ? t('st_poster_busy') : t('st_export_poster') }}
-        </button>
-      </div>
-      <div class="kpi-row">
-        <div class="kpi glass">
-          <Clock :size="16" class="kpi-ic" />
-          <div>
-            <div class="kpi-num">{{ fmtDur(stats.todayMs) }}</div>
-            <div class="kpi-label">{{ t('st_today') }}</div>
+        <!-- 周期切换：周 / 月。所有 KPI 与趋势线按同一周期重算 -->
+        <div class="period-bar">
+          <div class="period-seg">
+            <button
+              v-for="p in (['week', 'month'] as Period[])"
+              :key="p"
+              class="seg-chip"
+              :class="{ active: period === p }"
+              :aria-pressed="period === p"
+              @click="period = p"
+            >
+              {{ p === 'week' ? t('st_period_wk') : t('st_period_mo') }}
+            </button>
           </div>
+          <span class="period-range">{{ rangeLabel }}</span>
         </div>
-        <div class="kpi glass">
-          <Clock :size="16" class="kpi-ic" />
-          <div>
-            <div class="kpi-num">{{ fmtDur(stats.weekMs) }}</div>
-            <div class="kpi-label">{{ t('st_week7') }}</div>
-          </div>
-        </div>
-        <div class="kpi glass">
-          <Clock :size="16" class="kpi-ic" />
-          <div>
-            <div class="kpi-num">{{ fmtDur(stats.monthMs) }}</div>
-            <div class="kpi-label">{{ t('st_month30') }}</div>
-          </div>
-        </div>
-        <div class="kpi glass">
-          <Trophy :size="16" class="kpi-ic" />
-          <div>
-            <div class="kpi-num">{{ fmtDur(stats.totalMs) }}</div>
-            <div class="kpi-label">{{ t('st_total') }}</div>
-          </div>
-        </div>
-        <div class="kpi glass">
-          <Gamepad2 :size="16" class="kpi-ic" />
-          <div>
-            <div class="kpi-num">{{ tf('st_played_n', { n: stats.playedGames }) }}</div>
-            <div class="kpi-label">{{ t('st_played') }}</div>
-          </div>
-        </div>
-      </div>
 
-      <div class="panel glass">
-        <div class="panel-title">{{ t('st_daily') }}</div>
-        <div class="chart-wrap" v-html="barChart()"></div>
-      </div>
+        <!-- 6 张 KPI（对标基准）；区间口径在各卡副行注明 -->
+        <KpiStrip :items="kpiItems" />
 
-      <div class="panel glass" v-if="stats.topGames.length">
-        <div class="panel-title">{{ t('st_rank90') }}</div>
-        <div class="chart-wrap" v-html="topBars()"></div>
-      </div>
+        <!-- 总趋势：缺日补零（基准这里 X 轴跳日期，我们补零） -->
+        <section class="panel glass">
+          <div class="panel-head">
+            <h2 class="panel-title">{{ t('st_trend') }}</h2>
+            <span class="panel-sub">{{ rangeLabel }}</span>
+          </div>
+          <PlayChart :series="daily" :height="180" />
+        </section>
+
+        <!-- Top10 by play time（扩到 10 条，缩略图 + 横条） -->
+        <section v-if="topGames.length" class="panel glass">
+          <div class="panel-head">
+            <h2 class="panel-title">{{ t('st_rank90') }}</h2>
+            <span class="panel-sub">{{ t('st_played') }}</span>
+          </div>
+          <div class="top-list" role="img" :aria-label="t('st_aria_rank')">
+            <div v-for="(g, i) in topGames" :key="g.gameId" class="top-row">
+              <span class="top-rank num">{{ i + 1 }}</span>
+              <span class="top-thumb" :class="{ 'no-thumb': !thumbOf(g.gameId) || thumbFailed[g.gameId] }">
+                <img
+                  v-if="thumbOf(g.gameId) && !thumbFailed[g.gameId]"
+                  :src="thumbOf(g.gameId)"
+                  :alt="g.title"
+                  loading="lazy"
+                  @error="thumbFailed[g.gameId] = true"
+                />
+              </span>
+              <span class="top-name" :title="g.title">{{ g.title }}</span>
+              <span class="top-bar">
+                <span class="top-fill" :style="{ width: Math.max(2, (g.ms / topMax) * 100) + '%' }"></span>
+              </span>
+              <span class="top-val num">{{ fmtDurMs(g.ms) }}</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- 时段分布：0–23 时聚合（基准底部 Play period distribution） -->
+        <section class="panel glass">
+          <div class="panel-head">
+            <h2 class="panel-title">{{ t('st_hour_dist') }}</h2>
+            <span class="panel-sub">{{ t('st_hour_axis_hint') }}</span>
+          </div>
+          <div class="hour-chart" role="img" :aria-label="t('st_hour_dist')">
+            <div v-for="(ms, h) in hourBuckets" :key="h" class="hour-col" :title="`${h}:00 · ${fmtDurMs(ms)}`">
+              <span class="hour-fill" :style="{ height: Math.max(2, (ms / hourMax) * 100) + '%' }"></span>
+            </div>
+          </div>
+          <div class="hour-axis" aria-hidden="true">
+            <span v-for="h in [0, 4, 8, 12, 16, 20]" :key="h" class="hour-tick num">{{ h }}</span>
+          </div>
+        </section>
       </template>
     </template>
   </div>
@@ -396,7 +453,7 @@ async function exportPoster(): Promise<void> {
   gap: 12px;
   padding-bottom: 16px;
 }
-/* 空态引导卡：替代全 0 的 KPI + 全平的柱状图 */
+/* 空态引导卡：替代全 0 的 KPI + 全平的曲线 */
 .empty-guide {
   margin: 48px auto;
   max-width: 460px;
@@ -462,17 +519,6 @@ async function exportPoster(): Promise<void> {
 .guide-cta:hover {
   background: var(--hh-color-accent-hover);
 }
-.stats-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-}
-.stats-title {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--hh-color-text-strong);
-}
 .poster-btn {
   display: inline-flex;
   align-items: center;
@@ -493,48 +539,184 @@ async function exportPoster(): Promise<void> {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.kpi-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
-  gap: 10px;
-}
-.kpi {
+
+/* ============ 周期切换 ============ */
+.period-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: var(--hh-radius-lg);
+  gap: var(--hh-space-x3);
+  flex-wrap: wrap;
 }
-.kpi-ic {
-  color: var(--hh-color-accent);
-  flex: none;
+.period-seg {
+  display: flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-surface-bright);
+  border: 1px solid var(--hh-color-card-border);
+  flex-shrink: 0;
 }
-.kpi-num {
-  font-size: 17px;
-  font-weight: 700;
-  font-variant-numeric: tabular-nums;
+.seg-chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--hh-radius-pill);
+  background: transparent;
+  color: var(--hh-color-text-mid);
+  font-size: var(--hh-font-caption-size);
+  cursor: pointer;
+  transition:
+    background var(--hh-motion-med) ease,
+    color var(--hh-motion-med) ease;
+}
+.seg-chip:hover {
+  background: var(--hh-color-surface-mid);
   color: var(--hh-color-text-glow);
 }
-.kpi-label {
-  font-size: 11.5px;
-  color: var(--hh-color-text-tertiary);
+.seg-chip.active {
+  background: var(--hh-color-select-bg);
+  color: var(--hh-color-select-text);
+  font-weight: 600;
 }
+.period-range {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ 面板 ============ */
 .panel {
   border-radius: var(--hh-radius-panel);
   padding: 14px 16px;
 }
+.panel-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--hh-space-x3);
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
 .panel-title {
+  margin: 0;
   font-size: var(--hh-font-body-size);
   font-weight: 600;
   color: var(--hh-color-text-strong);
-  margin-bottom: 10px;
 }
-.chart-wrap {
+.panel-sub {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+
+/* ============ Top10 排行 ============ */
+.top-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.top-row {
+  display: flex;
+  align-items: center;
+  gap: var(--hh-space-x2);
+  min-width: 0;
+}
+.top-rank {
+  flex: none;
+  width: 18px;
+  text-align: right;
+  font-size: var(--hh-font-caption-size);
+  font-weight: 700;
+  color: var(--hh-color-accent-text);
+}
+/* 缩略图：竖版小图；无封面时中性色块（不糊图、不占位 emoji） */
+.top-thumb {
+  flex: none;
+  width: 26px;
+  height: 34px;
+  border-radius: var(--hh-radius-sm);
+  overflow: hidden;
+  background: var(--hh-color-surface-strong);
+  border: 1px solid var(--hh-color-card-border);
+}
+.top-thumb.no-thumb {
+  background: var(--hh-color-surface-strong);
+}
+.top-thumb img {
   width: 100%;
-}
-.chart-wrap :deep(svg) {
+  height: 100%;
+  object-fit: cover;
   display: block;
 }
+.top-name {
+  flex: none;
+  width: 30%;
+  min-width: 0;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.top-bar {
+  flex: 1;
+  min-width: 40px;
+  height: 10px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-surface-mid);
+  overflow: hidden;
+}
+.top-fill {
+  display: block;
+  height: 100%;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-accent);
+}
+.top-val {
+  flex: none;
+  width: 68px;
+  text-align: right;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+
+/* ============ 时段分布（0–23 时） ============ */
+.hour-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 120px;
+  padding-top: 4px;
+}
+.hour-col {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+.hour-fill {
+  display: block;
+  width: 100%;
+  min-height: 2px;
+  border-radius: var(--hh-radius-xs);
+  background: var(--hh-color-accent);
+  opacity: 0.85;
+  transition: height var(--hh-motion-med) ease;
+}
+.hour-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+.hour-tick {
+  flex: none;
+}
+
 .empty {
   margin: 60px auto;
   max-width: 360px;

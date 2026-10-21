@@ -111,7 +111,8 @@ function pick(g: Game): void {
 }
 .recent-thumb {
   width: 32px;
-  height: 46px;
+  /* 竖版比例统一走 token（32 → 42.7），不再硬写死宽高 */
+  aspect-ratio: var(--hh-layout-cover-ratio);
   border-radius: var(--hh-radius-xs);
   overflow: hidden;
   flex-shrink: 0;

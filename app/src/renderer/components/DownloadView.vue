@@ -9,7 +9,7 @@ import { computed } from 'vue'
 import { message, Modal, Popconfirm, Select } from 'ant-design-vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
-import { PauseCircle, PlayCircle, Plus, RotateCw, Search, Trash2, X } from 'lucide-vue-next'
+import { ArrowDownToLine, CircleCheck, Loader, PauseCircle, PlayCircle, Plus, RotateCw, Search, Trash2, TriangleAlert, X } from 'lucide-vue-next'
 import type { TaskRow } from '../../shared/types'
 import { matchesFilter, matchesQuery, rowName, rowState, sortRows, SORT_OPTIONS } from '../status'
 import {
@@ -25,6 +25,8 @@ import { library } from '../stores/library'
 import { dirName, fmtSpeed } from '../../shared/format'
 import { t, tf, type I18nKey } from '../i18n'
 import TaskRowView from './TaskRow.vue'
+import PageHeader from './PageHeader.vue'
+import KpiStrip, { type KpiItem } from './KpiStrip.vue'
 
 const counts = computed(() => {
   const c = { all: downloads.rows.length, downloading: 0, paused: 0, done: 0, error: 0 }
@@ -37,6 +39,18 @@ const counts = computed(() => {
   }
   return c
 })
+
+/**
+ * 下载页 KPI 条（对标基准 B6）：进行中 / 已完成 / 失败 / 总速度。
+ * 「进行中」= 正在下载（downloading + preparing）；暂停不算是进行中，
+ * 它在筛选 chip 里单独一档，混进来会让用户在 0 下载时看到「进行中 3」。
+ */
+const kpiItems = computed<KpiItem[]>(() => [
+  { key: 'dl_kpi_active', value: String(counts.value.downloading), icon: Loader },
+  { key: 'dl_kpi_done', value: String(counts.value.done), icon: CircleCheck },
+  { key: 'dl_kpi_failed', value: String(counts.value.error), icon: TriangleAlert },
+  { key: 'dl_kpi_speed', value: fmtSpeed(downloads.totalSpeed), icon: ArrowDownToLine },
+])
 
 const visibleRows = computed(() =>
   sortRows(
@@ -136,6 +150,18 @@ function onAll(action: string): void {
 <template>
   <div class="dl-layout">
     <main class="dl-main">
+      <!-- 页头：面包屑 + 标题 + 新建下载（带文字的主操作，对标 B6） -->
+      <PageHeader :crumbs="['nav_home', 'nav_downloads']" title="nav_downloads" :subtitle="t('dl_page_sub')">
+        <template #actions>
+          <button class="dl-btn primary has-text" @click="downloads.addDialogOpen = true">
+            <Plus :size="16" /> <span>{{ t('dl_new') }}</span>
+          </button>
+        </template>
+      </PageHeader>
+
+      <!-- KPI 条：进行中 / 已完成 / 失败 / 总速度 -->
+      <KpiStrip :items="kpiItems" />
+
       <!-- 单行工具栏：segmented 过滤 + 搜索 + 排序 + 总速度 + 按钮组 -->
       <div class="dl-toolbar">
         <div class="seg-filter">
@@ -461,6 +487,14 @@ function onAll(action: string): void {
 .dl-btn.primary:hover {
   background: var(--hh-color-accent-hover);
   color: var(--hh-color-on-accent);
+}
+/* 带文字的主操作（页头新建下载）：宽度跟内容走 */
+.dl-btn.has-text {
+  width: auto;
+  gap: 6px;
+  padding: 0 12px;
+  font-size: var(--hh-font-caption-size);
+  font-weight: 600;
 }
 
 /* ============ 列表 ============ */

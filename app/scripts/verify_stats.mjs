@@ -1,4 +1,5 @@
-// 统计页渲染质量验证：KPI 卡/近 30 天柱状图/Top 排行/海报导出入口
+// 统计页渲染质量验证（B5）：页头 + 6 张 KPI + 周/月周期切换 + 总趋势折线
+// （缺日补零）+ Top10 排行 + 时段分布 + 海报导出入口
 // 用法：node scripts/verify_stats.mjs
 import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -22,16 +23,21 @@ spawnSync(process.execPath, [join(APP_ROOT, 'scripts', 'seed_layout.mjs'), DATA_
   stdio: ['ignore', 'inherit', 'inherit'],
 })
 // 补 play sessions（统计页的柱状图/排行按会话聚合；seed 只有 playMs 无 sessions）
+// 跨 60 天铺：让周/月切换后的 KPI 与趋势线真的能看出差别（否则只跑最近 30 天
+// 的话「月」与「周」在断言里只能比出文案，比不出数据）。
 {
   const fs = await import('node:fs')
   const now = Date.now()
   const day = 86400000
   const games = JSON.parse(fs.readFileSync(join(DATA_DIR, 'games.json'), 'utf8'))
   const sessions = []
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 60; i++) {
     const g = games[i % games.length]
     if (!g) continue
+    // 前半 30 天节奏更密、后半 30 天更疏：两种周期下的活跃天数/场次不同
+    const dense = i < 30
     const ms = 30 * 60000 + (i % 5) * 15 * 60000
+    if (!dense && i % 3 !== 0) continue
     sessions.push({
       gameId: g.id,
       title: g.title,
@@ -42,7 +48,6 @@ spawnSync(process.execPath, [join(APP_ROOT, 'scripts', 'seed_layout.mjs'), DATA_
   }
   fs.writeFileSync(join(DATA_DIR, 'play-sessions.json'), JSON.stringify(sessions), 'utf8')
 }
-// 补 play sessions（统计页按会话聚合；seed 有 playMs 无 sessions，兼容路径仍应有总时长）
 const env = { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR }
 delete env.ELECTRON_RUN_AS_NODE
 const proc = spawn(join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'), ['.'], {
@@ -136,28 +141,118 @@ async function main() {
     }
     await new Promise((r) => setTimeout(r, 800))
     // 切到统计页（侧栏「更多 → 统计」）
-    await ev(`(() => { const m = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('更多')); if (m) { m.click(); return 'ok' } return 'no-more' })()`)
+    await ev(
+      `(() => { const m = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('更多')); if (m) { m.click(); return 'ok' } return 'no-more' })()`,
+    )
     await new Promise((r) => setTimeout(r, 500))
-    await ev(`(() => { const t = [...document.querySelectorAll('.more-menu .nav-item')].find(x => (x.textContent||'').includes('统计')); if (t) { t.click(); return 'ok' } return 'no-stats' })()`)
-    await new Promise((r) => setTimeout(r, 1200))
-    const st = JSON.parse(
+    await ev(
+      `(() => { const t = [...document.querySelectorAll('.more-menu .nav-item')].find(x => (x.textContent||'').includes('统计')); if (t) { t.click(); return 'ok' } return 'no-stats' })()`,
+    )
+    await new Promise((r) => setTimeout(r, 1500))
+
+    // ---- 页头（B5-1）----
+    const head = JSON.parse(
       await ev(`JSON.stringify((() => {
-        const wraps = [...document.querySelectorAll('.chart-wrap')]
-        const bars = document.querySelectorAll('.chart-wrap rect').length
-        const kpis = [...document.querySelectorAll('.st-kpi, [class*="kpi"]')].map(k => k.textContent.trim())
-        const body = document.body.innerText
-        const hasDuration = /h|分钟|小时/.test(body)
-        const hasPosterBtn = document.body.innerText.includes('海报')
-        const wrapCount = wraps.length
-        return { bars, kpis, wrapCount, hasDuration, hasPosterBtn }
+        const ph = document.querySelector('.stats-page .page-header')
+        const crumbs = [...document.querySelectorAll('.stats-page .ph-crumb span, .stats-page .ph-crumb button')].map(x => x.textContent.trim()).filter(Boolean)
+        return {
+          hasPh: !!ph,
+          title: (document.querySelector('.stats-page .ph-title')||{}).textContent?.trim() || '',
+          crumbs,
+          sub: (document.querySelector('.stats-page .ph-sub')||{}).textContent?.trim() || '',
+          hasPosterBtn: !!document.querySelector('.stats-page .poster-btn')
+        }
       })())`),
     )
-    ck('统计页有内容（时长/排行文本）', st.hasDuration || st.kpis.length > 0, 'duration=' + st.hasDuration)
-    ck('柱状图 SVG rect 渲染（≥25 根）', st.bars >= 25, 'bars=' + st.bars)
-    ck('KPI 卡渲染', st.kpis.length >= 3, 'kpis=' + JSON.stringify(st.kpis))
-    ck('图表区渲染（柱状图+排行两个 SVG）', st.wrapCount >= 2, 'wraps=' + st.wrapCount)
-    ck('海报导出入口存在', st.hasPosterBtn === true, 'poster=' + st.hasPosterBtn)
-    console.log('  统计页:', JSON.stringify({ bars: st.bars, wraps: st.wrapCount, kpis: st.kpis.length, poster: st.hasPosterBtn }))
+    ck('页头 PageHeader 渲染', head.hasPh === true)
+    ck('面包屑 首页 / 统计', head.crumbs.length === 2 && head.crumbs[0].includes('首页') && head.crumbs[1].includes('统计'), JSON.stringify(head.crumbs))
+    ck('页头标题为统计', head.title.includes('统计'), head.title)
+    ck('页头副标题渲染', head.sub.length > 0, head.sub)
+    ck('海报导出入口在页头 actions', head.hasPosterBtn === true)
+
+    // ---- KPI：6 张（B5-2）----
+    const kpi = JSON.parse(
+      await ev(`JSON.stringify((() => {
+        const cards = [...document.querySelectorAll('.stats-page .kpi-strip .kpi-card')]
+        return {
+          n: cards.length,
+          labels: cards.map(c => (c.querySelector('.kpi-label')||{}).textContent?.trim() || ''),
+          values: cards.map(c => (c.querySelector('.kpi-value')||{}).textContent?.trim() || ''),
+          subs: cards.filter(c => !!c.querySelector('.kpi-sub')).length
+        }
+      })())`),
+    )
+    ck('KPI 卡扩到 6 张', kpi.n === 6, 'n=' + kpi.n)
+    ck('KPI 标签齐全（总时长/已玩/会话场次/新增/活跃天数/日均）', ['总时长','已玩','会话场次','新增','活跃天数','日均'].every(l => kpi.labels.some(x => x.includes(l))), JSON.stringify(kpi.labels))
+    ck('KPI 每卡有周期口径副行', kpi.subs === 6, 'subs=' + kpi.subs)
+    ck('KPI 数值非空（tabular 数字）', kpi.values.every(v => v.length > 0), JSON.stringify(kpi.values))
+
+    // ---- 周期切换：周 / 月（B5-2）----
+    const segs = JSON.parse(
+      await ev(`JSON.stringify((() => [...document.querySelectorAll('.stats-page .period-bar .seg-chip')].map(b => ({ t: b.textContent.trim(), on: b.classList.contains('active') })))())`),
+    )
+    ck('周期切换按钮 周/月', segs.length === 2 && segs[0].t === '周' && segs[1].t === '月', JSON.stringify(segs))
+    ck('默认选中月', segs[1] && segs[1].on === true, JSON.stringify(segs))
+
+    // 读月份口径的总时长，切到周后重读：必须变（否则周期切换是假按钮）
+    const readKpi = () =>
+      ev(`(() => {
+        const cards = [...document.querySelectorAll('.stats-page .kpi-strip .kpi-card')]
+        const txt = (i) => (cards[i] ? (cards[i].querySelector('.kpi-value')||{}).textContent?.trim() || '' : '')
+        const chart = document.querySelector('.stats-page .play-chart svg')
+        const pts = chart ? chart.querySelectorAll('circle').length : 0
+        const cells = chart ? chart.querySelectorAll('.pc-tick').length : 0
+        return JSON.stringify({ total: txt(0), sessions: txt(2), active: txt(4), pts, cells, range: (document.querySelector('.stats-page .period-range')||{}).textContent?.trim() || '' })
+      })()`)
+    const monthState = JSON.parse(await readKpi())
+    await ev(
+      `(() => { const w = [...document.querySelectorAll('.stats-page .period-bar .seg-chip')].find(b => b.textContent.trim() === '周'); if (w) { w.click(); return 'ok' } return 'no-week' })()`,
+    )
+    await new Promise((r) => setTimeout(r, 900))
+    const weekState = JSON.parse(await readKpi())
+    ck('周/月切换后总时长按周期重算（数值不同）', monthState.total !== weekState.total, 'month=' + monthState.total + ' week=' + weekState.total)
+    ck('周/月切换后会话场次按周期重算', monthState.sessions !== weekState.sessions, 'month=' + monthState.sessions + ' week=' + weekState.sessions)
+    ck('周/月切换后活跃天数按周期重算', monthState.active !== weekState.active, 'month=' + monthState.active + ' week=' + weekState.active)
+    ck('切换周期时区间文案同步', monthState.range !== weekState.range && weekState.range.length > 0, 'month=' + monthState.range + ' week=' + weekState.range)
+    ck('周日期的趋势线点数少于月日期（7 < 30，补零后的日历轴）', weekState.pts > 0 && weekState.pts < monthState.pts, 'week=' + weekState.pts + ' month=' + monthState.pts)
+    ck('趋势图 X 轴有刻度（非空轴）', weekState.cells > 0 && monthState.cells > 0, 'week=' + weekState.cells + ' month=' + monthState.cells)
+
+    // ---- 总趋势 / Top10 / 时段分布（B5-3/4/5）----
+    const charts = JSON.parse(
+      await ev(`JSON.stringify((() => {
+        const trend = document.querySelector('.stats-page .play-chart svg')
+        const topRows = document.querySelectorAll('.stats-page .top-row').length
+        const topThumbs = document.querySelectorAll('.stats-page .top-thumb img').length
+        const hourCols = document.querySelectorAll('.stats-page .hour-chart .hour-col').length
+        const hourFilled = [...document.querySelectorAll('.stats-page .hour-col')].filter(c => parseFloat((c.title||'').split('·')[1]||'0') > 0).length
+        const panels = [...document.querySelectorAll('.stats-page .panel-title')].map(x => x.textContent.trim())
+        const body = document.body.innerText
+        return {
+          hasTrend: !!trend,
+          trendLine: trend ? !!trend.querySelector('path') : false,
+          trendArea: trend ? !!trend.querySelector('path[opacity]') : false,
+          topRows, topThumbs, hourCols, hourFilled, panels,
+          hasDuration: /h|min/.test(body)
+        }
+      })())`),
+    )
+    ck('总趋势折线渲染（PlayChart svg + path）', charts.hasTrend === true && charts.trendLine === true)
+    ck('总趋势有面积层', charts.trendArea === true)
+    ck('Top10 排行渲染 10 行', charts.topRows === 10, 'rows=' + charts.topRows)
+    ck('Top10 保留头像缩略图', charts.topThumbs > 0, 'thumbs=' + charts.topThumbs)
+    ck('时段分布按 0–23 时渲染 24 根', charts.hourCols === 24, 'cols=' + charts.hourCols)
+    ck('时段分布有非零时段（聚合出数据）', charts.hourFilled > 0, 'filled=' + charts.hourFilled)
+    ck(
+      '面板标题：总游玩趋势 / 游戏时长排行 / 时段分布',
+      charts.panels.some(p => p.includes('总游玩趋势')) && charts.panels.some(p => p.includes('游戏时长排行')) && charts.panels.some(p => p.includes('时段分布')),
+      JSON.stringify(charts.panels),
+    )
+    ck('统计页有内容（时长文本）', charts.hasDuration === true)
+
+    console.log(
+      '  统计页:',
+      JSON.stringify({ kpi: kpi.n, month: monthState, week: weekState, top: charts.topRows, hours: charts.hourCols }),
+    )
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()

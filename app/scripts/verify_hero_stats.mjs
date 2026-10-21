@@ -1,4 +1,5 @@
-// 验证 hero 统计卡渲染：seed 12 款 + 任务 → hero 右侧 .hero-stats 存在且显示统计
+// 验证 hero 续读进度条渲染：seed 12 款 + 任务 → .hero-stats（续读玻璃条）存在且有进度
+// （B3：总时长/已玩/本月统计卡并入首屏 KpiStrip，hero 只留续读一条）
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
@@ -36,11 +37,10 @@ async function main() {
     for (let i = 0; i < 20; i++) { const h = await ev('!!document.querySelector(".hero")'); if (h) break; await new Promise((r) => setTimeout(r, 500)) }
     await new Promise((r) => setTimeout(r, 1500))
     const st = JSON.parse(await ev('JSON.stringify((() => { const s = document.querySelector(".hero-stats"); const rows = [...document.querySelectorAll(".hs-row, .hs-prog")].map(r => r.textContent.trim()); const bar = document.querySelector(".hs-fill"); const pct = document.querySelector(".hs-pct"); return { hasStats: !!s, rows, barW: bar ? bar.style.width : "", pct: pct ? pct.textContent : "" } })())'))
-    ck('统计卡渲染', st.hasStats, 'hasStats=' + st.hasStats)
-    ck('统计卡 4 行（总时长/已玩/本月/续读）', st.rows.length >= 4, JSON.stringify(st.rows))
-    ck('总时长行有值', st.rows.some((r) => /h|m|:/.test(r)), JSON.stringify(st.rows))
+    ck('续读玻璃条渲染（.hero-stats）', st.hasStats, 'hasStats=' + st.hasStats)
+    ck('hero 只剩续读一条（.hs-prog，无 .hs-row 统计行）', st.rows.length === 1 && !/h\d+m/.test(st.rows[0]), JSON.stringify(st.rows))
     ck('续读进度条有宽度', !!st.barW && st.barW !== '0%', 'barW=' + st.barW)
-    console.log('  统计卡内容:', JSON.stringify(st.rows))
+    console.log('  续读条内容:', JSON.stringify(st.rows))
     console.log('  续读:', st.pct, 'bar:', st.barW)
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally { ws.close(); proc.kill() }

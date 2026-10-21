@@ -55,20 +55,21 @@ onMounted(() => document.addEventListener('click', closeMore))
 onUnmounted(() => document.removeEventListener('click', closeMore))
 
 /** 切页 + 顺手收起菜单（单方法调用） */
-function goPage(p: 'library' | 'downloads' | 'games' | 'stats'): void {
+function goPage(p: 'library' | 'downloads' | 'games' | 'stats' | 'collection'): void {
   ui.page = p
   moreMenuOpen.value = false
 }
 
-/** 收藏夹入口：切到库页 + 开 favOnly，并清掉可能冲突的筛选
- *  （智能列表/分类会与收藏叠加，用户点「收藏」时想看的就是纯收藏，
- *   叠加一个「近 30 天入库」会让计数和列表对不上，显得按钮失灵）。 */
+/**
+ * 收藏夹入口：切到收藏夹**浏览页**（按开发商/系列分组的卡片墙），
+ * 不再是「库页 + favOnly 筛选」。
+ *
+ * 为什么换：筛选只是把库过滤一下，用户看不到「我有多少收藏、按什么
+ * 归类」——基准 ReinaManager 的 Collection 是一个真正的浏览页（组卡 +
+ * 计数），那才是收藏夹该有的形态。库里想纯看收藏仍然有心形 toggle。
+ */
 function goFavorites(): void {
-  ui.page = 'library'
-  library.favOnly = true
-  library.smartList = ''
-  library.categoryFilter = ''
-  moreMenuOpen.value = false
+  goPage('collection')
 }
 
 /** 「更多」菜单动作：先执行再收起菜单 */
@@ -90,13 +91,12 @@ function moreAction(fn: () => void): void {
       <span>{{ t('nav_library') }}</span>
       <span class="count">{{ library.games.length }}</span>
     </button>
-    <!-- 收藏夹快速入口：favorite 数据早就有，但此前只能靠工具栏的心形按钮切，
-         心形在工具栏最右、和「只看收藏」的状态关联也不直观。侧栏给一个常驻入口，
-         计数 = 收藏数，点一下即筛。 -->
+    <!-- 收藏夹入口：按开发商/系列分组的浏览页（CollectionView），
+         计数 = 收藏数。库内纯收藏筛选仍在工具栏心形 toggle。 -->
     <button
       class="nav-item"
-      :class="{ active: ui.page === 'library' && library.favOnly }"
-      :aria-current="ui.page === 'library' && library.favOnly ? 'page' : undefined"
+      :class="{ active: ui.page === 'collection' }"
+      :aria-current="ui.page === 'collection' ? 'page' : undefined"
       @click="goFavorites"
     >
       <Heart :size="16" class="nav-ic" />

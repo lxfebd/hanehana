@@ -28,6 +28,10 @@ export const Ipc = {
   // 启动
   GameLaunch: 'hanehana:games:launch',
   GameRunning: 'hanehana:games:running',
+  /** 进程状态快照（启动对齐 + focus/可见性刷新）：Record<gameId, GameProcessState> */
+  GameProcesses: 'hanehana:games:processes',
+  /** 进程状态推送（主进程 → 渲染）：{ gameId, state }，starting/running/exited */
+  GameProcessChanged: 'hanehana:games:process-changed',
   // 打开目录
   OpenDir: 'hanehana:games:openDir',
   /** 打开下载产物本身（exe 直接跑/压缩包交系统默认程序）；不是所在目录 */
@@ -45,6 +49,8 @@ export const Ipc = {
   TrackCheck: 'hanehana:track:check',
   // 统计报表
   StatsOverview: 'hanehana:stats:overview',
+  /** 游玩会话明细（右栏活动流 + 详情页每游戏时长曲线）：入参 SessionQuery */
+  StatsSessions: 'hanehana:stats:sessions',
   /** 统计海报导出（PNG）：渲染层把统计页渲染成图片，主进程弹保存框写盘 */
   StatsPosterExport: 'hanehana:stats:poster-export',
   // 存档备份（G1）

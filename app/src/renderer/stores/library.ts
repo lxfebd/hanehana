@@ -5,7 +5,9 @@
  * 所有对主进程的游戏库调用都经过这里，组件不直接碰 window.hh。
  */
 import { reactive, computed, ref, shallowRef, watch } from 'vue'
-import type { Game, ScrapeCandidate } from '../../shared/types'
+import type { Game, GameProcessState, ScrapeCandidate } from '../../shared/types'
+// ESM 之谜：带 .js 的 specifier，TS 映射回 .ts（与 tests 同一约定）
+import { isLaunching, isRunning } from '../../shared/processState.js'
 
 export const library = reactive({
   games: [] as Game[],
@@ -41,7 +43,38 @@ export const library = reactive({
   backupOpen: false,
   /** 搜索正则模式（G19）：true 时搜索词按正则编译匹配 */
   searchRegex: false,
-  runningIds: new Set<string>(),
+  /**
+   * 进程状态表（主进程权威 + 推送）：starting / running / exited。
+   * launching 与 running 都由它派生，渲染层不再自己维护时序集合。
+   */
+  processes: {} as Record<string, GameProcessState>,
+})
+
+/**
+ * 启动中 / 运行中：都由 processes 派生（对标 KoiPage 的 launching 派生式）。
+ * 组件只读这两个 computed，不再接触 launchingIds 这类时序集合。
+ */
+export const launchingGames = computed(() =>
+  new Set(Object.keys(library.processes).filter((id) => isLaunching(library.processes[id]))),
+)
+export const runningGames = computed(() =>
+  new Set(Object.keys(library.processes).filter((id) => isRunning(library.processes[id]))),
+)
+
+/**
+ * 评分名次表：id → 1 基名次（评分降序，同分按 id 升序稳定）。
+ *
+ * 只给**有评分**的游戏排名；无评分的游戏不入表（卡片不渲染 #N 徽章，
+ * 不编一个「#0」出来）。基准 ReinaManager 的做法（封面叠 `评分 #N`）
+ * 用同一口径：分数可比、名次可解释。
+ */
+export const ratingRanks = computed<Map<string, number>>(() => {
+  const rated = library.games
+    .filter((g) => typeof g.rating === 'number' && g.rating > 0)
+    .sort((a, b) => (b.rating ?? 0) - (a.rating ?? 0) || a.id.localeCompare(b.id))
+  const map = new Map<string, number>()
+  rated.forEach((g, i) => map.set(g.id, i + 1))
+  return map
 })
 
 // ---------------------------------------------------------------- 智能列表预设
@@ -400,47 +433,62 @@ export async function applyPatch(id: string, patch: Partial<Game>): Promise<bool
 }
 
 export async function launchGame(id: string): Promise<void> {
+  // 进程状态由主进程权威推送（starting → running/exited），这里只负责把
+  // 「这一轮启动」的成败落到 error 上；按钮状态全部由 processes 派生。
   try {
     const r = await window.hh.launchGame(id)
-    if (r && r.ok) {
-      library.runningIds.add(id)
-    } else if (r && r.error) {
-      library.error = r.error
-    }
+    if (r && !r.ok && r.error) library.error = r.error
   } catch (e) {
     library.error = e instanceof Error ? e.message : String(e ?? '启动失败')
   }
 }
 
 /**
- * 运行中状态同步：渲染层 runningIds 只有 add 没有 remove（游戏退出后 UI 永远「运行中」）。
- * 主进程 handleRunning 会清理僵尸条目，这里定时拉取对齐——启动/退出都靠它收敛。
- * 挂载点在 App.vue onMounted；组件不该自己起轮询（重复起多个）。
+ * 进程状态同步（对标 KoiPage 的 useGameProcessSync）：
+ *  - 启动时拉一次快照对齐（主进程权威）；
+ *  - 之后靠主进程推送增量（starting/running/exited），不轮询；
+ *  - 窗口重新聚焦 / 从隐藏恢复时补拉一次（游戏是 detached，可能在管理器外退出）。
+ * 挂载点在 App.vue onMounted；组件不该自己起（重复起多个 listener）。
  */
-let runningTimer: ReturnType<typeof setInterval> | null = null
-export function startRunningSync(intervalMs = 5000): void {
-  if (runningTimer) return
-  runningTimer = setInterval(async () => {
-    try {
-      const list = await window.hh.runningGames()
-      const next = new Set(list)
-      // 只清不存在的；保留集合引用避免 v-for :key 抖动
-      for (const id of library.runningIds) {
-        if (!next.has(id)) library.runningIds.delete(id)
-      }
-      for (const id of list) {
-        if (!library.runningIds.has(id)) library.runningIds.add(id)
-      }
-    } catch {
-      // 主进程暂时不可达时静默，下轮再试
-    }
-  }, intervalMs)
-}
-export function stopRunningSync(): void {
-  if (runningTimer) {
-    clearInterval(runningTimer)
-    runningTimer = null
+let procUnlisten: (() => void) | null = null
+let procFocusFn: (() => void) | null = null
+let procVisFn: (() => void) | null = null
+
+async function refreshProcessStates(): Promise<void> {
+  try {
+    library.processes = await window.hh.processStates()
+  } catch {
+    // 主进程暂时不可达时静默，下次 focus/推送会补上
   }
+}
+
+export function startProcessSync(): void {
+  if (procUnlisten) return
+  void refreshProcessStates()
+
+  // 推送增量：唯一真值来源
+  procUnlisten = window.hh.onProcessChanged(({ gameId, state }) => {
+    library.processes = { ...library.processes, [gameId]: state }
+  })
+
+  // 聚焦/可见性补拉：防「游戏在管理器外退出、exit 事件已到但没推准」
+  procFocusFn = (): void => {
+    if (document.visibilityState !== 'hidden') void refreshProcessStates()
+  }
+  procVisFn = (): void => {
+    if (document.visibilityState !== 'hidden') void refreshProcessStates()
+  }
+  window.addEventListener('focus', procFocusFn)
+  document.addEventListener('visibilitychange', procVisFn)
+}
+
+export function stopProcessSync(): void {
+  procUnlisten?.()
+  procUnlisten = null
+  if (procFocusFn) window.removeEventListener('focus', procFocusFn)
+  if (procVisFn) document.removeEventListener('visibilitychange', procVisFn)
+  procFocusFn = null
+  procVisFn = null
 }
 
 // ---------------------------------------------------------------- 工具栏动作

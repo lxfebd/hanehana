@@ -267,8 +267,9 @@ const geo = JSON.parse(await ev(`JSON.stringify((() => {
     belowToolbar: tr ? hr.top >= tr.bottom - 1 : null, aboveWrap: rr ? hr.bottom <= rr.top + 1 : null,
     heroW: hr.width, winW: window.innerWidth }
 })())`))
-pass('F1 hero 高 262', geo.heroH === 262, `h=${geo.heroH}`)
-pass('F2 封面轨高 142', geo.pickerH === 142, `h=${geo.pickerH}`)
+// hero 高度走「封面轨 + 文案 + 统计卡」的构图（封面 132、pick padding 170）
+pass('F1 hero 高 340（含统计卡）', geo.heroH === 340, `h=${geo.heroH}`)
+pass('F2 封面轨高 170', geo.pickerH === 170, `h=${geo.pickerH}`)
 pass('F3 picker 贴 hero 顶部(±2px)', Math.abs(geo.pickerTop) <= 2, `top=${geo.pickerTop} raw=${geo.pickerTopRaw}`)
 /* sub-pixel 缩放下 picker 有 0.67px 的真实偏移（rawTop），
    封面顶与 picker 底相差 2px 以内视为不重叠 */
@@ -280,6 +281,42 @@ console.log(`  [info] heroW=${geo.heroW} winW=${geo.winW}`)
 
 console.log('== G 无 renderer 异常 ==')
 pass('G1 无 Runtime.exceptionThrown', errs.length === 0, JSON.stringify(errs.slice(0, 2)))
+
+console.log('== H hero 跟随过滤视图 ==')
+// 搜索框输入关键词：hero 候选集应收窄到当前视图（不再挂全量第一张）
+const searchBox = async (text) => {
+  await ev(`(() => { const i = document.querySelector('.search-box input, input[placeholder*="搜索"], .toolbar input'); if(!i) return false; i.focus(); const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(i, ${JSON.stringify(text)}); i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+}
+const heroScope = async () => JSON.parse(await ev(`JSON.stringify({
+  choices: [...document.querySelectorAll('.hero-choice')].map(c => c.getAttribute('title')),
+  title: (document.querySelector('.hero-title') || {}).textContent || '',
+  coverCards: document.querySelectorAll('.cover-card').length,
+  heroPresent: !!document.querySelector('.hero'),
+})`))
+
+const scope0 = await heroScope()
+console.log('  [diag] 无搜索词时 =', JSON.stringify(scope0))
+await searchBox('GINKA')
+await sleep(900) // 搜索走 debounce
+const scope1 = await heroScope()
+console.log('  [diag] 搜 GINKA =', JSON.stringify(scope1))
+pass('H1 搜索后 hero 候选集收窄到命中项', scope1.choices.length <= scope0.choices.length && scope1.choices.every((t) => t === 'GINKA' || t === ''), `choices=${JSON.stringify(scope1.choices)}`)
+pass('H2 hero 仍渲染（不空屏）', scope1.heroPresent)
+
+// 搜一个不存在的词：视图全空 → hero 与封面墙一起空（不自相矛盾）
+await searchBox('zzzz-not-exist')
+await sleep(900)
+const scope2 = await heroScope()
+console.log('  [diag] 搜不到 =', JSON.stringify(scope2))
+pass('H3 视图全空时 hero 不渲染（与正文空态一致）', scope2.heroPresent === false, `heroPresent=${scope2.heroPresent}`)
+pass('H4 视图全空时封面墙为空态', scope2.coverCards === 0, `cards=${scope2.coverCards}`)
+
+// 清空搜索：回到完整视图
+await searchBox('')
+await sleep(900)
+const scope3 = await heroScope()
+pass('H5 清空搜索后恢复候选集', scope3.choices.length >= 3, `choices=${JSON.stringify(scope3.choices)}`)
+await shot('4_hero_scope.png')
 
 console.log('==== 完成 ====')
 try { spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}

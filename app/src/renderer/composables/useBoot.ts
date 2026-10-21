@@ -12,7 +12,7 @@
  */
 import { onMounted, onUnmounted, ref, watch, type Ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { library, refreshGames, startRunningSync, stopRunningSync } from '../stores/library'
+import { library, refreshGames, startProcessSync, stopProcessSync } from '../stores/library'
 import { downloads, initTasks, report, reportRejection } from '../stores/downloads'
 import { ui, applyDarkFromSettings } from '../stores/ui'
 import { setLanguage, t, tf } from '../i18n'
@@ -84,8 +84,8 @@ export function useBoot(): {
   }
 
   onMounted(async () => {
-    // 运行中状态轮询：游戏退出后 runningIds 收敛（主进程 handleRunning 清僵尸）
-    startRunningSync()
+    // 进程状态同步：快照对齐 + 主进程推送增量（launching/running 由它派生）
+    startProcessSync()
     try {
       if (!window.hh?.hello) {
         bootInfo.value = t('app_boot_preview')
@@ -108,7 +108,8 @@ export function useBoot(): {
     if (window.hh?.onThemeChanged) {
       unsubPushes.push(
         window.hh.onThemeChanged(({ dark }) => {
-          applyDarkFromSettings(dark, ui.preset)
+          // accent 不随系统深浅推送变化，但必须一起传：不传就清空覆盖，套件色回归
+          applyDarkFromSettings(dark, ui.preset, ui.accent)
         }),
       )
     }
@@ -135,7 +136,7 @@ export function useBoot(): {
   })
 
   onUnmounted(() => {
-    stopRunningSync()
+    stopProcessSync()
     narrowMq?.removeEventListener('change', narrowMqFn as EventListener)
     narrowMq = null
     narrowMqFn = null
