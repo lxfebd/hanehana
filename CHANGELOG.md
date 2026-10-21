@@ -2,6 +2,13 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.6] - 2026-10-21
+
+### 新增
+
+- **封面墙 NSFW 遮盖**（对标 ReinaManager）：刮削写入 VNDB 成人标签（Sexual Content 等）的游戏，封面默认显示遮盖层（模糊 + 图标 + 「成人内容」文案），点击临时显示——公共场合打开不会直接露图。`shared/nsfw.ts` 判断函数 + CoverGrid 遮盖层 + 回归 `verify_nsfw` 4/4。
+- **回归脚本**：`regression:track`（新作追踪订阅/回读/真实 VNDB 检查/删除 5/5）。
+
 ## [0.2.5] - 2026-10-21
 
 ### 变更
