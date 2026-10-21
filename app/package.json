@@ -40,7 +40,8 @@
     "regression:settings": "node scripts/verify_settings.mjs",
     "regression:stats": "node scripts/verify_stats.mjs",
     "regression:gamesites": "node scripts/verify_gamesites.mjs",
-    "regression:nsfw": "node scripts/verify_nsfw.mjs"
+    "regression:nsfw": "node scripts/verify_nsfw.mjs",
+    "regression:track": "node scripts/verify_track.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
