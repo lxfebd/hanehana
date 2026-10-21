@@ -112,6 +112,10 @@ async function main() {
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }
+    // 启动页现在是 home 仪表盘（B8）——封面墙/详情在库页，先导航过去
+    const nav = await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    if (nav !== 'ok') console.log('  [warn] 未能导航到库页：', nav)
+    await new Promise((r) => setTimeout(r, 800))
     for (let i = 0; i < 20; i++) {
       const e = await ev('!!document.querySelector(".cover-card")')
       if (e) break

@@ -1,5 +1,6 @@
-// 验证 hero 续读进度条渲染：seed 12 款 + 任务 → .hero-stats（续读玻璃条）存在且有进度
-// （B3：总时长/已玩/本月统计卡并入首屏 KpiStrip，hero 只留续读一条）
+// 验证 hero Continue 卡的数据口径（B8）：seed 12 款 + 任务 → .hero-kicker（home_continue）、
+// .hero-meta 含「本周 · 总计」（home_hero_meta）、.hero-recent-chip 出现
+// （旧 4 行统计卡与 .hs-prog 续读条已退役）
 import { spawn } from 'node:child_process'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
@@ -36,12 +37,13 @@ async function main() {
     // 等 hero 渲染
     for (let i = 0; i < 20; i++) { const h = await ev('!!document.querySelector(".hero")'); if (h) break; await new Promise((r) => setTimeout(r, 500)) }
     await new Promise((r) => setTimeout(r, 1500))
-    const st = JSON.parse(await ev('JSON.stringify((() => { const s = document.querySelector(".hero-stats"); const rows = [...document.querySelectorAll(".hs-row, .hs-prog")].map(r => r.textContent.trim()); const bar = document.querySelector(".hs-fill"); const pct = document.querySelector(".hs-pct"); return { hasStats: !!s, rows, barW: bar ? bar.style.width : "", pct: pct ? pct.textContent : "" } })())'))
-    ck('续读玻璃条渲染（.hero-stats）', st.hasStats, 'hasStats=' + st.hasStats)
-    ck('hero 只剩续读一条（.hs-prog，无 .hs-row 统计行）', st.rows.length === 1 && !/h\d+m/.test(st.rows[0]), JSON.stringify(st.rows))
-    ck('续读进度条有宽度', !!st.barW && st.barW !== '0%', 'barW=' + st.barW)
-    console.log('  续读条内容:', JSON.stringify(st.rows))
-    console.log('  续读:', st.pct, 'bar:', st.barW)
+    const st = JSON.parse(await ev('JSON.stringify((() => { const k = document.querySelector(".hero-kicker"); const m = document.querySelector(".hero-meta"); const t = document.querySelector(".hero-title"); const chips = document.querySelectorAll(".hero-recent-chip").length; const old = document.querySelectorAll(".hero-stats, .hs-prog, .hs-bar").length; return { kicker: k ? k.textContent.trim() : "", meta: m ? m.textContent.trim() : "", title: t ? t.textContent.trim() : "", chips, old } })())'))
+    ck('Continue 卡渲染（.hero-title 有主角）', st.title.length > 0, 'title=' + st.title)
+    ck('kicker 文案（home_continue）', /继续游玩|Continue/.test(st.kicker), 'kicker=' + st.kicker)
+    ck('.hero-meta 含「本周/总计」口径（home_hero_meta）', /本周|总计|week|total/i.test(st.meta), 'meta=' + st.meta)
+    ck('最近游玩 chip 出现', st.chips >= 1, 'chips=' + st.chips)
+    ck('旧统计卡/续读进度条已退役', st.old === 0, 'old=' + st.old)
+    console.log('  kicker:', st.kicker, '| meta:', st.meta, '| chips:', st.chips)
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally { ws.close(); proc.kill() }
 }

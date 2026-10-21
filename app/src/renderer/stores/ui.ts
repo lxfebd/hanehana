@@ -10,9 +10,11 @@ import { reactive } from 'vue'
 import { setTheme } from '../design/tokens'
 
 export const ui = reactive({
-  /** 当前页。collection = 收藏夹浏览页（B6 新增：favOnly 只是库内筛选，
-      收藏夹本身是「按开发商/系列分组的浏览页」，不是又一个筛选开关） */
-  page: 'library' as 'library' | 'downloads' | 'games' | 'stats' | 'collection',
+  /** 当前页。
+   * home = 仪表盘首页（B8：对标基准 home.png——合并 KPI 面板 + Continue 大卡
+   * + 随机游戏卡；默认启动页）。collection = 收藏夹浏览页（B6：favOnly 只是
+   * 库内筛选，收藏夹本身是按开发商/系列分组的浏览页，不是又一个筛选开关）。 */
+  page: 'home' as 'home' | 'library' | 'downloads' | 'games' | 'stats' | 'collection',
   settingsOpen: false,
   dark: true,
   /** 主题套件 id（settings.theme_preset）。默认星海：

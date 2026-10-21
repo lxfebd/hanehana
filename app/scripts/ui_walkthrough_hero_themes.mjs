@@ -193,7 +193,7 @@ async function launchApp() {
   return { ev, shot, waitFor, kill, send }
 }
 
-/** hero 现状快照 */
+/** hero 现状快照（B8 后 hero 是首页 Continue 卡：kicker 替代旧 hero-tag 眉标） */
 function heroStateExpr() {
   return `JSON.stringify((() => {
     const h = document.querySelector('.hero')
@@ -201,7 +201,7 @@ function heroStateExpr() {
     const img = document.querySelector('.hero-cover img')
     return {
       hero: true,
-      tag: (document.querySelector('.hero-tag')||{}).textContent || '',
+      tag: (document.querySelector('.hero-kicker')||{}).textContent || '',
       title: (document.querySelector('.hero-title')||{}).textContent || '',
       playBtn: !!document.querySelector('.hero-play'),
       detailBtn: !!document.querySelector('.hero-detail'),
@@ -210,6 +210,10 @@ function heroStateExpr() {
     }
   })())`
 }
+
+/** B8：hero 在首页、封面墙在库页——跨页断言要先导航 */
+const navHome = (app) => app.ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('首页') || (x.textContent || '').includes('Home')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+const navLibrary = (app) => app.ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
 
 function pass(name, ok, extra = '') {
   console.log(`  ${ok ? '[PASS]' : '[FAIL]'} ${name}${extra ? '  — ' + extra : ''}`)
@@ -221,7 +225,8 @@ console.log('==== 阶段1：有封面库（走真实 UI 全链路） ====')
 seedPhase1()
 mkdirSync(SHOTS2, { recursive: true })
 const app1 = await launchApp()
-await app1.waitFor('!!(window.hh && document.querySelector(".cover-card"))', 'app + cover grid')
+// 启动页 = home 仪表盘（B8），hero 就在启动页上
+await app1.waitFor('!!(window.hh && document.querySelector(".hero"))', 'app + hero (home)')
 
 // ---- A：收藏精选 hero ----
 console.log('== A：收藏精选分支 ==')
@@ -234,8 +239,8 @@ await app1.waitFor(
 const a = JSON.parse(await app1.ev(heroStateExpr()))
 pass('hero 渲染', a.hero)
 pass('目标为收藏最高分 ATRI', a.title === 'ATRI', `title=${a.title}`)
-// 新叙事文案：候选按「上次玩过优先」，ATRI 是上次玩过的 → 眉标「继续上次的故事」
-pass('标签为叙事文案（继续上次的故事）', a.tag === '继续上次的故事' || a.tag === 'Continue your story', `tag=${a.tag}`)
+// B8：Continue 卡 kicker（基准 Continue Game chip）
+pass('kicker 为继续游玩（home_continue）', a.tag === '继续游玩' || a.tag === 'Continue Game', `tag=${a.tag}`)
 pass('主按钮(启动/运行中)+详情按钮', a.playBtn && a.detailBtn, `play=${a.playBtn} detail=${a.detailBtn}`)
 pass('hero 封面图真实加载', a.coverLoaded)
 await app1.shot('A_hero_fav_pick.png')
@@ -263,23 +268,26 @@ pass('hero 在封面墙上（无重叠）', aboveWrap, `hero.bottom=${g.hero?.bo
 pass('hero 标题/按钮区未超出视口右侧', coverInBounds, `hero.right=${g.hero?.right} winW=${g.winW}`)
 await app1.shot('A2_hero_geometry.png')
 
-// ---- E：书架板 ----
-console.log('== E：书架板 ==')
+// ---- E：书架板（B8：封面墙在库页——先导航） ----
+console.log('== E：书架板（库页） ==')
+await navLibrary(app1)
+await sleep(800)
 const coverCards = await app1.ev(`document.querySelectorAll('.cover-card').length`)
 const shelves = await app1.ev(`document.querySelectorAll('.cover-card .cover-shelf').length`)
 pass('每张封面卡下有书架板', coverCards > 0 && shelves === coverCards, `cards=${coverCards} shelves=${shelves}`)
 await app1.shot('E_grid_shelf.png')
 
-// ---- B：最近在玩分支（真实点收藏按钮取消收藏，乐观更新立即重算） ----
+// ---- B：最近在玩分支（库页取消收藏 → 回首页看 hero 重算） ----
 console.log('== B：最近在玩分支 ==')
 await app1.ev(`(() => { const c=[...document.querySelectorAll('.cover-card')].find(x=>(x.textContent||'').includes('ATRI')); if(c){c.click();return 'selected'} return 'not found' })()`)
 await sleep(500)
 await app1.ev(`(() => { const b=[...document.querySelectorAll('.fav-btn')][0]; if(b){b.click();return 'unfav clicked'} return 'no fav-btn' })()`)
 await sleep(700)
+await navHome(app1)
+await sleep(700)
 const b = JSON.parse(await app1.ev(heroStateExpr()))
-pass('hero 仍渲染（目标未变，仍 ATRI 但标签切换）', b.hero && b.title === 'ATRI', `title=${b.title}`)
-// 新叙事文案：取消收藏不影响"上次玩过"地位，ATRI 仍是最新玩过的 → 眉标"继续上次的故事"
-pass('标签为叙事文案（继续上次的故事）', b.tag === '继续上次的故事' || b.tag === 'Continue your story', `tag=${b.tag}`)
+pass('hero 仍渲染（取消收藏不改"上次玩过"地位，仍 ATRI）', b.hero && b.title === 'ATRI', `title=${b.title}`)
+pass('kicker 仍为继续游玩', b.tag === '继续游玩' || b.tag === 'Continue Game', `tag=${b.tag}`)
 await app1.shot('B_hero_recent.png')
 
 // ---- D：主题切换（设置→外观→点主题卡→保存） ----
@@ -354,7 +362,8 @@ await sleep(1000)
 // 不清数据目录直接重启，验证启动时从 settings 恢复主题。
 console.log('==== 阶段1.5：主题持久化（重启保持） ====')
 const app1b = await launchApp()
-await app1b.waitFor('!!(window.hh && document.querySelector(".cover-card"))', 'app1b + cover grid')
+// B8：启动页 = home，hero 就在启动页（cover grid 在库页，本阶段不需要）
+await app1b.waitFor('!!(window.hh && document.querySelector(".hero"))', 'app1b + hero (home)')
 await sleep(700)
 const accentAfterRestart = await app1b.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
 pass('重启后 accent 仍为极光色（持久化生效）', accentAfterRestart.toLowerCase() === '#8fb7e8', `accent=${accentAfterRestart}（期望 #8FB7E8）`)
@@ -391,19 +400,23 @@ await sleep(1000)
 console.log('==== 阶段2：全无封面库 → 空态 ====')
 seedPhase2()
 const app2 = await launchApp()
-await app2.waitFor('!!(window.hh && document.querySelector(".cover-card"))', 'app2 + cover grid')
+await app2.waitFor('!!(window.hh)', 'app2 boot')
 await sleep(500)
+// B8：hero 的判定在首页（无封面候选 → hero 不渲染，出 .hero-empty 文案）
 const c = JSON.parse(await app2.ev(heroStateExpr()))
 pass('全无封面时 hero 不渲染', !c.hero, JSON.stringify(c))
-// 页面主体仍在（空态提示），封面网格正常
-pass('封面网格仍在渲染', await app2.ev(`document.querySelectorAll('.cover-card').length`) === 2)
+// 封面网格在库页：导航过去验网格照常渲染（空的是 hero，不是库）
+await navLibrary(app2)
+await app2.waitFor('!!document.querySelector(".cover-card")', 'app2 cover grid')
+pass('封面网格仍在渲染', (await app2.ev(`document.querySelectorAll('.cover-card').length`)) === 2)
 await app2.shot('C_hero_hidden_empty.png')
 app2.kill()
 await sleep(1000)
 
 // ============================================================ 阶段3：窄窗响应式（hero 720px 折叠分支）
-// LibraryHero @media (max-width: 720px)：hero 高 226（封面轨 122 + 封面 88 + 底距 16）、
-// 封面 66x88（宽 66 走 --hh-layout-cover-ratio 3/4）、详情按钮隐藏。用阶段1 的有封面库 + CDP 模拟 720px 视口验证折叠。
+// B8 新结构的 @media (max-width: 720px)：封面列收窄到 150px（仍竖版比例）、
+// recent chip max-width 180、卡内边距收紧。旧「hero 高 226 / 封面 66x88 / 详情
+// 按钮隐藏」是旧封面轨设计的断言，已随结构退役。
 console.log('==== 阶段3：窄窗响应式折叠 ====')
 seedPhase1()
 const app3 = await launchApp()
@@ -421,26 +434,26 @@ await app3.send('Emulation.setDeviceMetricsOverride', {
   mobile: false,
 })
 await sleep(600)
-// 读取折叠后的 hero 状态：详情按钮隐藏（display:none via media query）、封面尺寸缩小
+// 读取折叠后的 hero 状态：整卡在视口内、封面列压缩且保持竖版
 const narrow = JSON.parse(await app3.ev(`JSON.stringify((() => {
   const h = document.querySelector('.hero')
   const cover = document.querySelector('.hero-cover')
-  const detail = document.querySelector('.hero-detail')
+  const rb = h ? h.getBoundingClientRect() : null
   return {
     hero: !!h,
-    heroH: h ? h.offsetHeight : 0,
+    heroRight: rb ? rb.right : 0,
+    heroBottom: rb ? rb.bottom : 0,
+    winW: window.innerWidth,
+    winH: window.innerHeight,
     coverW: cover ? cover.offsetWidth : 0,
     coverH: cover ? cover.offsetHeight : 0,
-    detailDisplay: detail ? getComputedStyle(detail).display : 'none',
-    detailHidden: detail ? getComputedStyle(detail).display === 'none' : true,
-    tag: (document.querySelector('.hero-tag')||{}).textContent || '',
+    tag: (document.querySelector('.hero-kicker')||{}).textContent || '',
   }
 })())`))
-pass('窄窗下 hero 仍渲染', narrow.hero && narrow.heroH === 226, `heroH=${narrow.heroH}（期望 226）`)
-pass('窄窗下封面缩至 66x88（竖版 token 比例）', narrow.coverW === 66 && narrow.coverH === 88, `cover=${narrow.coverW}x${narrow.coverH}（期望 66x88）`)
-pass('窄窗下详情按钮隐藏', narrow.detailHidden, `detailDisplay=${narrow.detailDisplay}`)
-// 阶段1 seed：ATRI 是"上次玩过"候选首位 → 眉标叙事文案"继续上次的故事"
-pass('窄窗下 hero 标签仍正确', narrow.tag === '继续上次的故事', `tag=${narrow.tag}`)
+pass('窄窗下 hero 仍渲染且整卡在视口内', narrow.hero && narrow.heroRight <= narrow.winW + 1 && narrow.heroBottom <= narrow.winH + 1, JSON.stringify(narrow))
+pass('窄窗下封面列压缩（≤160px）且保持竖版（h > w）', narrow.coverW > 0 && narrow.coverW <= 160 && narrow.coverH > narrow.coverW, `cover=${narrow.coverW}x${narrow.coverH}`)
+// 阶段1 seed：ATRI 是「上次玩过」候选首位 → Continue kicker
+pass('窄窗下 hero kicker 仍正确', narrow.tag === '继续游玩' || narrow.tag === 'Continue Game', `tag=${narrow.tag}`)
 await app3.shot('G_hero_narrow_720.png')
 // 恢复视口
 await app3.send('Emulation.clearDeviceMetricsOverride')

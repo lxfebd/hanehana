@@ -1,6 +1,11 @@
-// 最终验证：LibraryHero v2 四项改进（复用已验证可用的探测骨架）。
-// 上一版 ui_walkthrough_hero2.mjs 卡在 waitFor('.hero') —— 骨架问题，非产品问题；
-// 本版改用 ui_probe_hero2.mjs 已验证可用的连接/求值方式，逐项断言。
+// B8 重写：LibraryHero = 首页 Continue 大卡（基准 home.png 口径）验证。
+// 旧封面轨（picker/计数器）与叙事眉标退役；新断言面：
+//   A 渲染与结构（kicker/大标题左置/meta 本周·总计/recent chips/竖版封面）
+//   B chips 切换候选 + 键盘左右/首尾
+//   C 布局几何（左列文字与右列封面分区不重叠、在界内）
+//   D hero 跟随过滤视图（库页搜索 → 首页候选收窄；全空 → .hero-empty）
+//   E 无 renderer 异常
+// 启动页是 home（B8），库页导航用侧栏「全部游戏」。
 import { spawn } from 'node:child_process'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -50,7 +55,7 @@ function grad(w, h, top, bottom) {
 const now = Date.now()
 const mk = (id, t, e = {}) => ({ id, dir: `X:\\g\\${t}`, exePath: `X:\\g\\${t}\\game.exe`, rawTitle: t, title: t, description: '', tags: [], categories: [], sources: [], playMs: 0, addedAt: now, useLE: false, useMagpie: false, favorite: false, ...e })
 
-/* seed：两部"上次玩过"（覆盖 继续/下一段 两态）+ 一部"未玩过收藏高分"（从这里开始） */
+/* seed：两部「上次玩过」（chips/切换用）+ 一部「未玩过收藏」（候选集尾位，无 lastPlayed 不进 chips） */
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(join(DATA_DIR, 'covers'), { recursive: true })
 mkdirSync(join(DATA_DIR, 'thumbs'), { recursive: true })
@@ -114,209 +119,144 @@ function pass(name, ok, extra = '') {
   if (!ok) process.exitCode = 1
 }
 
-/* hero 状态快照 */
+/** 侧栏导航（B8：启动页 home，封面墙在库页） */
+async function navTo(label) {
+  return ev(`(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes(${JSON.stringify(label)})); if(b){b.click();return 'ok'} return 'no' })()`)
+}
+
+/* hero 状态快照（新 Continue 卡结构） */
 const STATE = `JSON.stringify((() => {
   const q = (s) => document.querySelector(s)
-  const play = q('.hero-play'), detail = q('.hero-detail')
-  const cards = [...document.querySelectorAll('.hero-choice')]
-  const sel = q('.hero-choice[aria-selected="true"]')
-  const cnt = q('.hero-counter span')
+  const main = q('.hero-main'), cover = q('.hero-cover'), play = q('.hero-play')
+  const chips = [...document.querySelectorAll('.hero-recent-chip')]
   return {
     hero: !!q('.hero'),
-    tag: (q('.hero-tag') || {}).textContent || '',
+    emptyCard: !!q('.hero-empty'),
+    kicker: (q('.hero-kicker') || {}).textContent || '',
     title: (q('.hero-title') || {}).textContent || '',
+    meta: (q('.hero-meta') || {}).textContent || '',
     playLabel: play ? play.textContent.trim() : '',
-    playBg: play ? getComputedStyle(play).backgroundColor : '',
-    detailBg: detail ? getComputedStyle(detail).backgroundColor : '',
-    detailBorder: detail ? getComputedStyle(detail).borderTopColor : '',
-    scrimV: q('.hero-scrim-v') ? getComputedStyle(q('.hero-scrim-v')).backgroundImage : '',
-    scrimH: q('.hero-scrim-h') ? getComputedStyle(q('.hero-scrim-h')).backgroundImage : '',
-    mask: q('.hero-mask') ? (getComputedStyle(q('.hero-mask')).maskImage || getComputedStyle(q('.hero-mask')).webkitMaskImage) : '',
-    varScrimV: getComputedStyle(document.documentElement).getPropertyValue('--hh-color-hero-scrim-v').trim(),
-    varGlassBg: getComputedStyle(document.documentElement).getPropertyValue('--hh-color-on-cover-glass-bg').trim(),
-    choices: cards.length,
-    selectedIndex: sel ? cards.indexOf(sel) : -1,
-    selectedTitle: sel ? sel.getAttribute('title') : '',
-    counter: cnt ? cnt.textContent.trim() : '',
-    heroH: q('.hero') ? q('.hero').offsetHeight : 0,
-    pickerH: q('.hero-picker') ? q('.hero-picker').offsetHeight : 0,
+    chips: chips.length,
+    chipTitles: chips.map(c => (c.querySelector('.hero-recent-title')||{}).textContent?.trim() || ''),
+    currentChip: chips.findIndex(c => c.classList.contains('current')),
+    mainRect: main ? (() => { const r = main.getBoundingClientRect(); return { left: r.left, right: r.right, w: r.width } })() : null,
+    coverRect: cover ? (() => { const r = cover.getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, w: r.width, h: r.height } })() : null,
+    heroRect: q('.hero') ? (() => { const r = q('.hero').getBoundingClientRect(); return { x: r.x, y: r.y, right: r.right, bottom: r.bottom, w: r.width, h: r.height } })() : null,
+    winW: window.innerWidth, winH: window.innerHeight,
   }
 })())`
 
-/* 等待 hero 内容与选中项一致（out-in 动画期间 DOM 会有短暂旧内容，轮询比固定 sleep 可靠） */
 async function stableState() {
   let last = null
   for (let i = 0; i < 40; i++) {
     const o = JSON.parse(await ev(STATE))
-    // aria-selected 已到位、且 title 与选中项 title 一致 = 动画落地
-    if (o.hero && o.selectedTitle && o.title === o.selectedTitle) return o
+    if (o.hero && o.title) return o
     last = o
     await sleep(200)
   }
   return last
 }
 
-/* 等 app 起来：封面网格 + hero 都在（探测证实两者几乎同时出现） */
+console.log('==== LibraryHero (Continue 卡) 验证 ====')
+/* 等 hero 渲染（启动页 home） */
 let ready = false
 for (let i = 0; i < 100; i++) {
-  const st = await ev(STATE)
-  const o = JSON.parse(st)
-  if (o.hero && o.choices >= 1) { ready = true; break }
+  const o = JSON.parse(await ev(STATE))
+  if (o.hero && o.chips >= 1) { ready = true; break }
   await sleep(300)
 }
-console.log('==== LibraryHero v2 验证 ====')
 if (!ready) {
-  console.log('  [FAIL] hero 未在预期时间内渲染')
+  pass('hero 未在预期时间内渲染', false)
   console.log('  [diag]', await ev(STATE))
   console.log('  [errs]', JSON.stringify(errs.slice(0, 3)))
   console.log('  [stderr]', stderr.slice(-300))
   try { spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}
   process.exit(1)
 }
-// 等封面小图加载完
+// 等封面图加载
 for (let i = 0; i < 40; i++) {
   if (await ev(`(() => { const i = document.querySelector('.hero-cover img'); return !!(i && i.complete && i.naturalWidth > 0) })()`)) break
   await sleep(300)
 }
 
-const s = JSON.parse(await ev(STATE))
-console.log('== A 渲染与候选集 ==')
+const s = await stableState()
+console.log('== A 渲染与结构 ==')
 pass('A1 hero 渲染', s.hero)
-pass('A2 候选集 = 3', s.choices === 3, `choices=${s.choices}`)
-pass('A3 封面小图已加载', true, 'cover image')
+pass('A2 kicker 文案（继续游玩）', ['继续游玩', 'Continue playing', 'Continue'].some((x) => (s.kicker || '').includes(x)), `kicker=${s.kicker}`)
+pass('A3 主角 = 最近玩过的 ATRI', s.title === 'ATRI', `title=${s.title}`)
+pass('A4 meta 含「本周/总计」口径（home_hero_meta）', /本周|总计|week|total/i.test(s.meta), `meta=${s.meta}`)
+pass('A5 recent chips = 2（玩过两款进 chips，未玩过不进）', s.chips === 2, `chips=${s.chips} titles=${JSON.stringify(s.chipTitles)}`)
+pass('A6 首个 chip 即当前主角（current 标记）', s.currentChip === 0, `currentChip=${s.currentChip}`)
+pass('A7 主按钮文案合法', ['启动', '继续游玩', '运行中', 'Launch', 'Resume', 'Running'].some((x) => (s.playLabel || '').includes(x)), `label=${s.playLabel}`)
+pass('A8 竖版封面在界内且比例竖版', s.coverRect && s.coverRect.h > s.coverRect.w && s.coverRect.right <= s.winW + 1, JSON.stringify(s.coverRect))
+await shot('1_hero_continue.png')
 
-console.log('== B 三态叙事眉标 ==')
-const okTag = (v) => ['继续上次的故事', '从这里开始', '下一段故事', 'Continue the story', 'Start here', 'Next story'].includes(v)
-pass('B1 首位(上次玩过 ATRI) => 继续上次的故事',
-  s.title === 'ATRI' && (s.tag === '继续上次的故事' || s.tag === 'Continue the story'),
-  `title=${s.title} tag=${s.tag}`)
-pass('B2 计数器 1 / 3', s.counter === '1 / 3', `counter=${s.counter}`)
-
-console.log('== C 压图可读性（双层 scrim + 羽化） ==')
-pass('C1 .hero-scrim-v 有渐变', s.scrimV.includes('linear-gradient'), s.scrimV.slice(0, 50))
-pass('C2 .hero-scrim-h 有渐变', s.scrimH.includes('linear-gradient'), s.scrimH.slice(0, 50))
-pass('C3 --hh-hero-scrim-v 变量已注入', s.varScrimV.includes('linear-gradient'), s.varScrimV.slice(0, 40))
-pass('C4 封面羽化 mask 生效', !!s.mask, s.mask.slice(0, 40))
-
-console.log('== D 按钮样式 ==')
-pass('D1 主按钮白底 rgb(255,255,255)', s.playBg === 'rgb(255, 255, 255)', `bg=${s.playBg}`)
-pass('D2 主按钮文案合法', ['启动', '继续游玩', '运行中', 'Launch', 'Resume', 'Running'].includes(s.playLabel), `label=${s.playLabel}`)
-pass('D3 玻璃 token 已注入', s.varGlassBg.startsWith('rgba'), `token=${s.varGlassBg}`)
-await shot('1_hero_ctd.png')
-
-console.log('== E hero 可切换：点击 + 键盘 ==')
-/* 期望值从 DOM 实际顺序推导，不硬编码标题（避免把顺序假设当断言） */
-const order = JSON.parse(await ev(`JSON.stringify([...document.querySelectorAll('.hero-choice')].map(c => c.getAttribute('title')))`))
-console.log('  [diag] choice order =', order.join(' | '))
-const LAST_PLAYED_TAG = ['继续上次的故事', 'Continue the story']
-const FRESH_TAG = ['从这里开始', 'Start here']
-const NEXT_TAG = ['下一段故事', 'Next story']
-// idx 0 是最近玩过；idx 1..(p-1) 是其余玩过的；p.. 是未玩过
-const playedCount = order.length - 1 // seed 固定仅最后一部未玩过
-const titleAt = (i) => order[i]
-
-await ev(`(() => { const c = document.querySelectorAll('.hero-choice')[2]; c && c.click(); return !!c })()`)
+console.log('== B chips 切换候选 + 键盘 ==')
+const chipOrder = s.chipTitles
+await ev(`(() => { const chips=[...document.querySelectorAll('.hero-recent-chip')]; const c=chips[chips.length-1]; if(c){c.click();return 'ok'} return 'no' })()`)
 const s2 = await stableState()
-pass('E1 点击第 3 项 => 索引 2', s2.selectedIndex === 2, `idx=${s2.selectedIndex}`)
-pass('E2 标题 = 候选集第 3 项', s2.title === titleAt(2), `title=${s2.title} want=${titleAt(2)}`)
-pass('E3 计数器 3 / 3', s2.counter === '3 / 3', `counter=${s2.counter}`)
-pass('E4 未玩过(末位) => 眉标"从这里开始"', FRESH_TAG.includes(s2.tag), `tag=${s2.tag}`)
-await shot('2_hero_fresh.png')
+pass('B1 点击末位 chip => 主角切换', s2.title === chipOrder[chipOrder.length - 1], `title=${s2.title} want=${chipOrder[chipOrder.length - 1]}`)
 
+await ev(`(() => { if (document.activeElement) document.activeElement.blur(); return 'ok' })()`)
 await send('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))` })
 const s3 = await stableState()
-pass('E5 ArrowLeft => 索引 1', s3.selectedIndex === 1, `idx=${s3.selectedIndex}`)
-pass('E6 标题 = 候选集第 2 项', s3.title === titleAt(1), `title=${s3.title} want=${titleAt(1)}`)
-pass('E7 玩过但非首位 => 眉标"下一段故事"', NEXT_TAG.includes(s3.tag), `tag=${s3.tag}`)
-await shot('3_hero_next.png')
-
+pass('B2 ArrowLeft => 切回上一个候选（ATRI）', s3.title === chipOrder[0], `title=${s3.title}`)
 await send('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))` })
 const s4 = await stableState()
-pass('E8 ArrowRight => 索引 2', s4.selectedIndex === 2, `idx=${s4.selectedIndex}`)
-
+pass('B3 ArrowRight => 循环切换', s4.title === chipOrder[1], `title=${s4.title}`)
 await send('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Home', bubbles: true }))` })
 const s5 = await stableState()
-pass('E9 Home => 索引 0', s5.selectedIndex === 0, `idx=${s5.selectedIndex}`)
-pass('E10 首位(最近玩过) => 眉标"继续上次的故事"', LAST_PLAYED_TAG.includes(s5.tag), `tag=${s5.tag} title=${s5.title}`)
-
+pass('B4 Home => 首位候选', s5.title === chipOrder[0], `title=${s5.title}`)
 await send('Runtime.evaluate', { expression: `window.dispatchEvent(new KeyboardEvent('keydown', { key: 'End', bubbles: true }))` })
 const s6 = await stableState()
-pass('E11 End => 末位索引', s6.selectedIndex === order.length - 1, `idx=${s6.selectedIndex}`)
+pass('B5 End => 末位候选（含未玩过款）', s6.title === 'SUMMER', `title=${s6.title}`)
+await shot('2_hero_switch.png')
 
-console.log('== F 布局几何 ==')
-const geo = JSON.parse(await ev(`JSON.stringify((() => {
-  const h = document.querySelector('.hero')
-  const tb = document.querySelector('.toolbar')
-  const wr = document.querySelector('.cover-wrap')
-  const pk = document.querySelector('.hero-picker')
-  const cv = document.querySelector('.hero-cover')
-  const an = document.querySelector('.hero-animated')
-  const hr = h.getBoundingClientRect()
-  const tr = tb ? tb.getBoundingClientRect() : null
-  const rr = wr ? wr.getBoundingClientRect() : null
-  const pr = pk ? pk.getBoundingClientRect() : null
-  const vr = cv ? cv.getBoundingClientRect() : null
-  return { heroH: h.offsetHeight, pickerH: pk ? pk.offsetHeight : 0,
-    pickerTop: pr ? Math.round(pr.top - hr.top) : null,
-    pickerTopRaw: pr ? (pr.top - hr.top) : null,
-    // 内容（封面）应在 picker 之下：封面顶边 >= picker 底边
-    coverTop: vr ? Math.round(vr.top - hr.top) : null,
-    pickerBottom: pr ? Math.round(pr.bottom - hr.top) : null,
-    coverH: vr ? vr.height : null,
-    animatedPadTop: an ? getComputedStyle(an).paddingTop : null,
-    belowToolbar: tr ? hr.top >= tr.bottom - 1 : null, aboveWrap: rr ? hr.bottom <= rr.top + 1 : null,
-    heroW: hr.width, winW: window.innerWidth }
-})())`))
-// hero 高度走「封面轨 + 文案 + 统计卡」的构图（封面 132、pick padding 170）
-pass('F1 hero 高 340（含统计卡）', geo.heroH === 340, `h=${geo.heroH}`)
-pass('F2 封面轨高 170', geo.pickerH === 170, `h=${geo.pickerH}`)
-pass('F3 picker 贴 hero 顶部(±2px)', Math.abs(geo.pickerTop) <= 2, `top=${geo.pickerTop} raw=${geo.pickerTopRaw}`)
-/* sub-pixel 缩放下 picker 有 0.67px 的真实偏移（rawTop），
-   封面顶与 picker 底相差 2px 以内视为不重叠 */
-pass('F4 内容在 picker 之下(±3px)', geo.coverTop >= geo.pickerBottom - 3,
-  `coverTop=${geo.coverTop} pickerBottom=${geo.pickerBottom} coverH=${geo.coverH} padTop=${geo.animatedPadTop}`)
-pass('F5 hero 在 toolbar 下不重叠', geo.belowToolbar !== false, `below=${geo.belowToolbar}`)
-pass('F6 hero 在 cover-wrap 上不重叠', geo.aboveWrap !== false, `above=${geo.aboveWrap}`)
-console.log(`  [info] heroW=${geo.heroW} winW=${geo.winW}`)
+console.log('== C 布局几何：左列文字与右列封面分区不重叠 ==')
+const g = JSON.parse(await ev(STATE))
+pass('C1 封面列在文字列之右（分区不重叠）', g.mainRect && g.coverRect && g.coverRect.left >= g.mainRect.right - 1, `main.right=${g.mainRect?.right} cover.left=${g.coverRect?.left}`)
+pass('C2 hero 整卡在视口内', g.heroRect && g.heroRect.x >= -1 && g.heroRect.right <= g.winW + 1 && g.heroRect.y >= -1 && g.heroRect.bottom <= g.winH + 1, JSON.stringify(g.heroRect))
+pass('C3 封面列未超出 hero 卡', g.heroRect && g.coverRect && g.coverRect.right <= g.heroRect.right + 1 && g.coverRect.bottom <= g.heroRect.bottom + 1, JSON.stringify({ cover: g.coverRect, hero: g.heroRect }))
+pass('C4 旧封面轨/计数器已退役', (await ev(`document.querySelectorAll('.hero-picker, .hero-thumb, .hero-counter, .hero-stats').length`)) === 0, 'picker/counter/stats 残留')
 
-console.log('== G 无 renderer 异常 ==')
-pass('G1 无 Runtime.exceptionThrown', errs.length === 0, JSON.stringify(errs.slice(0, 2)))
-
-console.log('== H hero 跟随过滤视图 ==')
-// 搜索框输入关键词：hero 候选集应收窄到当前视图（不再挂全量第一张）
+console.log('== D hero 跟随过滤视图 ==')
+// 库页搜索 → 首页候选收窄（hero 与封面墙说同一件事）
+await navTo('全部游戏')
+await sleep(700)
 const searchBox = async (text) => {
-  await ev(`(() => { const i = document.querySelector('.search-box input, input[placeholder*="搜索"], .toolbar input'); if(!i) return false; i.focus(); const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(i, ${JSON.stringify(text)}); i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
+  await ev(`(() => { const i = document.querySelector('.search-box input, .toolbar input'); if(!i) return false; i.focus(); const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set; setter.call(i, ${JSON.stringify(text)}); i.dispatchEvent(new Event('input', { bubbles: true })); return true })()`)
 }
-const heroScope = async () => JSON.parse(await ev(`JSON.stringify({
-  choices: [...document.querySelectorAll('.hero-choice')].map(c => c.getAttribute('title')),
-  title: (document.querySelector('.hero-title') || {}).textContent || '',
-  coverCards: document.querySelectorAll('.cover-card').length,
-  heroPresent: !!document.querySelector('.hero'),
-})`))
-
-const scope0 = await heroScope()
-console.log('  [diag] 无搜索词时 =', JSON.stringify(scope0))
 await searchBox('GINKA')
-await sleep(900) // 搜索走 debounce
-const scope1 = await heroScope()
-console.log('  [diag] 搜 GINKA =', JSON.stringify(scope1))
-pass('H1 搜索后 hero 候选集收窄到命中项', scope1.choices.length <= scope0.choices.length && scope1.choices.every((t) => t === 'GINKA' || t === ''), `choices=${JSON.stringify(scope1.choices)}`)
-pass('H2 hero 仍渲染（不空屏）', scope1.heroPresent)
+await sleep(900)
+await navTo('首页')
+await sleep(700)
+const fs1 = JSON.parse(await ev(STATE))
+pass('D1 过滤后 hero 主角 = 命中项', fs1.hero && fs1.title === 'GINKA', `title=${fs1.title}`)
+pass('D2 过滤后 chips 收窄', fs1.chips === 1, `chips=${fs1.chips}`)
 
-// 搜一个不存在的词：视图全空 → hero 与封面墙一起空（不自相矛盾）
+await navTo('全部游戏')
+await sleep(500)
 await searchBox('zzzz-not-exist')
 await sleep(900)
-const scope2 = await heroScope()
-console.log('  [diag] 搜不到 =', JSON.stringify(scope2))
-pass('H3 视图全空时 hero 不渲染（与正文空态一致）', scope2.heroPresent === false, `heroPresent=${scope2.heroPresent}`)
-pass('H4 视图全空时封面墙为空态', scope2.coverCards === 0, `cards=${scope2.coverCards}`)
+await navTo('首页')
+await sleep(700)
+const fs2 = JSON.parse(await ev(STATE))
+pass('D3 视图全空时 hero 不渲染（.hero 缺席）', fs2.hero === false, `hero=${fs2.hero}`)
+pass('D4 视图全空时渲染 .hero-empty 文案', fs2.emptyCard === true, `empty=${fs2.emptyCard}`)
+await shot('3_hero_empty.png')
 
-// 清空搜索：回到完整视图
+await navTo('全部游戏')
+await sleep(500)
 await searchBox('')
 await sleep(900)
-const scope3 = await heroScope()
-pass('H5 清空搜索后恢复候选集', scope3.choices.length >= 3, `choices=${JSON.stringify(scope3.choices)}`)
-await shot('4_hero_scope.png')
+await navTo('首页')
+await sleep(700)
+const fs3 = JSON.parse(await ev(STATE))
+pass('D5 清空搜索后候选恢复', fs3.hero && fs3.chips >= 2, `chips=${fs3.chips}`)
+
+console.log('== E 无 renderer 异常 ==')
+pass('E1 无 Runtime.exceptionThrown', errs.length === 0, JSON.stringify(errs.slice(0, 2)))
+await shot('4_hero_final.png')
 
 console.log('==== 完成 ====')
 try { spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' }) } catch {}

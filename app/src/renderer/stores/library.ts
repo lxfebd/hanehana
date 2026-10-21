@@ -5,7 +5,7 @@
  * 所有对主进程的游戏库调用都经过这里，组件不直接碰 window.hh。
  */
 import { reactive, computed, ref, shallowRef, watch } from 'vue'
-import type { Game, GameProcessState, ScrapeCandidate } from '../../shared/types'
+import type { Game, GameProcessState, OverviewStats, ScrapeCandidate } from '../../shared/types'
 // ESM 之谜：带 .js 的 specifier，TS 映射回 .ts（与 tests 同一约定）
 import { isLaunching, isRunning } from '../../shared/processState.js'
 
@@ -76,6 +76,25 @@ export const ratingRanks = computed<Map<string, number>>(() => {
   rated.forEach((g, i) => map.set(g.id, i + 1))
   return map
 })
+
+/**
+ * 总览统计（主进程 computeOverview 的产物）：首页 KPI 面板与统计页共用同一份
+ * 取数——「首页一个口径、统计页另一个口径」正是基准 ReinaManager 自相矛盾
+ * （1666h vs 538.6h）的病根，我们从结构上不给它发生的机会。
+ */
+export const overviewState = reactive({
+  data: null as OverviewStats | null,
+  loading: false,
+})
+
+export async function refreshOverview(): Promise<void> {
+  overviewState.loading = true
+  try {
+    overviewState.data = await window.hh.statsOverview()
+  } finally {
+    overviewState.loading = false
+  }
+}
 
 // ---------------------------------------------------------------- 智能列表预设
 // 静态分类要人维护，智能列表是动态规则集（Playnite 式 smart filter）：规则随

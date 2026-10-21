@@ -1,8 +1,9 @@
-// 四屏验收截图（对标 ReinaManager 基准图）：
-//   1 首页     —— PageHeader + KpiStrip + hero + 续读条 + 封面墙 + 右栏 ActivityFeed
-//   2 详情     —— 选中一款 → 元数据行 / 标签全集 / 四分页 / 每游戏曲线
-//   3 统计     —— 6 KPI + 周期切换 + 趋势线 + 时段分布
-//   4 收藏夹   —— 按开发商 / 系列分组卡
+// 五屏验收截图（对标 ReinaManager 基准图）：
+//   1 首页     —— 合并 KPI 面板 + Continue 大卡（含最近游玩）+ 随机卡 + 右栏 Activity
+//   2 库页     —— 页头 + 工具栏 + 封面墙（浏览工具独占，无 KPI/hero——基准分工）
+//   3 详情     —— 选中一款 → 元数据行 / 标签全集 / 四分页 / 每游戏曲线
+//   4 统计     —— 6 KPI + 周期切换 + 趋势线 + 时段分布
+//   5 收藏夹   —— 按开发商 / 系列分组卡
 // 用法：node scripts/ui_walkthrough_reina.mjs（须先 npm run build）
 // 截图落盘：app/.shots/reina/（基准图在「不要上传…」夹，逐屏人比对）。
 import { spawn, spawnSync } from 'node:child_process'
@@ -110,15 +111,26 @@ async function main() {
     await send('Page.bringToFront').catch(() => {})
     await send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
     await wait(2500)
-    // 首页：窗口是运行时确定的（1200x800 左右），不强制 resize
+    // 01 首页仪表盘（B8）：home-kpi 合并面板 + hero(Continue) + random 卡 + 右栏 activity
     const boot = await ev(
-      `JSON.stringify({ cards: document.querySelectorAll('.cover-card').length, kpi: document.querySelectorAll('.kpi-card').length, ph: !!document.querySelector('.page-header'), feed: !!document.querySelector('.activity-feed') })`,
+      `JSON.stringify({ kpiCells: document.querySelectorAll('.hk-cell').length, hero: !!document.querySelector('.hero'), recent: document.querySelectorAll('.hero-recent-chip').length, random: !!document.querySelector('.random-card'), feed: !!document.querySelector('.activity-feed') })`,
     )
     console.log('HOME:', boot)
     await shot('01-home')
 
-    // 详情：JS click 不需要卡片在视口内——不要 scrollIntoView，
-    // 那会把中栏滚下去，截图里页头/KPI 条消失（02 截图曾因此拍成半张脸）。
+    const navLib = () =>
+      ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    // 02 库页（基准 Game Library 分工：页头+工具栏+封面墙，没有 KPI/hero）
+    await navLib()
+    await wait(1000)
+    const lib = await ev(
+      `JSON.stringify({ ph: !!document.querySelector('.page-header'), toolbar: !!document.querySelector('.search-wrap, .toolbar'), cards: document.querySelectorAll('.cover-card').length })`,
+    )
+    console.log('LIBRARY:', lib)
+    await shot('02-library')
+
+    // 03 详情：JS click 不需要卡片在视口内——不要 scrollIntoView，
+    // 那会把中栏滚下去，截图里页头消失（02 截图曾因此拍成半张脸）。
     await ev(`(() => { document.querySelector('.cover-card')?.click(); return true })()`)
     await wait(900)
     // 面板/中栏回顶部：沿卡片祖先链把所有真滚得动的容器归零
@@ -136,7 +148,7 @@ async function main() {
       `JSON.stringify({ meta: document.querySelectorAll('.dp-meta-cell').length, tags: document.querySelectorAll('.dp-tags-chips .tag-chip').length, tabs: document.querySelectorAll('.dp-tab').length, chart: !!document.querySelector('.play-chart svg') })`,
     )
     console.log('DETAIL:', dp)
-    await shot('02-detail')
+    await shot('03-detail')
 
     // 统计页：经侧栏「更多」→ 统计
     await ev(`(() => {
@@ -154,7 +166,7 @@ async function main() {
       `JSON.stringify({ kpi: document.querySelectorAll('.kpi-card').length, chart: !!document.querySelector('.play-chart svg'), hours: document.querySelectorAll('.hour-col').length })`,
     )
     console.log('STATS:', st)
-    await shot('03-stats')
+    await shot('04-stats')
 
     // 收藏夹：侧栏收藏夹入口
     await ev(`(() => {
@@ -166,7 +178,7 @@ async function main() {
       `JSON.stringify({ groups: document.querySelectorAll('.coll-card').length })`,
     )
     console.log('COLLECTION:', coll)
-    await shot('04-collection')
+    await shot('05-collection')
   } finally {
     ws.close()
     proc.kill()

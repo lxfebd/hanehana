@@ -127,6 +127,9 @@ async function main() {
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }
+    // B8：启动页是 home，封面墙在游戏库页——先点「全部游戏」
+    await ev(`(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')); if(b){b.click();return 'ok'} return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 900))
     // 等 App 起来 + 封面墙渲染占位卡
     for (let i = 0; i < 20; i++) {
       const e = await ev('!!document.querySelector(".cover-card")')
@@ -163,6 +166,9 @@ async function main() {
     // 刷新封面墙并等 img 渲染
     await ev(`window.location.reload()`)
     await new Promise((r) => setTimeout(r, 3500))
+    // B8：reload 后又落回 home，再进库页
+    await ev(`(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')); if(b){b.click();return 'ok'} return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 900))
     for (let i = 0; i < 20; i++) {
       const loaded = await ev(`(() => { const img = document.querySelector('.cover-thumb img'); return !!(img && img.complete && img.naturalWidth > 0) })()`)
       if (loaded) break

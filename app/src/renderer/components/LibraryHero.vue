@@ -1,36 +1,30 @@
 <script setup lang="ts">
 /**
- * 库顶氛围横带（P0 首屏冲击，对标 KoiPage 首页 hero）。
+ * 首页「Continue」大卡（B8，对标基准 home.png 的 Continue Game 卡）。
  *
- * 与旧版的关键差异：
- * 1) 候选集按「上次玩过的 → 从未玩过的」排序，首位即"上次玩过"时眉标显示"继续上次的故事"，
- *    翻到从未玩过的显示"从这里开始"，翻到已玩过别的显示"下一段故事" —— 对标 KoiPage 叙事文案。
- * 2) Hero 可交互切换：顶部封面轨可滚轮/拖拽/方向键切换，切换时封面与文案做 300ms 交叉滑入滑出。
- * 3) 压图可读性：双层定向 scrim（纵向上下压、横向从右往左渐重）+ 封面左右羽化（mask-image）。
- * 4) 主按钮白底黑字（压图最稳），次按钮玻璃拟态；启动按钮三态文案（启动中… / 运行中 / 继续游玩 / 启动游戏）。
- * 5) B3：封面轨与主角封面统一竖版比例（var(--hh-layout-cover-ratio)）；标题/正文区在
- *    picker 之下分区不重叠；氛围 bloom 降一档；总时长类 KPI 并入首屏 KpiStrip，hero 只留续读进度。
+ * 结构（类名是 HomeView / verify 脚本的接线契约，不许随意改名）：
+ *   aside.hero
+ *     .hero-main 左列：.hero-kicker（继续游玩 chip）/ h2.hero-title（左置粗体
+ *       sans，2 行 clamp）/ .hero-native（原名）/ .hero-meta（上次游玩 +
+ *       本周·总计）/ .hero-actions（.hero-play 四态 + .hero-detail 跳库）/
+ *       .hero-recent（最近游玩 chips，点击切换候选）
+ *     .hero-cover 右列：竖版封面（var(--hh-layout-cover-ratio)），点击 = 跳库页选中；
+ *       NSFW 未揭示时 blur 滤镜，点击临时揭示（与封面墙同口径）。
+ *   候选全空 → 渲染 .hero-empty 文案（hero 缺席但页面不空洞）。
+ *
+ * 退役：顶部封面轨（picker/计数器）、续读进度玻璃条、RecentStrip——
+ * 切换候选的职能由 .hero-recent 承接，全局 KPI 由 HomeView 顶部 KPI 面板承接。
+ * 保留：候选集跟随 filteredGames 视图、键盘左右/首尾切换、启动四态、切换滑入动画。
  */
-
-import { computed, ref, onMounted, onUnmounted, watch } from 'vue'
-import { Loader2, Play, Star } from 'lucide-vue-next'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { Loader2, Play } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
+import { isNsfwGame } from '../../shared/nsfw'
 import { selectGame, launchGame, thumbUrl, filteredGames, launchingGames, runningGames } from '../stores/library'
-import { t } from '../i18n'
-import { tokens } from '../design/tokens'
-
-/** 星级色（跟随主题 tokens，同 CoverGrid/DetailPanel 的评级星一致） */
-const starColor = computed(() => tokens.color.star)
-
-/** 续读进度：按「最近玩过」候选当前主角的 playMs 估算（无时长显示 0%）。
- *  首屏总时长/已玩/本月等 KPI 已并入 App.vue 的 KpiStrip（lead 负责），
- *  hero 只留这一条与"继续游玩"叙事直接相关的进度。 */
-const continuePct = computed(() => {
-  const g = heroGame.value
-  if (!g || !g.playMs || g.playMs <= 0) return 0
-  // 粗略锚点：10 小时视为「玩了很久」，进度条只是氛围不是精确统计
-  return Math.min(100, Math.round((g.playMs / (10 * 3600000)) * 100))
-})
+import { loadSessions, sumMs } from '../stores/sessions'
+import { ui } from '../stores/ui'
+import { ONE_DAY_MS, dayKey, dayStart, fmtDurMs } from '../../shared/format'
+import { t, tf } from '../i18n'
 
 /** 是否有可展示封面（thumb 或 cover） */
 function hasCover(g: Game): boolean {
@@ -40,9 +34,8 @@ function hasCover(g: Game): boolean {
 /**
  * 候选集：跟随当前过滤视图（搜索/分类/智能列表/元数据聚合）。
  *
- * 刻意不做「视图为空时回退全量」：实测（用户截图）那样会出现上面横幅在讲
- * 某部游戏、下面正文却写「没有匹配的游戏」的自相矛盾画面——横幅与封面墙
- * 必须说同一件事，视图空了就一起空，空态由正文去表达。
+ * 刻意不做「视图为空时回退全量」：上面卡片在讲某部游戏、正文却写「没有匹配的
+ * 游戏」是自相矛盾——卡片与封面墙必须说同一件事，视图空了就一起空。
  */
 const heroCandidates = computed<Game[]>(() => {
   const games = filteredGames.value
@@ -64,42 +57,61 @@ const slideDirection = ref(1)
 /** 当前主角 */
 const heroGame = computed<Game | null>(() => heroCandidates.value[currentIndex.value] ?? null)
 
-/** hero 背景图 URL（thumb 优先，cover 兜底 encodeURI） */
-const heroBg = computed(() => {
-  const g = heroGame.value
-  if (!g) return ''
+/** 封面图 URL（thumb 优先，cover 兜底 encodeURI） */
+function coverSrc(g: Game): string {
   if (g.thumbPath) return thumbUrl(g)
   if (g.coverPath) return `file://${encodeURI(g.coverPath.replace(/\\/g, '/'))}`
   return ''
-})
-
-/** 是否"上次玩过的" */
-const isLastPlayed = computed(() => !!heroGame.value?.lastPlayed)
-/** 是否"从未玩过" */
-const isNeverPlayed = computed(() => !heroGame.value?.lastPlayed)
+}
+const heroBg = computed(() => (heroGame.value ? coverSrc(heroGame.value) : ''))
 
 /** 运行中状态 */
 const running = computed(() => !!heroGame.value && runningGames.value.has(heroGame.value.id))
 
-/** 滚轮累积量节流（鼠标一格 = 1 次切换，触控板细颗粒累积） */
-let wheelAccumulated = 0
-let lastWheelAt = 0
-
-function onWheel(event: WheelEvent): void {
-  if (event.ctrlKey) return
-  const delta = Math.abs(event.deltaX) > Math.abs(event.deltaY) ? event.deltaX : event.deltaY
-  if (delta === 0) return
-  const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerWidth : 1
-  event.preventDefault()
-  const now = performance.now()
-  if (now - lastWheelAt > 180 || Math.sign(wheelAccumulated) !== Math.sign(delta)) wheelAccumulated = 0
-  lastWheelAt = now
-  wheelAccumulated += delta * unit
-  if (Math.abs(wheelAccumulated) < 40) return
-  const dir = wheelAccumulated > 0 ? 1 : -1
-  wheelAccumulated = 0
-  move(dir)
+/** NSFW 临时揭示集合（点击封面解除，切换候选不重置——与封面墙同语义的单次揭示） */
+const revealedNsfw = ref(new Set<string>())
+function nsfwHidden(g: Game): boolean {
+  return isNsfwGame(g.tags) && !revealedNsfw.value.has(g.id)
 }
+
+/** 最近游玩 chips：候选集中「玩过」的前 4 个（候选排序保证最近在前）。
+ *  idx 记录其在候选集中的位置，点击 = 切换 hero 候选。 */
+const recentChips = computed(() =>
+  heroCandidates.value
+    .map((g, idx) => ({ g, idx }))
+    .filter(({ g }) => !!g.lastPlayed)
+    .slice(0, 4),
+)
+
+/** 上次游玩的相对显示：今天 / 昨天 / 日期（yyyy-mm-dd）。
+ *  「N 天前」需要词典新键，暂未加——先退到日期，语义不丢。 */
+function fmtPlayed(ts?: number): string {
+  if (!ts) return ''
+  const k = dayKey(ts)
+  if (k === dayKey(Date.now())) return t('recent_today')
+  if (k === dayKey(Date.now() - ONE_DAY_MS)) return t('recent_yesterday')
+  return k
+}
+
+/** 当前主角近 7 天（本周一 00:00 起）游玩时长：走会话明细 store，不自己造轮子 */
+const weekMs = ref(0)
+async function refreshHeroWeek(): Promise<void> {
+  const g = heroGame.value
+  if (!g) {
+    weekMs.value = 0
+    return
+  }
+  try {
+    const list = await loadSessions({ gameId: g.id, limit: 500 })
+    const now = Date.now()
+    const dow = (new Date(now).getDay() + 6) % 7
+    weekMs.value = sumMs(list, dayStart(now - dow * ONE_DAY_MS))
+  } catch {
+    weekMs.value = 0
+  }
+}
+const weekText = computed(() => fmtDurMs(weekMs.value))
+const totalText = computed(() => fmtDurMs(heroGame.value?.playMs ?? 0))
 
 /** 切换到指定索引 */
 function selectIndex(index: number): void {
@@ -116,8 +128,11 @@ function move(dir: 1 | -1): void {
   selectIndex(next)
 }
 
-/** 键盘导航 */
+/** 键盘导航（左右切换 / Home End 首尾）。输入控件聚焦时不劫持按键——
+ *  首页没有工具栏搜索框，但对话框/其他页输入框还在，方向键归输入框。 */
 function onKeyDown(event: KeyboardEvent): void {
+  const el = document.activeElement
+  if (el instanceof HTMLElement && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT' || el.isContentEditable)) return
   if (event.key === 'ArrowRight') { event.preventDefault(); move(1) }
   else if (event.key === 'ArrowLeft') { event.preventDefault(); move(-1) }
   else if (event.key === 'Home') { event.preventDefault(); selectIndex(0) }
@@ -134,22 +149,28 @@ const playLabel = computed(() => {
   return g.playMs > 0 ? t('hero_launch_ctd') : t('hero_launch')
 })
 
-/** 眉标叙事文案：继续上次的故事 / 从这里开始 / 下一段故事 */
-const heroTag = computed(() => {
-  if (!heroGame.value) return ''
-  if (currentIndex.value === 0 && isLastPlayed.value) return t('hero_tag_ctd')
-  if (isNeverPlayed.value) return t('hero_tag_fresh')
-  return t('hero_tag_next')
-})
-
 function launch(): void {
   const g = heroGame.value
   if (g) void launchGame(g.id)
 }
 
-function openDetail(): void {
+/** 跳库页并选中当前主角（首页没有右栏详情，详情在库里看） */
+function goLibrary(): void {
   const g = heroGame.value
-  if (g) selectGame(g.id)
+  if (!g) return
+  ui.page = 'library'
+  selectGame(g.id)
+}
+
+/** 封面点击：NSFW 未揭示 → 临时揭示；否则跳库页选中 */
+function onCoverClick(): void {
+  const g = heroGame.value
+  if (!g) return
+  if (nsfwHidden(g)) {
+    revealedNsfw.value.add(g.id)
+    return
+  }
+  goLibrary()
 }
 
 onMounted(() => {
@@ -170,106 +191,104 @@ watch(heroCandidates, (candidates) => {
     slideDirection.value = -1
   }
 })
+
+/** 主角换了就重取该款的会话明细（近 7 天时长挂在主角身上，跟着换） */
+watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 </script>
 
 <template>
-  <div v-if="heroGame" class="hero glass" :class="{ running }">
-    <!-- 静止的选择轨与计数器（不参与切换动画） -->
-    <div class="hero-picker" @wheel.passive="onWheel" @keydown="onKeyDown">
-      <button
-        v-for="(game, index) in heroCandidates"
-        :key="game.id"
-        type="button"
-        role="tab"
-        :aria-selected="index === currentIndex"
-        :tabindex="index === currentIndex ? 0 : -1"
-        :title="game.title"
-        class="hero-choice"
-        @click="selectIndex(index)"
-      >
-        <span class="hero-thumb">
-          <img
-            v-if="game.thumbPath || game.coverPath"
-            :src="game.thumbPath ? thumbUrl(game) : `file://${encodeURI(game.coverPath!.replace(/\\/g, '/'))}`"
-            :alt="game.title"
-            :loading="index < 10 ? 'eager' : 'lazy'"
-            class="h-full w-full object-cover"
-          />
-        </span>
-        <span class="hero-caption">{{ game.title }}</span>
-      </button>
-    </div>
+  <aside v-if="heroGame" class="hero glass" :class="{ running }">
+    <div class="hero-bg" :style="heroBg ? { backgroundImage: `url(${heroBg})` } : {}" aria-hidden="true"></div>
+    <div class="hero-scrim-v" aria-hidden="true"></div>
+    <div class="hero-scrim-h" aria-hidden="true"></div>
 
-    <!-- 底部计数器 + 进度条 -->
-    <div class="hero-counter" v-if="heroCandidates.length > 1">
-      <span aria-live="polite">{{ currentIndex + 1 }} / {{ heroCandidates.length }}</span>
-      <div class="hero-progress">
-        <div class="hero-progress-fill" :style="{ width: `${((currentIndex + 1) / heroCandidates.length) * 100}%` }"></div>
-      </div>
-    </div>
+    <!-- :key 随选中索引整体替换，进场播 slide-in（无离场，节点直接替换——
+         刻意不用 out-in 过渡，旧节点残留会让 .hero-title 断言命中旧内容） -->
+    <div :key="currentIndex" class="hero-animated" :style="{ '--slide-direction': slideDirection }">
+      <div class="hero-main">
+        <span class="hero-kicker">{{ t('home_continue') }}</span>
+        <h2 class="hero-title" :title="heroGame.title">{{ heroGame.title }}</h2>
+        <div
+          v-if="heroGame.titleNative && heroGame.titleNative !== heroGame.title"
+          class="hero-native"
+          :title="heroGame.titleNative"
+        >
+          {{ heroGame.titleNative }}
+        </div>
+        <div class="hero-meta">
+          <span v-if="heroGame.lastPlayed" class="hm-line">{{ tf('home_last_played', { date: dayKey(heroGame.lastPlayed) }) }}</span>
+          <span class="hm-line">{{ tf('home_hero_meta', { week: weekText, total: totalText }) }}</span>
+        </div>
 
-    <!-- 内容层：:key 随选中索引整体替换，进场播 slide-in 动画。
-         刻意不用 Vue 的 out-in 过渡：离场节点会与新节点短暂并存，
-         同一选择器（.hero-title 等）会随机命中旧内容，UI 与断言都不确定。 -->
-    <div
-      :key="currentIndex"
-      class="hero-animated"
-      :style="{ '--slide-direction': slideDirection }"
-    >
-        <div class="hero-bg" :style="heroBg ? { backgroundImage: `url(${heroBg})` } : {}"></div>
-        <div class="hero-scrim-v"></div>
-        <div class="hero-scrim-h"></div>
-        <div class="hero-mask"></div>
-        <div class="hero-cover">
-          <img v-if="heroBg" :src="heroBg" :alt="heroGame.title" loading="lazy" />
-        </div>
-        <div class="hero-body">
-          <div class="hero-tag">{{ heroTag }}</div>
-          <div class="hero-title" :title="heroGame.title">{{ heroGame.title }}</div>
-          <div class="hero-sub">
-            <span v-if="heroGame.developer">{{ heroGame.developer }}</span>
-            <span v-if="heroGame.rating" class="num">
-              <Star :size="12" :fill="starColor" :stroke-width="0" /> {{ heroGame.rating.toFixed(1) }}
-            </span>
-          </div>
-        </div>
         <div class="hero-actions">
           <button class="hero-play" :disabled="launching || running" :aria-busy="launching" @click="launch">
             <Loader2 v-if="launching" :size="16" class="hero-spin" />
             <Play v-else :size="16" :fill="'currentColor'" />
             {{ playLabel }}
           </button>
-          <button class="hero-detail" @click="openDetail">{{ t('hero_detail') }}</button>
+          <button class="hero-detail" @click="goLibrary">{{ t('hero_detail') }}</button>
         </div>
-        <!-- 续读进度玻璃条：总时长/已玩/本月 KPI 已并入首屏 KpiStrip（App.vue），
-             hero 只留与续读叙事挂钩的进度一条 -->
-        <div class="hero-stats" aria-hidden="true">
-          <div class="hs-prog">
-            <div class="hs-prog-head">
-              <span class="hs-cap">{{ t('hero_stat_continue') }}</span>
-              <span class="num hs-pct">{{ continuePct }}%</span>
-            </div>
-            <div class="hs-bar"><div class="hs-fill" :style="{ width: `${continuePct}%` }"></div></div>
+
+        <!-- 最近游玩 chips：取代旧封面轨 + RecentStrip，点击切换主角 -->
+        <div v-if="recentChips.length" class="hero-recent">
+          <span class="hero-recent-label">{{ t('home_recent') }}</span>
+          <div class="hero-recent-chips">
+            <button
+              v-for="chip in recentChips"
+              :key="chip.g.id"
+              type="button"
+              class="hero-recent-chip"
+              :class="{ current: chip.idx === currentIndex }"
+              :title="chip.g.title"
+              @click="selectIndex(chip.idx)"
+            >
+              <span class="hero-recent-thumb">
+                <img
+                  v-if="coverSrc(chip.g)"
+                  :src="coverSrc(chip.g)"
+                  :alt="chip.g.title"
+                  loading="lazy"
+                  :class="{ 'nsfw-blur': nsfwHidden(chip.g) }"
+                />
+              </span>
+              <span class="hero-recent-body">
+                <span class="hero-recent-title">{{ chip.g.title }}</span>
+                <span class="hero-recent-time">{{ fmtPlayed(chip.g.lastPlayed) }}</span>
+              </span>
+            </button>
           </div>
         </div>
       </div>
-  </div>
+
+      <button type="button" class="hero-cover" :title="heroGame.title" @click="onCoverClick">
+        <img
+          v-if="heroBg"
+          :src="heroBg"
+          :alt="heroGame.title"
+          loading="lazy"
+          :class="{ 'nsfw-blur': nsfwHidden(heroGame) }"
+        />
+        <span v-else class="hero-cover-letter">{{ heroGame.title.slice(0, 2) }}</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- 候选全空（库空或被过滤光）：hero 缺席但留一句人话，不渲染 .hero -->
+  <div v-else class="hero-empty glass">{{ t('home_hero_empty') }}</div>
 </template>
 
 <style scoped>
-/* 氛围横带：整条是一个圆角卡片，背景封面模糊铺满 + 双层 scrim 压对比。 */
-/* 氛围横带：picker(170) 在上、内容(封面 132 + 底距 16) 在下，合计 340px。
-   340 让默认视图第一眼更有剧照冲击（对比 gal-launcher 的 hero 占视口比例）；
-   少于 340 会挤掉封面或让内容溢出 picker 区。 */
+/* ============ Continue 大卡 ============ */
+/* 基准口径：左列文字 + 右列竖版封面，整卡一张圆角面板；
+   氛围模糊底图 + 双层 scrim 只为左列文字可读，不再抢注意力。 */
 .hero {
   position: relative;
+  display: flex;
   flex: none;
-  height: 340px;
+  min-height: 280px;
   border-radius: var(--hh-radius-panel);
   overflow: hidden;
-  display: block;
   padding: 0;
-  margin: 0 0 2px;
   isolation: isolate;
 }
 
@@ -277,17 +296,13 @@ watch(heroCandidates, (candidates) => {
   position: absolute;
   inset: 0;
   background-size: cover;
-  background-position: center 32%;
+  background-position: center 35%;
   filter: blur(30px) saturate(1.3);
   transform: scale(1.15);
-  /* 氛围层降一档：KPI 并入首屏 KpiStrip 后，hero 背景只是陪衬，
-     大面积 bloom 会把注意力从主角封面抢走 */
-  opacity: 0.35;
+  opacity: 0.28;
   pointer-events: none;
 }
 
-/* 纵向遮罩：上下压中间透
-   变量名走 --hh-color-* 前缀：applyCssVars 对 color group 的键统一加 -color- 中缀 */
 .hero-scrim-v {
   position: absolute;
   inset: 0;
@@ -295,7 +310,7 @@ watch(heroCandidates, (candidates) => {
   pointer-events: none;
 }
 
-/* 横向遮罩：从右往左渐重，左下文字区最重 */
+/* 横向遮罩：从右往左渐重，左列文字区最重、右侧封面区最轻 */
 .hero-scrim-h {
   position: absolute;
   inset: 0;
@@ -303,198 +318,98 @@ watch(heroCandidates, (candidates) => {
   pointer-events: none;
 }
 
-/* 封面左右羽化：mask-image 渐隐两侧，右侧 86% 开始透 */
-.hero-mask {
-  position: absolute;
-  inset: 0;
-  -webkit-mask-image: linear-gradient(90deg, transparent, var(--hh-color-hero-mask-black) 14%, var(--hh-color-hero-mask-black) 86%, transparent);
-  mask-image: linear-gradient(90deg, transparent, var(--hh-color-hero-mask-black) 14%, var(--hh-color-hero-mask-black) 86%, transparent);
-  pointer-events: none;
-}
-
-.hero-cover {
+.hero-animated {
   position: relative;
   z-index: 1;
-  width: 99px;
-  /* 竖版封面统一走 token（99 × 4/3 = 132，与 .hero-animated 的构图注释一致） */
-  aspect-ratio: var(--hh-layout-cover-ratio);
-  border-radius: var(--hh-radius-sm);
-  overflow: hidden;
-  flex-shrink: 0;
-  box-shadow:
-    0 10px 28px var(--hh-color-shade-thumb),
-    inset 0 0 0 1px var(--hh-color-border-ghost-soft);
-}
-.hero-cover img {
   width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--hh-space-x8);
+  padding: var(--hh-space-x6) var(--hh-space-x8);
+  animation: hero-slide-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+@keyframes hero-slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(calc(var(--slide-direction, 1) * 2%));
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-animated {
+    animation: none;
+  }
 }
 
-.hero-body {
-  position: relative;
-  z-index: 1;
+/* 左列：基准口径 = 左置左对齐，不是居中大字 */
+.hero-main {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 5px;
-  text-align: center;
-  padding: 0 12px;
-}
-/* tag 保持小写距但居中；标题保留衬线大字（剧照感的核心是居中大字） */
-.hero-tag {
-  text-align: center;
-}
-
-.hero-tag {
-  font-size: var(--hh-font-caption-size);
-  letter-spacing: 0.14em;
-  color: var(--hh-color-on-cover-text-soft);
-  font-weight: 600;
-  /* 眉标是短标签（继续上次的故事…），绝不折行：折成三行会挤垮标题区 */
-  white-space: nowrap;
-}
-
-.hero-title {
-  font-family: 'Instrument Serif', 'Noto Serif SC', 'Source Han Serif SC', 'Songti SC', 'SimSun', Georgia, serif;
-  font-size: 30px;
-  line-height: 1.08;
-  font-weight: 600;
-  color: var(--hh-color-on-cover-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-shadow: 0 2px 16px var(--hh-shade-text);
-  letter-spacing: 0.01em;
-}
-
-.hero-sub {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-on-cover-text-soft);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  text-shadow: 0 1px 6px var(--hh-shade-text);
-}
-
-/* 封面轨贴在 hero 顶部；绝对定位使其不受下方内容流影响 */
-.hero-picker {
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 2;
-  display: flex;
   align-items: flex-start;
-  gap: 12px;
-  height: 170px;
-  padding: 8px 22px;
-  overflow-x: auto;
-  overflow-y: hidden;
-  overscroll-behavior-x: contain;
-  scrollbar-width: none;
-  user-select: none;
+  gap: var(--hh-space-x2);
 }
-.hero-picker::-webkit-scrollbar { display: none; }
 
-.hero-choice {
-  display: flex;
-  flex: 0 0 76px;
-  min-width: 0;
-  flex-direction: column;
-  align-items: center;
-  gap: 8px;
+/* kicker chip：accent 实色（基准 Continue Game 蓝 chip 的口径） */
+.hero-kicker {
+  background: var(--hh-color-accent);
+  color: var(--hh-color-on-accent);
+  border-radius: var(--hh-radius-pill);
+  padding: 4px 12px;
+  font-size: var(--hh-font-caption-size);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+/* 大标题：sans 粗体 + 左对齐 + 2 行 clamp（衬线居中大字那套废弃） */
+.hero-title {
+  margin: 0;
+  font-size: var(--hh-font-page-head-size);
+  line-height: var(--hh-font-page-head-lh);
+  font-weight: 700;
   color: var(--hh-color-on-cover-text);
-  text-align: center;
-  outline: none;
-  background: none;
-  border: none;
-  cursor: pointer;
-  transition: flex-basis 280ms cubic-bezier(0.22, 1, 0.36, 1);
-}
-.hero-thumb {
-  display: block;
-  /* 封面轨竖版化：宽高走 --hh-layout-cover-ratio（72 → 96；选中 96 → 128，
-     128 + gap 8 + caption 18 + padding 8 = 162 ≤ picker 170，轨与文字区不重叠） */
-  width: 72px;
-  aspect-ratio: var(--hh-layout-cover-ratio);
+  text-shadow: 0 2px 16px var(--hh-shade-text);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  border: 1px solid var(--hh-color-on-cover-chip-border);
-  border-radius: var(--hh-radius-md);
-  background: rgba(0,0,0,0.35);
-  box-shadow: 0 5px 16px rgba(0,0,0,0.25);
-  opacity: 0.72;
-  transition: width 280ms cubic-bezier(0.22, 1, 0.36, 1), height 280ms cubic-bezier(0.22, 1, 0.36, 1), opacity 180ms ease, box-shadow 180ms ease, border-color 180ms ease;
+  overflow-wrap: break-word;
 }
-.hero-choice[aria-selected="true"] { flex-basis: 112px; }
-.hero-choice[aria-selected="true"] .hero-thumb {
-  width: 96px;
-  opacity: 1;
-  border-color: white;
-  box-shadow:
-    0 0 0 3px rgba(8,12,25,0.5),
-    0 0 0 5px rgba(255,255,255,0.88),
-    0 8px 24px rgba(0,0,0,0.35);
-}
-.hero-choice:hover .hero-thumb { opacity: 1; }
-.hero-choice:focus-visible .hero-thumb { outline: 3px solid var(--hh-accent-focus-ring); outline-offset: 7px; }
-.hero-caption {
-  width: 100%;
+
+.hero-native {
+  max-width: 100%;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-on-cover-text-dim);
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 11px;
-  line-height: 18px;
-  opacity: 0;
-  transition: opacity 180ms ease;
 }
-.hero-choice[aria-selected="true"] .hero-caption,
-.hero-choice:hover .hero-caption,
-.hero-choice:focus-visible .hero-caption { opacity: 1; }
 
-/* 计数器与进度条：贴 hero 右上（picker 区域内），避免与底部动作区重叠 */
-.hero-counter {
-  position: absolute;
-  top: 8px;
-  right: 22px;
-  z-index: 3;
+.hero-meta {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  font-size: 11px;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--hh-font-caption-size);
   color: var(--hh-color-on-cover-text-soft);
+  max-width: 100%;
 }
-.hero-progress {
-  flex: 1;
-  height: 2px;
-  background: var(--hh-color-on-cover-glass-border);
-  border-radius: var(--hh-radius-pill);
+.hm-line {
+  white-space: nowrap;
   overflow: hidden;
-}
-.hero-progress-fill {
-  height: 100%;
-  background: var(--hh-color-on-cover-text);
-  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  text-overflow: ellipsis;
+  font-variant-numeric: tabular-nums;
 }
 
 .hero-actions {
-  position: relative;
-  z-index: 1;
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  /* body 之后靠右：actions 是 row 布局的最后一项 */
-  margin-left: auto;
-  padding-bottom: 4px;
+  gap: var(--hh-space-x2);
+  margin-top: var(--hh-space-x3);
 }
 
 /* 主按钮：白底黑字（压图最稳） */
@@ -511,16 +426,37 @@ watch(heroCandidates, (candidates) => {
   font-size: var(--hh-font-bodyLg-size);
   font-weight: 600;
   cursor: pointer;
-  transition: background 180ms ease, box-shadow 180ms ease;
-  box-shadow: 0 0 0 3px rgba(255,255,255,0.25);
+  transition:
+    background 180ms ease,
+    box-shadow 180ms ease;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
 }
-.hero-play:hover { background: var(--hh-color-hero-btn-hover); box-shadow: 0 0 0 3px rgba(255,255,255,0.35); }
-.hero-play:focus-visible { outline: 2px solid white; outline-offset: 4px; }
-.hero-play:disabled { opacity: 0.6; cursor: wait; }
+.hero-play:hover {
+  background: var(--hh-color-hero-btn-hover);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+}
+.hero-play:focus-visible {
+  outline: 2px solid white;
+  outline-offset: 4px;
+}
+.hero-play:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
 /* 启动中：图标旋转，让空窗期有明确反馈（按钮禁用防重复启动） */
-.hero-spin { animation: hero-spin 900ms linear infinite; }
-@keyframes hero-spin { to { transform: rotate(360deg); } }
-@media (prefers-reduced-motion: reduce) { .hero-spin { animation: none; } }
+.hero-spin {
+  animation: hero-spin 900ms linear infinite;
+}
+@keyframes hero-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hero-spin {
+    animation: none;
+  }
+}
 
 /* 次按钮：玻璃拟态 */
 .hero-detail {
@@ -536,63 +472,145 @@ watch(heroCandidates, (candidates) => {
   transition: background 180ms ease;
   backdrop-filter: blur(10px);
 }
-.hero-detail:hover { background: var(--hh-color-on-cover-chip-bg); }
+.hero-detail:hover {
+  background: var(--hh-color-on-cover-chip-bg);
+}
 
-/* ============ 续读进度玻璃条（KPI 已并入首屏 KpiStrip，这里只留续读） ============ */
-.hero-stats {
+/* ============ 最近游玩 chips（承接封面轨 + RecentStrip 的职能） ============ */
+.hero-recent {
+  margin-top: var(--hh-space-x6);
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: var(--hh-space-x2);
+}
+.hero-recent-label {
+  font-size: var(--hh-font-caption-size);
+  letter-spacing: 0.12em;
+  font-weight: 600;
+  color: var(--hh-color-on-cover-text-dim);
+}
+.hero-recent-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--hh-space-x2);
+}
+.hero-recent-chip {
+  display: flex;
+  align-items: center;
+  gap: var(--hh-space-x2);
+  max-width: 220px;
+  padding: 5px 10px 5px 5px;
+  border: 1px solid var(--hh-color-on-cover-chip-border);
+  border-radius: var(--hh-radius-md);
+  background: var(--hh-color-on-cover-glass-bg);
+  color: var(--hh-color-on-cover-text);
+  cursor: pointer;
+  text-align: left;
+  transition:
+    background var(--hh-motion-med) ease,
+    border-color var(--hh-motion-med) ease;
+}
+.hero-recent-chip:hover {
+  background: var(--hh-color-on-cover-chip-bg);
+}
+.hero-recent-chip.current {
+  border-color: var(--hh-color-on-cover-rule);
+}
+.hero-recent-thumb {
+  display: block;
+  width: 34px;
+  aspect-ratio: var(--hh-layout-cover-ratio);
+  border-radius: var(--hh-radius-xs);
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--hh-color-surface-strong);
+}
+.hero-recent-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.hero-recent-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.hero-recent-title {
+  font-size: var(--hh-font-body-size);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+.hero-recent-time {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-on-cover-text-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============ 右列竖版封面 ============ */
+.hero-cover {
   position: relative;
   z-index: 1;
-  flex-shrink: 0;
-  width: 168px;
-  padding: 12px 14px;
+  flex: none;
+  align-self: flex-start;
+  width: 220px;
+  aspect-ratio: var(--hh-layout-cover-ratio);
+  padding: 0;
+  border: none;
   border-radius: var(--hh-radius-md);
-  border: 1px solid var(--hh-color-on-cover-glass-border);
-  background: var(--hh-color-on-cover-glass-bg);
-  backdrop-filter: blur(14px);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.hs-cap {
-  font-size: var(--hh-font-caption-size);
-  letter-spacing: 0.1em;
-  color: var(--hh-color-on-cover-text-soft);
-  white-space: nowrap;
-}
-.hs-prog {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  margin-top: 2px;
-}
-.hs-prog-head {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-}
-.hs-pct {
-  font-size: var(--hh-font-caption-size);
-  font-weight: 600;
-  color: var(--hh-color-on-cover-text);
-}
-.hs-bar {
-  height: 4px;
-  border-radius: var(--hh-radius-pill);
-  background: var(--hh-color-on-cover-glass-border);
   overflow: hidden;
+  background: var(--hh-color-surface-strong);
+  cursor: pointer;
+  box-shadow:
+    0 10px 28px var(--hh-color-shade-thumb),
+    inset 0 0 0 1px var(--hh-color-border-ghost-soft);
 }
-.hs-fill {
+.hero-cover img {
+  width: 100%;
   height: 100%;
-  border-radius: var(--hh-radius-pill);
-  background: linear-gradient(90deg, var(--hh-color-accent), var(--hh-color-on-cover-text));
-  box-shadow: 0 0 8px var(--hh-color-accent-shadow);
-  transition: width 300ms cubic-bezier(0.22, 1, 0.36, 1);
+  object-fit: cover;
+  display: block;
 }
-/* 窄窗：统计卡隐藏（封面轨/内容优先） */
-@media (max-width: 720px) {
-  .hero-stats {
-    display: none;
-  }
+/* NSFW：与封面墙同口径——模糊压住，点击临时揭示（chip 缩略图同理） */
+.hero-cover img.nsfw-blur,
+.hero-recent-thumb img.nsfw-blur {
+  filter: blur(22px) saturate(0.9) brightness(0.8);
+}
+.hero-cover:focus-visible {
+  outline: 2px solid var(--hh-color-on-cover-text);
+  outline-offset: 2px;
+}
+/* 无封面兜底：大字标题占位（同封面墙海报口径） */
+.hero-cover-letter {
+  position: absolute;
+  inset: 0;
+  padding: var(--hh-space-x4);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 4;
+  overflow: hidden;
+  justify-content: center;
+  text-align: center;
+  font-size: 28px;
+  line-height: 1.3;
+  font-weight: 700;
+  color: var(--hh-color-on-cover-text);
+  word-break: break-all;
+}
+
+/* ============ 空态 ============ */
+.hero-empty {
+  flex: none;
+  padding: var(--hh-space-x8);
+  border-radius: var(--hh-radius-panel);
+  font-size: var(--hh-font-bodyLg-size);
+  color: var(--hh-color-text-mid);
+  text-align: center;
 }
 
 .hero.running .hero-play {
@@ -600,46 +618,17 @@ watch(heroCandidates, (candidates) => {
   color: var(--hh-on-success);
 }
 
-/* 动画容器：承载背景/遮罩/前景/动作区的整体切换 */
-/* 文案与动作区：绝对定位铺满，但顶部让出 picker 的 170px，
-   内容贴底部；否则封面（132px 贴底）会与封面轨重叠 */
-.hero-animated {
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  display: flex;
-  flex-direction: row;
-  align-items: flex-end;
-  justify-content: flex-start;
-  gap: 18px;
-  padding: 170px 22px 16px;
-}
-
-/* 进场动画：:key 变化即重新挂载，animation 每次都会播放（无离场，节点直接替换） */
-.hero-animated {
-  animation: hero-slide-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-@keyframes hero-slide-in {
-  from { opacity: 0; transform: translateX(calc(var(--slide-direction, 1) * 2%)); }
-  to { opacity: 1; transform: translateX(0); }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .hero-animated { animation: none; }
-}
-
-/* 窄屏 */
+/* 窄窗：封面缩一档但保留（跳库入口 + NSFW 交互都在封面上） */
 @media (max-width: 720px) {
-  /* 窄窗：封面轨 122 + 封面 88 + 底距 16 = 226 */
-  .hero { height: 226px; }
-  .hero-picker { height: 122px; gap: 10px; padding: 8px 16px; }
-  .hero-counter { top: 6px; right: 16px; }
-  .hero-animated { padding: 122px 16px 12px; gap: 12px; }
-  .hero-cover { width: 66px; }
-  .hero-detail { display: none; }
-  .hero-thumb { width: 54px; border-radius: var(--hh-radius-md); }
-  .hero-choice { flex: 0 0 68px; }
-  .hero-choice[aria-selected="true"] { flex-basis: 92px; }
-  .hero-choice[aria-selected="true"] .hero-thumb { width: 66px; border-radius: var(--hh-radius-md); }
+  .hero-animated {
+    padding: var(--hh-space-x4) var(--hh-space-x6);
+    gap: var(--hh-space-x4);
+  }
+  .hero-cover {
+    width: 150px;
+  }
+  .hero-recent-chip {
+    max-width: 180px;
+  }
 }
 </style>

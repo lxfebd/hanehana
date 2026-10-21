@@ -11,8 +11,7 @@ import { t, tf } from './i18n'
 import { useBoot } from './composables/useBoot'
 import { useGlobalShortcuts, shortcutHelpOpen } from './composables/useGlobalShortcuts'
 import CoverGrid from './components/CoverGrid.vue'
-import LibraryHero from './components/LibraryHero.vue'
-import RecentStrip from './components/RecentStrip.vue'
+import HomeView from './components/HomeView.vue'
 import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
 import AddGameDialog from './components/AddGameDialog.vue'
@@ -33,10 +32,8 @@ import LibraryToolbar from './components/LibraryToolbar.vue'
 import ShortcutHelp from './components/ShortcutHelp.vue'
 import GameContextMenu from './components/GameContextMenu.vue'
 import PageHeader from './components/PageHeader.vue'
-import KpiStrip, { type KpiItem } from './components/KpiStrip.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
 import CollectionView from './components/CollectionView.vue'
-import { fmtDurMs } from '../shared/format'
 
 // 启动编排（hello/刷新/订阅/窄窗口折叠/全屏控制）收在 useBoot 里，
 // 组件只拿结果：bootInfo 标题栏版本号、全屏/保存回调、gamesMounted 保活开关。
@@ -54,26 +51,9 @@ provide('gameCtxMenu', gameCtxMenu)
 
 const filteredCount = computed(() => filteredGames.value.length)
 
-// ---------------------------------------------------------------- 首屏 KPI
-// 口径与主进程 computeOverview 对齐（都是 Game 累计字段 + play-sessions 派生），
-// 不另起一套：基准 ReinaManager 首页 1666h / 统计页 538.6h 自相矛盾，
-// 我们不重演。数字格式全部过 shared/format 的 fmtDurMs（展示层唯一入口）。
-const WEEK_MS = 7 * 24 * 60 * 60 * 1000
-const DAY_MS = 24 * 60 * 60 * 1000
-const kpiItems = computed<KpiItem[]>(() => {
-  const games = library.games
-  const now = Date.now()
-  const weekMs = games.reduce((a, g) => (g.lastPlayed && g.lastPlayed >= now - WEEK_MS ? a + g.playMs : a), 0)
-  const todayMs = games.reduce((a, g) => (g.lastPlayed && g.lastPlayed >= now - DAY_MS ? a + g.playMs : a), 0)
-  const played = games.filter((g) => g.playMs > 0).length
-  return [
-    { key: 'kpi_total_games', value: String(games.length) },
-    { key: 'kpi_total_time', value: fmtDurMs(games.reduce((a, g) => a + g.playMs, 0)) },
-    { key: 'kpi_played', value: String(played) },
-    { key: 'kpi_week', value: fmtDurMs(weekMs) },
-    { key: 'kpi_today', value: fmtDurMs(todayMs) },
-  ]
-})
+// 首屏 KPI 在 HomeView（仪表盘页）：一块合并面板 + 主进程 computeOverview 口径。
+// 库页不再挂 KPI——基准 home.png 的分工就是「数字在 Home，工具在 Library」，
+// 我们此前把两页的东西全堆在库页一屏上，用户批评「首页特别杂」的根源。
 
 /** 整窗动态底：自定义背景图 > 选中游戏封面（Steam 式）。无图时透明，露出系统 Mica。 */
 function fileUrl(p: string): string {
@@ -93,10 +73,10 @@ const appBgImage = computed(() => {
   return ''
 })
 
-/** 当前页：library | downloads | games */
+/** 当前页：home | library | collection | downloads | games | stats */
 const page = computed({
   get: () => ui.page,
-  set: (v: 'library' | 'downloads' | 'games' | 'stats') => (ui.page = v),
+  set: (v: 'home' | 'library' | 'downloads' | 'games' | 'stats' | 'collection') => (ui.page = v),
 })
 
 /** 清元数据筛选（系列/开发商 chip 上的 ×）：两字段一起清 */
@@ -163,7 +143,13 @@ async function submitAddTask(input: {
 
           <!-- 中栏 -->
           <main class="content">
-            <template v-if="page === 'library'">
+            <template v-if="page === 'home'">
+              <!-- 首页仪表盘（B8，对标基准 home.png）：合并 KPI 面板 + Continue 卡
+                   + 随机游戏卡。浏览工具（搜索/筛选/封面墙）不在首页——那是库页的事 -->
+              <HomeView />
+            </template>
+
+            <template v-else-if="page === 'library'">
               <!-- 页头（面包屑 + 大标题 + 右上主操作）：页面要有名字，
                    工具栏是工具不是导航——此前工具栏直接顶到标题栏下的问题在这里修 -->
               <PageHeader :crumbs="['nav_home', 'nav_library']" :title="'nav_library'">
@@ -179,10 +165,6 @@ async function submitAddTask(input: {
                 </template>
               </PageHeader>
 
-              <!-- 首屏 KPI 条：总款数/总时长/已玩/本周/今日。hero 右下那张
-                   4 行统计卡并入这一条后已简化删除，数据只此一处展示 -->
-              <KpiStrip :items="kpiItems" />
-
               <!-- 工具栏（G17 拆出 LibraryToolbar：搜索/分类/智能列表/导出/视图） -->
               <LibraryToolbar
                 :filtered-count="filteredCount"
@@ -191,12 +173,6 @@ async function submitAddTask(input: {
                 @export="doExport"
                 @clear-meta="clearMeta()"
               />
-
-              <!-- P0 首屏冲击：库顶氛围横带（最近在玩 / 收藏精选），有图才出现 -->
-              <LibraryHero />
-
-              <!-- 最近续读条：打开不用滚就能看到「上次玩到哪」（对标 gal-launcher queue-card） -->
-              <RecentStrip />
 
               <div class="cover-wrap">
                 <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
@@ -230,20 +206,20 @@ async function submitAddTask(input: {
             <GameSites v-if="gamesMounted" v-show="page === 'games'" />
           </main>
 
-          <!-- 右侧栏：库页常驻。选中游戏 → 详情面板；未选中 → 游玩动态活动流
-               （对标 home.png 右栏 Activity：未选中任何东西时右栏也有内容，
-                不是一朵花图标 + 一句话。此前整块空白是本轮最大的视觉损失） -->
+          <!-- 右侧栏（基准布局）：home → Activity（home.png 右栏）；
+               library → 选中游戏时详情面板、未选中时 Activity（B4：右栏永远有内容）。
+               库页选中态是库页的语境，首页不沿用——首页刚进去就是动态流。 -->
           <DetailPanel
             v-if="page === 'library' && !ui.detailCollapsed && selectedGame"
             class="detail"
             @collapse="ui.detailCollapsed = true"
           />
           <ActivityFeed
-            v-else-if="page === 'library' && !ui.detailCollapsed"
+            v-else-if="(page === 'library' && !ui.detailCollapsed) || (page === 'home' && !ui.detailCollapsed)"
             class="detail"
           />
           <button
-            v-if="page === 'library' && ui.detailCollapsed"
+            v-if="(page === 'library' || page === 'home') && ui.detailCollapsed"
             class="detail-collapsed"
             :title="t('app_expand_detail')"
             :aria-label="t('app_expand_detail')"

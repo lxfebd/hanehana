@@ -339,6 +339,9 @@ const games = [
 // 游玩会话（Activity 活动流 + 每游戏时长曲线的数据源）。
 // 没有这份文件，右栏永远显示「还没有游玩记录」、曲线全零——
 // 那是种子没数据，不是功能没做。
+// 时刻基数 13:00 + 每场 3h + rand ≤30min，最晚一场 21:00 起：
+// 旧版 19:00 起 + k*1.5h 会在 k=2/3 时翻过午夜，造出「明天」的会话，
+// 活动流里多出一个未来日期分组。
 const sessions = []
 for (let d = 34; d >= 0; d--) {
   // 每天的会话数按「近几天更活跃」造一点节奏，别像尺子一样等距
@@ -346,7 +349,7 @@ for (let d = 34; d >= 0; d--) {
   for (let k = 0; k < dayBase; k++) {
     const gIdx = (d * 3 + k * 5) % 12
     const g = games[gIdx]
-    const start = now - d * 86400000 + 19 * 3600000 + k * 5400000 + Math.floor(Math.random() * 900000)
+    const start = now - d * 86400000 + 13 * 3600000 + k * 3 * 3600000 + Math.floor(Math.random() * 1800000)
     const ms = Math.floor((25 + Math.random() * 90) * 60000)
     sessions.push({ gameId: g.id, title: g.title, start, end: start + ms, ms })
   }

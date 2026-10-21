@@ -1,5 +1,6 @@
-// 最近续读条验证：seed 有 lastPlayed 的游戏 → 断言 .recent-strip 渲染、项齐全、点击选中
-// 用法：node scripts/verify_recent_strip.mjs
+// hero 最近游玩 chips 验证（B8：RecentStrip 组件退役，职能并入 Continue 卡 .hero-recent）：
+// seed 有 lastPlayed 的游戏 → 断言 .hero-recent 渲染、chip 齐全、点击切换 hero 主角
+// 用法：node scripts/verify_recent_strip.mjs（启动页即 home，无需导航）
 import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
@@ -117,34 +118,38 @@ async function main() {
       }
     }
     for (let i = 0; i < 20; i++) {
-      const e = await ev('!!document.querySelector(".recent-strip")')
+      const e = await ev('!!document.querySelector(".hero-recent")')
       if (e) break
       await new Promise((r) => setTimeout(r, 500))
     }
     await new Promise((r) => setTimeout(r, 800))
     const st = JSON.parse(
       await ev(`JSON.stringify((() => {
-        const strip = document.querySelector('.recent-strip')
-        const items = [...document.querySelectorAll('.recent-item')]
+        const strip = document.querySelector('.hero-recent')
+        const chips = [...document.querySelectorAll('.hero-recent-chip')]
         return {
           strip: !!strip,
-          count: items.length,
-          titles: items.map(i => (i.querySelector('.recent-title')||{}).textContent?.trim() || '').slice(0, 4),
-          times: items.map(i => (i.querySelector('.recent-time')||{}).textContent?.trim() || ''),
-          label: (document.querySelector('.recent-label')||{}).textContent?.trim() || '',
+          oldStrip: !!document.querySelector('.recent-strip'),
+          count: chips.length,
+          titles: chips.map(i => (i.querySelector('.hero-recent-title')||{}).textContent?.trim() || '').slice(0, 4),
+          times: chips.map(i => (i.querySelector('.hero-recent-time')||{}).textContent?.trim() || ''),
+          label: (document.querySelector('.hero-recent-label')||{}).textContent?.trim() || '',
         }
       })())`),
     )
-    ck('续读条渲染', st.strip === true, 'strip=' + st.strip)
-    ck('最近玩过的项出现', st.count >= 2, 'count=' + st.count)
-    ck('标签「最近续读」', (st.label || '').length > 0, 'label=' + st.label)
+    ck('hero 最近游玩条渲染（.hero-recent）', st.strip === true, 'strip=' + st.strip)
+    ck('旧 RecentStrip 已退役（.recent-strip 不存在）', st.oldStrip === false, 'old=' + st.oldStrip)
+    ck('最近游玩 chip 出现', st.count >= 1, 'count=' + st.count)
+    ck('标签「最近游玩」', (st.label || '').length > 0, 'label=' + st.label)
     ck('时间显示（今天/昨天/日期）', st.times.some((x) => x.length > 0), 'times=' + JSON.stringify(st.times))
-    console.log('  续读条:', JSON.stringify({ count: st.count, titles: st.titles, times: st.times, label: st.label }))
-    // 点击第一个续读项 → 选中态
-    await ev(`(() => { const i = document.querySelector('.recent-item'); if (i) { i.click(); return 'ok' } return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 500))
-    const sel = await ev(`document.querySelectorAll('.recent-item.selected').length`)
-    ck('点击续读项选中', sel === 1, 'selected=' + sel)
+    console.log('  hero-recent:', JSON.stringify({ count: st.count, titles: st.titles, times: st.times, label: st.label }))
+    // 点击末位 chip → hero 主角切换
+    const beforeTitle = (await ev(`(document.querySelector('.hero-title')||{}).textContent?.trim() || ''`)) || ''
+    const lastTitle = st.titles[st.titles.length - 1] || ''
+    await ev(`(() => { const chips=[...document.querySelectorAll('.hero-recent-chip')]; const c=chips[chips.length-1]; if(c){c.click();return 'ok'} return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 700))
+    const afterTitle = (await ev(`(document.querySelector('.hero-title')||{}).textContent?.trim() || ''`)) || ''
+    ck('点击 chip 切换 hero 主角', afterTitle === lastTitle && afterTitle !== beforeTitle, `${beforeTitle} -> ${afterTitle}（want=${lastTitle}）`)
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()

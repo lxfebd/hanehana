@@ -14,6 +14,7 @@ import {
   Download,
   Gamepad2,
   Heart,
+  House,
   LibraryBig,
   Maximize2,
   MoreHorizontal,
@@ -55,7 +56,7 @@ onMounted(() => document.addEventListener('click', closeMore))
 onUnmounted(() => document.removeEventListener('click', closeMore))
 
 /** 切页 + 顺手收起菜单（单方法调用） */
-function goPage(p: 'library' | 'downloads' | 'games' | 'stats' | 'collection'): void {
+function goPage(p: 'home' | 'library' | 'downloads' | 'games' | 'stats' | 'collection'): void {
   ui.page = p
   moreMenuOpen.value = false
 }
@@ -81,6 +82,17 @@ function moreAction(fn: () => void): void {
 
 <template>
   <nav class="glass sidebar" :aria-label="t('app_nav_aria')">
+    <!-- 首页仪表盘（B8，对标基准 Home）：KPI/Continue/Random/Activity。
+         基准的导航顺序就是 Home 在 Library 前面——仪表盘先行、浏览其次。 -->
+    <button
+      class="nav-item"
+      :class="{ active: ui.page === 'home' }"
+      :aria-current="ui.page === 'home' ? 'page' : undefined"
+      @click="goPage('home')"
+    >
+      <House :size="16" class="nav-ic" />
+      <span>{{ t('nav_home') }}</span>
+    </button>
     <button
       class="nav-item"
       :class="{ active: ui.page === 'library' }"
