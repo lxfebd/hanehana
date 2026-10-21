@@ -159,9 +159,10 @@ async function main() {
       })())`),
     )
     ck('详情面板渲染', st.panel && st.banner, 'panel=' + st.panel + ' banner=' + st.banner)
-    // hero 必须保持 224px 不被 flex 列压缩（面板内容超屏时默认 flex-shrink
-    // 会把它压成 32px 一条，封面直接消失——这是真布局缺陷，不是断言写死）
-    ck('banner hero 保持 224px 不被压缩', st.bannerH >= 220, 'h=' + st.bannerH)
+    // banner 保持 180px 不被 flex 列压缩（旧 224px 紧凑化为 180：右栏高度
+    // 预算里曲线必须在首屏可见；防 flex-shrink 回归的语义不变——没有
+    // flex:none 它会被压成 32px 一条，封面直接消失）
+    ck('banner hero 保持 180px 不被压缩', st.bannerH >= 175, 'h=' + st.bannerH)
     ck('标题有内容', (st.title || '').length > 0, 'title=' + st.title)
     ck('主按钮（启动）存在', st.play === true, 'play=' + st.play)
     ck('元数据行齐全（来源/开发商/发售/加入/时长/评分）', st.metaCount >= 6, 'cells=' + st.metaCount)
@@ -212,6 +213,11 @@ async function main() {
     ck('区间副行（play_range）存在', st.hasRangeSub === true, 'sub=' + st.hasRangeSub)
     ck('每游戏时长曲线组件存在', st.hasChart === true, 'chart=' + st.hasChart)
     ck('时长曲线渲染出 svg', st.hasChartSvg === true, 'svg=' + st.hasChartSvg)
+    // 曲线必须在首屏视口内：右栏是「banner+元数据+标签+分页+曲线」的堆叠，
+    // 每一块都在吃 780px 预算——任何一块膨胀都会把曲线推出屏幕
+    // （224px banner + 全宽收藏行的旧版就死在这里，截图里曲线完全不见）。
+    const chartInView = await ev(`(() => { const s = document.querySelector('.play-chart svg'); if (!s) return null; const r = s.getBoundingClientRect(); const panel = document.querySelector('.detail-panel'); return { top: Math.round(r.top), bottom: Math.round(r.bottom), vh: innerHeight, scrollTop: panel ? panel.scrollTop : -1 } })()`)
+    ck('曲线默认在首屏视口内（右栏紧凑化防回归）', !!chartInView && chartInView.top >= 0 && chartInView.bottom <= chartInView.vh + 2, JSON.stringify(chartInView))
     ck('三个小统计（总时长/场次/本周）', st.miniStats === 3, 'minis=' + st.miniStats)
     ck('工具与开关分组常驻（LE/Magpie）', st.hasTools === true && st.switches >= 2, 'switches=' + st.switches)
     ck('收藏按钮存在', st.favBtn, 'fav=' + st.favText)

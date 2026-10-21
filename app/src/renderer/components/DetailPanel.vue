@@ -3,10 +3,10 @@
  * 详情面板（右栏选中态）。
  *
  * 结构对标基准 detail.png / stats.png 的右栏密度：
- *   - 横幅 224px hero：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
+ *   - 横幅 180px hero：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
  *   - 元数据行：数据来源 / 开发商 / 发售日 / 加入时间 / 预计时长 / 评分一行摊开
  *     （label caption 小灰字、值正文色；空值统一「—」）
- *   - 标签区：tag 全集 + 行内搜索（实时过滤）+ 清除 + 展开/收起（默认折叠到 8 个）
+ *   - 标签区：tag 全集 + 行内搜索（实时过滤）+ 清除 + 展开/收起（默认折叠到 6 个 ≈1 行）
  *   - 四个分页（手写 segmented，无 Modal 闸）：游玩数据 / 简介 / 编辑 / 存档
  *   - 游玩数据页：7D/30D/1Y/ALL 区间切换 + 副行区间两端 + 每游戏时长曲线
  *     （缺日补零的日序列，交给 stores/sessions 的 dailyFromSessions）
@@ -261,8 +261,10 @@ const dpTabs: { key: TabKey; label: I18nKey }[] = [
 
 const tagQuery = ref('')
 const tagsExpanded = ref(false)
-/** 折叠阈值：约 2 行 chip（360px 栏宽下每行 3–4 个中文标签） */
-const TAG_COLLAPSED = 8
+/** 折叠阈值：1 行多一点（360–400px 栏宽中文标签每行 5–7 个）。
+ *  旧值 8 = 两行：把曲线推到视口外——右栏的「游玩数据」tab 必须默认
+ *  能看到图，标签是次级浏览内容，多一行靠展开按钮要回来。 */
+const TAG_COLLAPSED = 6
 
 const filteredTags = computed(() => {
   const all = g.value?.tags ?? []
@@ -381,7 +383,7 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
     </div>
 
     <template v-else>
-      <!-- 横幅 224px hero -->
+      <!-- 横幅 180px hero（紧凑化：曲线要在首屏可见，见 CSS 注释） -->
       <div class="banner" :style="bannerImg() ? {} : { background: bannerFallback() }">
         <div v-if="bannerImg()" class="banner-blur" :style="{ backgroundImage: `url(${bannerImg()})` }"></div>
         <div v-if="bannerImg()" class="banner-tint" :style="{ background: bannerFallback() }"></div>
@@ -404,6 +406,18 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
             <span v-if="g.rating" class="chip chip-rating">
               <Star :size="11" :fill="starColor" :stroke-width="0" /> {{ g.rating.toFixed(1) }}
             </span>
+            <!-- 收藏并入 chip 行：单独一条全宽收藏行白占 56px，
+                 把右栏最值钱的东西（曲线）挤出视口。类名保持 .fav-btn，
+                 verify 的收藏断言不换靶。 -->
+            <button
+              class="fav-btn chip chip-fav"
+              :class="{ on: g.favorite }"
+              :aria-pressed="g.favorite"
+              @click="toggleFavorite(g.id)"
+            >
+              <Heart :size="12" :fill="g.favorite ? 'currentColor' : 'none'" />
+              {{ g.favorite ? t('detail_faved') : t('detail_fav') }}
+            </button>
           </div>
         </div>
       </div>
@@ -466,47 +480,41 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
         </div>
       </div>
 
-      <!-- 标签区：tag 全集 + 行内搜索/清除 + 展开收起 -->
+      <!-- 标签区：标题/计数/搜索/展开合成一行 + chip 一行。
+           旧版是三行（head、search、chips）+ 独立 toggle 行：右栏每一行
+           都是从曲线头上扣的预算，合并后标签区 ~150px → ~74px。 -->
       <div class="dp-tags">
         <div class="dp-tags-head">
           <span class="dp-tags-title">{{ t('dp_tags') }}</span>
           <span class="dp-tags-count">{{ filteredTags.length }} / {{ g.tags.length }}</span>
-        </div>
-        <div class="dp-tags-search">
-          <Search :size="13" class="dp-tags-search-icon" />
-          <input
-            v-model="tagQuery"
-            class="dp-tags-input"
-            type="text"
-            :placeholder="t('dp_tags_search_ph')"
-            :aria-label="t('dp_tags_search_ph')"
-          />
-          <button
-            v-if="tagQuery"
-            class="dp-tags-clear"
-            type="button"
-            :title="t('dp_tags_clear')"
-            :aria-label="t('dp_tags_clear')"
-            @click="tagQuery = ''"
-          >
-            <X :size="12" />
+          <div class="dp-tags-search">
+            <Search :size="13" class="dp-tags-search-icon" />
+            <input
+              v-model="tagQuery"
+              class="dp-tags-input"
+              type="text"
+              :placeholder="t('dp_tags_search_ph')"
+              :aria-label="t('dp_tags_search_ph')"
+            />
+            <button
+              v-if="tagQuery"
+              class="dp-tags-clear"
+              type="button"
+              :title="t('dp_tags_clear')"
+              :aria-label="t('dp_tags_clear')"
+              @click="tagQuery = ''"
+            >
+              <X :size="12" />
+            </button>
+          </div>
+          <button v-if="tagsOverflow" class="dp-tags-toggle" type="button" @click="tagsExpanded = !tagsExpanded">
+            {{ tagsExpanded ? t('dp_tags_collapse') : t('dp_tags_expand') }}
           </button>
         </div>
         <div class="dp-tags-chips">
           <span v-for="tag in visibleTags" :key="tag" class="tag-chip" :title="tag">{{ tag }}</span>
           <span v-if="tagsEmpty" class="dp-tags-none">{{ t('dp_tags_none') }}</span>
         </div>
-        <button v-if="tagsOverflow" class="dp-tags-toggle" type="button" @click="tagsExpanded = !tagsExpanded">
-          {{ tagsExpanded ? t('dp_tags_collapse') : t('dp_tags_expand') }}
-        </button>
-      </div>
-
-      <!-- 收藏行 -->
-      <div class="fav-row">
-        <button class="fav-btn" :class="{ on: g.favorite }" :aria-pressed="g.favorite" @click="toggleFavorite(g.id)">
-          <Heart :size="13" :fill="g.favorite ? 'currentColor' : 'none'" />
-          {{ g.favorite ? t('detail_faved') : t('detail_fav') }}
-        </button>
       </div>
 
       <!-- 分页：游玩数据 / 简介 / 编辑 / 存档（手写 segmented，不用 Modal 壳） -->
@@ -540,8 +548,10 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
           >
             {{ t(r.label) }}
           </button>
+          <!-- 区间两端日期并入 chip 行右侧：单独占一行（18px+间距）
+               在右栏预算里就是曲线的头 -->
+          <span class="pc-range-sub">{{ tf('play_range', { from: rangeFromText, to: rangeToText }) }}</span>
         </div>
-        <div class="pc-range-sub">{{ tf('play_range', { from: rangeFromText, to: rangeToText }) }}</div>
         <PlayChart :series="series" :height="150" />
         <div class="dp-mini-stats">
           <div class="dp-mini">
@@ -678,13 +688,14 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
 
 <style scoped>
 .detail-panel {
-  width: 360px;
+  width: var(--hh-layout-detail-w);
   position: relative;
   overflow-y: auto;
   padding: 12px;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  /* 8px 列距：右栏 8 个区块的间距合计省 28px，全部记在曲线的头上 */
+  gap: var(--hh-space-x2);
 }
 .detail-collapse {
   position: sticky;
@@ -728,15 +739,17 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   font-size: var(--hh-font-body-size);
 }
 
-/* ============ 横幅 224px hero ============ */
+/* ============ 横幅 180px hero ============ */
 .banner {
   border-radius: var(--hh-radius-panel);
   overflow: hidden;
   position: relative;
-  height: 224px;
+  height: 180px;
   /* 固定高度的 hero 不许被 flex 列压缩：面板内容（元数据/标签/分页/曲线）
      远超视口高度时，默认 flex-shrink:1 会把它压成一条（实测 32px），
-     封面就没了。flex:none = 保持 224px，溢出交给 .detail-panel 滚动。 */
+     封面就没了。flex:none = 保持声明高度，溢出交给 .detail-panel 滚动。
+     224→180：右栏总高预算 ≈780px，旧值把「游玩数据」tab 的曲线整个推出
+     视口（截图实测曲线 top=826 > 782）——180 让曲线+区间 chip 默认在屏内。 */
   flex: none;
   display: flex;
   align-items: flex-end;
@@ -772,8 +785,8 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
 }
 .banner-cover {
   position: relative;
-  width: 104px;
-  height: 156px;
+  width: 88px;
+  height: 132px;
   border-radius: var(--hh-radius-md);
   overflow: hidden;
   flex-shrink: 0;
@@ -870,6 +883,7 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
 }
 .ghost-btn {
   flex: 1;
+  min-width: 0;
   height: 36px;
   border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-border-ghost-soft);
@@ -881,6 +895,9 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   align-items: center;
   justify-content: center;
   gap: 6px;
+  /* 不换行：旧版「复制信息」被挤成两行按钮高出一截。四个标签里最长的
+     4 汉字（56px）+ 图标（20px）在 352px 内容宽的四等分按钮里放得下。 */
+  white-space: nowrap;
   transition: background var(--hh-motion-med);
 }
 .ghost-btn:hover {
@@ -937,10 +954,10 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   flex-direction: column;
   gap: var(--hh-space-x2);
 }
+/* head 一行装下：标题 + 计数 + 搜索框（flex 吃掉剩余） + 展开按钮 */
 .dp-tags-head {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
+  align-items: center;
   gap: var(--hh-space-x2);
 }
 .dp-tags-title {
@@ -952,8 +969,10 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   color: var(--hh-color-text-dim);
   font-variant-numeric: tabular-nums;
 }
-/* 行内嵌搜索框：与 chip 同一行开始，占满栏宽（不弹浮层、不压内容） */
+/* 行内嵌搜索框：并入 head 行，flex 吃掉标题/计数/展开之外的剩余宽度 */
 .dp-tags-search {
+  flex: 1;
+  min-width: 0;
   display: flex;
   align-items: center;
   gap: var(--hh-space-x2);
@@ -1023,44 +1042,36 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   color: var(--hh-color-text-dim);
 }
 .dp-tags-toggle {
-  align-self: flex-start;
+  flex: none;
   border: none;
   background: none;
   color: var(--hh-color-accent);
   font-size: var(--hh-font-caption-size);
   cursor: pointer;
   padding: 0;
+  white-space: nowrap;
 }
 .dp-tags-toggle:hover {
   color: var(--hh-color-accent-hover);
 }
 
-/* ============ 收藏行 ============ */
-.fav-row {
-  display: flex;
-}
+/* ============ 收藏（banner chip 行内的 chip 按钮） ============ */
+/* 旧版是 banner 下面一条全宽 44px 收藏行——右栏高度预算里没有它的位置，
+   曲线被推出视口。现在它和 发行日期/评分 同排（对标 detail.png 的
+   Score chip 位置），类名 .fav-btn 不变，verify 断言不换靶。 */
 .fav-btn {
-  flex: 1;
-  height: 32px;
-  border-radius: var(--hh-radius-sm);
-  border: 1px solid var(--hh-color-border-ghost-soft);
-  background: transparent;
-  color: var(--hh-color-text-mid);
-  font-size: 12.5px;
+  border: none;
+  background: var(--hh-color-surface-strong);
+  color: var(--hh-color-text-bright);
+  font-family: inherit;
   cursor: pointer;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
   transition: all var(--hh-motion-med);
 }
 .fav-btn:hover {
-  background: var(--hh-color-surface-mid);
-  color: var(--hh-color-text-glow);
+  background: var(--hh-color-surface-hover);
 }
 .fav-btn.on {
   background: var(--hh-color-warning-soft-bg);
-  border-color: var(--hh-color-star);
   color: var(--hh-color-star);
   font-weight: 600;
 }
@@ -1115,6 +1126,7 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
 /* 区间切换（7D/30D/1Y/ALL） */
 .pc-range {
   display: flex;
+  align-items: center;
   gap: var(--hh-space-x1);
   flex-wrap: wrap;
 }
@@ -1142,9 +1154,11 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   font-weight: 600;
 }
 .pc-range-sub {
+  margin-left: auto;
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim);
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
 }
 
 /* 小统计（总时长 / 场次 / 本周） */

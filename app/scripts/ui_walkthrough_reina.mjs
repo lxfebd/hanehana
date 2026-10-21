@@ -117,11 +117,21 @@ async function main() {
     console.log('HOME:', boot)
     await shot('01-home')
 
-    // 详情：点第一张卡（先滚进视口）
-    await ev(`(() => { document.querySelector('.cover-card')?.scrollIntoView({ block: 'center' }); return true })()`)
-    await wait(500)
+    // 详情：JS click 不需要卡片在视口内——不要 scrollIntoView，
+    // 那会把中栏滚下去，截图里页头/KPI 条消失（02 截图曾因此拍成半张脸）。
     await ev(`(() => { document.querySelector('.cover-card')?.click(); return true })()`)
     await wait(900)
+    // 面板/中栏回顶部：沿卡片祖先链把所有真滚得动的容器归零
+    // （不猜容器类名——谁的 overflow/height 结构以后都会变）。
+    await ev(`(() => {
+      let el = document.querySelector('.cover-card')
+      while (el) { if (el.scrollHeight > el.clientHeight + 1) el.scrollTop = 0; el = el.parentElement }
+      window.scrollTo(0, 0)
+      const dp = document.querySelector('.detail-panel')
+      if (dp) dp.scrollTop = 0
+      return true
+    })()`)
+    await wait(400)
     const dp = await ev(
       `JSON.stringify({ meta: document.querySelectorAll('.dp-meta-cell').length, tags: document.querySelectorAll('.dp-tags-chips .tag-chip').length, tabs: document.querySelectorAll('.dp-tab').length, chart: !!document.querySelector('.play-chart svg') })`,
     )
