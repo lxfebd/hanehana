@@ -415,11 +415,17 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
 </template>
 
 <style scoped>
+/* 滚动链关键一环：.cover-wrap 是 display:block 且 position:relative（不是
+   flex 容器），块级子元素写 flex:1/align-self 之类一律无效——本层以前写
+   flex:1 + min-height:0，benchmark 里看着对、运行时高度直接随内容涨
+   （12 款实测 1968px），RecycleScroller 拿到 clientHeight=内容全高，
+   无溢出可滚，「全部游戏」页于是滑不动。absolute 四边贴 0 才是 block
+   父级里唯一可靠的「填满确定高度」写法；overflow:hidden 收敛加载态。 */
 .cover-wall {
-  flex: 1;
+  position: absolute;
+  inset: 0;
   overflow: hidden;
   min-height: 0;
-  position: relative;
 }
 
 /* RecycleScroller 自己滚：撑满容器 */

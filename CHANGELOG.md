@@ -2,10 +2,13 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [0.2.9] - 2026-10-22
+## [0.2.10] - 2026-10-22
 
 ### 修复
 
+- **`npm run dev` 在本机 harness 终端必崩**：环境自带 `ELECTRON_RUN_AS_NODE=1`（harness 自身是 Electron 应用，子进程继承），把 electron.exe 降级成纯 Node，main 加载即 SyntaxError。新增 `scripts/dev_app.mjs`（spawn 前清变量 + 直调 node_modules 里的 electron-vite CLI，绕开 Windows npx `.cmd` ENOENT），`dev`/`start` 两条 script 都改走它。
+
+- **「全部游戏」页封面墙滑不动**（用户实测）：`.cover-wall` 写 `flex:1 + min-height:0`，但其父 `.cover-wrap` 是 `display:block`（不是 flex 容器），flex 语法全部无效——高度随内容涨（12 款实测 1968px vs 视口 585px），RecycleScroller 拿到的 clientHeight 就是内容全高，没有溢出可滚。改 `position:absolute; inset:0` 填满 relative 父级。`verify_cover_render` 新增滚动链断言（填满父级 + 有溢出时 scrollTop 真变化；内容少时验高度链闭合）。
 - **右栏信息流滚不动**（用户实测）：`.detail` 是 `.layout` 的 flex item，flex stretch 给的高度不是 definite height，里头 `height:100%` 的 ActivityFeed 百分比塌成 auto，`.af-body` 的 `flex:1` 抢不到剩余空间——整条动态流不滚。修 `.detail`（`align-self:stretch` + `min-height:0`）闭合高度链，ActivityFeed 改 `flex:1` 填充。`verify_recent_strip` 新增 7 条防回归断言（高度链/溢出/真滚一次）。
 
 ## [0.2.8] - 2026-10-22

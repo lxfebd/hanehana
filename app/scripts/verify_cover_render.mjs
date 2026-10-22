@@ -1,5 +1,7 @@
 // 端到端验证"图刮削"的用户视角：seed 游戏 → 详情打开刮削 → 应用 YMGal 候选（webp 封面）
 // → 断言封面墙 <img> 真实渲染（naturalWidth > 0，hh:// 协议喂图成功）。
+// 附加：封面墙滚动链防回归（cover-wall 必须填满 cover-wrap 且真滚得动，
+// 见文件末尾断言——曾因 flex:1 写在 display:block 父级上而整页滑不动）。
 // 用法：node scripts/verify_cover_render.mjs
 import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -181,6 +183,49 @@ async function main() {
     ck('封面图真实渲染 (naturalWidth>0)', imgState.has && imgState.w > 0, JSON.stringify(imgState))
     ck('封面通过 hh:// 协议加载', String(imgState.src || '').startsWith('hh://'), 'src=' + imgState.src)
     console.log('  img:', JSON.stringify(imgState))
+
+    // ---- 封面墙滚动链（修复「全部游戏页滑不动」的防回归）----
+    // .cover-wall 曾写 flex:1，但其父 .cover-wrap 是 display:block（非 flex 容器）,
+    // flex/min-height 全部无效 → 高度随内容涨 → .scroller 无溢出可滚。
+    // 断言：cover-wall 填满 cover-wrap、scroller 拿到确定高度且溢出可滚、真滚一次。
+    const scroll = JSON.parse(
+      await ev(`JSON.stringify((() => {
+        const wrap = document.querySelector('.cover-wrap')
+        const wall = document.querySelector('.cover-wall')
+        const sc = document.querySelector('.vue-recycle-scroller') || document.querySelector('.scroller')
+        if (!wrap || !wall || !sc) return { ok: false, wall: !!wall, sc: !!sc }
+        const wr = wrap.getBoundingClientRect()
+        const wallr = wall.getBoundingClientRect()
+        const wcs = getComputedStyle(wall)
+        const before = sc.scrollTop
+        sc.scrollTop = 400
+        return {
+          ok: true,
+          wrapH: Math.round(wr.height),
+          wallH: Math.round(wallr.height),
+          wallOverflow: wallr.height > wr.height + 1,
+          wallPos: wcs.position,
+          scrollerClientH: sc.clientHeight,
+          scrollerScrollH: sc.scrollHeight,
+          scrollable: sc.scrollHeight > sc.clientHeight + 1,
+          rolled: sc.scrollTop !== before,
+          afterRoll: sc.scrollTop
+        }
+      })())`),
+    )
+    ck('封面墙滚动链元素齐全', scroll.ok === true, JSON.stringify({ wall: scroll.wall, sc: scroll.sc }))
+    ck('cover-wall 填满 cover-wrap（绝对定位贴 0，不溢出）', scroll.ok && scroll.wallOverflow === false && scroll.wallPos === 'absolute', `wall=${scroll.wallH} wrap=${scroll.wrapH} pos=${scroll.wallPos}`)
+    // 溢出与滚动真判定要分开：本脚本只 seed 1 款（一屏装得下，本就无溢出），
+    // 所以「无溢出」不代表滚动链坏。判据分两档：
+    //   有溢出 → 必须滚得动（scrollTop 真变）；
+    //   无溢出 → clientHeight 必须等于 cover-wall 高度（说明高度链闭合、
+    //            不是 scroller 被内容撑爆后「假的不溢出」）。
+    if (scroll.scrollable) {
+      ck('有溢出时滚动真生效（scrollTop 变化）', scroll.rolled === true, `after=${scroll.afterRoll}`)
+    } else {
+      ck('内容无溢出时高度链仍闭合（ch == wall 高）', scroll.scrollerClientH === scroll.wallH, `ch=${scroll.scrollerClientH} wall=${scroll.wallH}`)
+    }
+    console.log('  rail:', JSON.stringify(scroll))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
