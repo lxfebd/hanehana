@@ -1,22 +1,79 @@
 <script setup lang="ts">
 /**
- * 右栏默认可见内容：游玩动态（按日分组的会话时间线）。
+ * 右栏默认可见内容：游玩动态（基准 home.png 右栏 Activity 的仿制）。
  *
- * 这是对标改造里**最大的视觉损失修复**：基准 ReinaManager 右栏永远有内容
- * （home.png 的 Activity 时间线），羽花此前只有一朵花图标 + 一句话，
- * 首屏右侧整块空白。数据早有（play-sessions.json + Ipc.StatsSessions），
- * 只缺渲染。
- *
- * 分组口径：今天/昨天用相对名（比绝对日期直观），更早的按 yyyy-mm-dd。
- * 每条 = 图标 + 「玩过 {title}」+ 「{n} 场会话 · {dur}」——与基准
- * 「Played 原神 · 1 session · 33 minutes」同结构。
+ * 对标要点（基准口径）：
+ *   - 头部页签 全部/玩过/新增：事件流不止游玩会话，「入库」也是一等事件；
+ *   - 每条带封面缩略图 + 图标（游戏手柄 / 加号），不是纯文字圆点；
+ *   - 按日分组（今天/昨天/日期），组头带当日总时长；
+ *   - 条目可点：跳到库页选中该游戏（基准点条目直接开详情）。
+ * 我们的口径优势保留：本周时长常驻（基准没有，但这是「口径一致」主张的
+ * 展示位——和首页 KPI、统计页同源取数）。
  */
-import { computed, onMounted } from 'vue'
-import { History, RefreshCw, Timer } from 'lucide-vue-next'
+import { computed, onMounted, ref } from 'vue'
+import { Gamepad2, History, Plus, RefreshCw, Timer } from 'lucide-vue-next'
 import { t, tf } from '../i18n'
-import type { PlaySession } from '../../shared/types'
-import { groupByDay, refreshActivity, sessionsState, sumMs } from '../stores/sessions'
-import { ONE_DAY_MS, fmtDurMs } from '../../shared/format'
+import { library, thumbUrl } from '../stores/library'
+import { dayBucketKey, refreshActivity, sessionsState, sumMs } from '../stores/sessions'
+import { ONE_DAY_MS, fmtDurMs, fmtTime } from '../../shared/format'
+import { ui } from '../stores/ui'
+
+type FeedKind = 'all' | 'play' | 'added'
+const feedKind = ref<FeedKind>('all')
+
+/** 合并事件：play（会话）+ added（游戏入库）。ts 倒序；全部页签限 60 条，
+ *  防库大时把会话事件全挤出首屏（基准 All 也是混合流 + 滚动加载） */
+interface FeedItem {
+  kind: 'play' | 'added'
+  ts: number
+  title: string
+  gameId: string
+  ms: number
+}
+
+const items = computed<FeedItem[]>(() => {
+  const out: FeedItem[] = []
+  if (feedKind.value !== 'added') {
+    for (const s of sessionsState.list) out.push({ kind: 'play', ts: s.end, title: s.title, gameId: s.gameId, ms: s.ms })
+  }
+  if (feedKind.value !== 'play') {
+    for (const g of library.games) {
+      if (g.addedAt) out.push({ kind: 'added', ts: g.addedAt, title: g.title, gameId: g.id, ms: 0 })
+    }
+  }
+  out.sort((a, b) => b.ts - a.ts)
+  return feedKind.value === 'all' ? out.slice(0, 60) : out.slice(0, 120)
+})
+
+/** 按日分组（组键/排序与游玩动态既有口径一致：今天/昨天相对名，更早日期） */
+const groups = computed(() => {
+  const buckets = new Map<string, FeedItem[]>()
+  for (const it of items.value) {
+    const key = dayBucketKey(it.ts)
+    const arr = buckets.get(key) ?? []
+    arr.push(it)
+    buckets.set(key, arr)
+  }
+  return [...buckets.entries()].map(([key, its]) => ({ key, items: its }))
+})
+
+const gamesById = computed(() => new Map(library.games.map((g) => [g.id, g])))
+
+function coverOf(it: FeedItem): string {
+  const g = gamesById.value.get(it.gameId)
+  return g ? thumbUrl(g) : ''
+}
+
+function dayPlayMs(its: FeedItem[]): number {
+  return its.reduce((a, it) => a + it.ms, 0)
+}
+
+/** 条目点击 = 库页选中该游戏（库已没有它就不跳——事件比库新的竞态很少但存在） */
+function openGame(it: FeedItem): void {
+  if (!gamesById.value.has(it.gameId)) return
+  ui.page = 'library'
+  library.selectedId = it.gameId
+}
 
 /** 本周起点（周一）——与「本周时长」的周口径一致 */
 const weekStart = computed(() => {
@@ -25,7 +82,6 @@ const weekStart = computed(() => {
   d.setHours(0, 0, 0, 0)
   return d.getTime() - dow * ONE_DAY_MS
 })
-const groups = computed(() => groupByDay(sessionsState.list))
 const weekMs = computed(() => sumMs(sessionsState.list, weekStart.value))
 const loading = computed(() => sessionsState.loading)
 
@@ -33,9 +89,13 @@ onMounted(() => {
   void refreshActivity()
 })
 
-/** 一天的总时长：组内会话累加（同一天的会话可能多条） */
-function dayMs(items: PlaySession[]): number {
-  return sumMs(items)
+function dayName(key: string): string {
+  return key === 'today' ? t('act_today') : key === 'yesterday' ? t('act_yesterday') : key
+}
+
+/** 「新增于」行的时间：只到日（入库事件没有时刻精度） */
+function addedDate(ts: number): string {
+  return fmtTime(ts)
 }
 </script>
 
@@ -43,31 +103,66 @@ function dayMs(items: PlaySession[]): number {
   <section class="activity-feed" :aria-label="t('act_title')">
     <header class="af-head">
       <span class="af-title"><History :size="15" /> {{ t('act_title') }}</span>
-      <span class="af-week" :title="t('act_week_short')">
-        <Timer :size="13" />
-        <span class="af-week-label">{{ t('act_week_short') }}</span>
-        <strong class="af-week-value">{{ fmtDurMs(weekMs) }}</strong>
-      </span>
+      <div class="af-tabs" role="group">
+        <button
+          type="button"
+          class="af-tab"
+          :class="{ on: feedKind === 'all' }"
+          :aria-pressed="feedKind === 'all'"
+          @click="feedKind = 'all'"
+        >
+          {{ t('act_tab_all') }}
+        </button>
+        <button
+          type="button"
+          class="af-tab"
+          :class="{ on: feedKind === 'play' }"
+          :aria-pressed="feedKind === 'play'"
+          @click="feedKind = 'play'"
+        >
+          {{ t('act_tab_played') }}
+        </button>
+        <button
+          type="button"
+          class="af-tab"
+          :class="{ on: feedKind === 'added' }"
+          :aria-pressed="feedKind === 'added'"
+          @click="feedKind = 'added'"
+        >
+          {{ t('act_tab_added') }}
+        </button>
+      </div>
     </header>
 
     <div class="af-body">
       <p v-if="loading" class="af-empty">{{ t('act_refresh') }}…</p>
-      <p v-else-if="!groups.length" class="af-empty">{{ t('act_empty') }}</p>
+      <p v-else-if="!groups.length" class="af-empty">
+        {{ feedKind === 'added' ? t('act_added_empty') : t('act_empty') }}
+      </p>
       <template v-else>
         <div v-for="g in groups" :key="g.key" class="af-day">
           <div class="af-day-head">
-            <span class="af-day-name">
-              {{ g.key === 'today' ? t('act_today') : g.key === 'yesterday' ? t('act_yesterday') : g.key }}
+            <span class="af-day-name">{{ dayName(g.key) }}</span>
+            <span class="af-day-total">{{ fmtDurMs(dayPlayMs(g.items)) }}</span>
+          </div>
+          <button v-for="it in g.items" :key="`${it.kind}-${it.gameId}-${it.ts}`" class="af-item" type="button" @click="openGame(it)">
+            <span class="af-ic" :class="{ 'af-ic-add': it.kind === 'added' }" aria-hidden="true">
+              <Plus v-if="it.kind === 'added'" :size="12" />
+              <Gamepad2 v-else :size="12" />
             </span>
-            <span class="af-day-total">{{ fmtDurMs(dayMs(g.items)) }}</span>
-          </div>
-          <div v-for="s in g.items" :key="s.start" class="af-item">
-            <span class="af-dot" aria-hidden="true"></span>
-            <div class="af-main">
-              <span class="af-title-line" :title="s.title">{{ tf('act_played', { title: s.title }) }}</span>
-              <span class="af-meta">{{ tf('act_meta', { n: 1, dur: fmtDurMs(s.ms) }) }}</span>
-            </div>
-          </div>
+            <span class="af-thumb">
+              <img v-if="coverOf(it)" :src="coverOf(it)" :alt="it.title" loading="lazy" />
+              <span v-else class="af-thumb-letter">{{ it.title.slice(0, 1) }}</span>
+            </span>
+            <span class="af-main">
+              <span class="af-title-line" :title="it.title">
+                {{ it.kind === 'added' ? tf('act_added', { title: it.title }) : tf('act_played', { title: it.title }) }}
+              </span>
+              <span class="af-meta">
+                {{ it.kind === 'added' ? tf('act_added_meta', { date: addedDate(it.ts) }) : tf('act_meta', { n: 1, dur: fmtDurMs(it.ms) }) }}
+              </span>
+            </span>
+          </button>
         </div>
       </template>
     </div>
@@ -77,6 +172,11 @@ function dayMs(items: PlaySession[]): number {
         <RefreshCw :size="13" />
         <span>{{ t('act_refresh') }}</span>
       </button>
+      <span class="af-week" :title="t('act_week_short')">
+        <Timer :size="13" />
+        <span class="af-week-label">{{ t('act_week_short') }}</span>
+        <strong class="af-week-value">{{ fmtDurMs(weekMs) }}</strong>
+      </span>
     </footer>
   </section>
 </template>
@@ -110,19 +210,41 @@ function dayMs(items: PlaySession[]): number {
   font-size: var(--hh-font-bodyLg-size);
   font-weight: 600;
   color: var(--hh-color-text-glow);
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
 }
 
-/* 本周时长：小条不是 KPI 大卡——右栏通栏放不下 26px 数字 */
-.af-week {
+/* 全部/玩过/新增 页签（基准 Activity All|Played|Added 口径） */
+.af-tabs {
   display: flex;
-  align-items: center;
-  gap: var(--hh-space-x2);
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-mid);
+  background: var(--hh-color-surface-soft);
+  border: 1px solid var(--hh-color-border-faint);
+  border-radius: var(--hh-radius-pill);
+  padding: 2px;
+  flex: none;
 }
-.af-week-value {
-  color: var(--hh-color-text-bright);
-  font-variant-numeric: tabular-nums;
+.af-tab {
+  border: none;
+  background: transparent;
+  color: var(--hh-color-text-mid);
+  font-size: var(--hh-font-caption-size);
+  font-family: inherit;
+  padding: 3px 10px;
+  border-radius: var(--hh-radius-pill);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
+}
+.af-tab:hover {
+  color: var(--hh-color-text-glow);
+}
+.af-tab.on {
+  background: var(--hh-color-card-hover);
+  color: var(--hh-color-text-glow);
+  font-weight: 600;
 }
 
 .af-body {
@@ -158,40 +280,86 @@ function dayMs(items: PlaySession[]): number {
   font-variant-numeric: tabular-nums;
 }
 
-/* 时间线：竖线 + 圆点；圆点用 accent 弱化处理，避免满屏粉 */
+/* 条目 = 按钮（可点开游戏）。时间线竖线沿图标列走 */
 .af-item {
   position: relative;
   display: flex;
   gap: var(--hh-space-x3);
-  padding: var(--hh-space-x2) 0 var(--hh-space-x2) 0;
-  align-items: flex-start;
+  padding: var(--hh-space-x2) var(--hh-space-x2) var(--hh-space-x2) 0;
+  align-items: center;
+  width: 100%;
+  border: none;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+  border-radius: var(--hh-radius-sm);
+}
+.af-item:hover {
+  background: var(--hh-color-surface-soft);
 }
 .af-item::before {
   content: '';
   position: absolute;
-  left: 4px;
+  left: 11px;
   top: 0;
   bottom: 0;
   width: 1px;
   background: var(--hh-color-border-faint);
 }
 .af-item:first-of-type::before {
-  top: 14px;
+  top: 18px;
 }
 .af-item:last-of-type::before {
   bottom: auto;
-  height: 14px;
+  height: 18px;
 }
-.af-dot {
+
+/* 事件图标：圆环 + 图标（基准 gamepad 圆圈的口径） */
+.af-ic {
   position: relative;
   z-index: 1;
   flex: none;
-  margin-top: 5px;
-  width: 9px;
-  height: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 23px;
+  height: 23px;
   border-radius: var(--hh-radius-pill);
-  background: var(--hh-color-accent);
-  box-shadow: 0 0 0 3px var(--hh-color-accent-soft);
+  background: var(--hh-color-accent-soft);
+  color: var(--hh-color-select-text);
+}
+.af-ic-add {
+  background: var(--hh-color-success-soft);
+  color: var(--hh-color-success);
+}
+
+/* 封面缩略图：竖版 cover-ratio（基准每条带封面） */
+.af-thumb {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 38px;
+  aspect-ratio: var(--hh-layout-cover-ratio);
+  border-radius: var(--hh-radius-xs);
+  overflow: hidden;
+  background: var(--hh-color-cover-fallback);
+}
+.af-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.af-thumb-letter {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: var(--hh-font-bodyLg-size);
+  font-weight: 700;
+  color: var(--hh-color-text-mid);
 }
 
 .af-main {
@@ -205,7 +373,6 @@ function dayMs(items: PlaySession[]): number {
 .af-title-line {
   font-size: var(--hh-font-body-size);
   color: var(--hh-color-text-glow);
-  max-width: 300px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -227,8 +394,25 @@ function dayMs(items: PlaySession[]): number {
 
 .af-foot {
   flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--hh-space-x3);
   padding: var(--hh-space-x2) var(--hh-space-x4);
   border-top: 1px solid var(--hh-color-border-faint);
+}
+
+/* 本周时长：小条不是 KPI 大卡——右栏通栏放不下 26px 数字 */
+.af-week {
+  display: flex;
+  align-items: center;
+  gap: var(--hh-space-x2);
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-mid);
+}
+.af-week-value {
+  color: var(--hh-color-text-bright);
+  font-variant-numeric: tabular-nums;
 }
 
 .af-refresh {
@@ -239,6 +423,7 @@ function dayMs(items: PlaySession[]): number {
   background: transparent;
   color: var(--hh-color-text-mid);
   font-size: var(--hh-font-caption-size);
+  font-family: inherit;
   cursor: pointer;
   padding: var(--hh-space-x2);
   border-radius: var(--hh-radius-sm);

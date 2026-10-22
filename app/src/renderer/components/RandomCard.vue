@@ -9,7 +9,7 @@
  * 取样：全库均匀随机（有封面的优先——无封面的随机卡视觉上像空卡，
  * 随机性让位于「这一眼能勾起兴趣」）。连续两次不出同款。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { Dices, Info, Play, RefreshCw } from 'lucide-vue-next'
 import { launchGame, library, thumbUrl } from '../stores/library'
 import { isNsfwGame } from '../../shared/nsfw'
@@ -46,6 +46,18 @@ function openInLibrary(): void {
 const nsfwHidden = computed(() => !!pick.value && isNsfwGame(pick.value.tags))
 
 onMounted(shuffle)
+
+/**
+ * 库是异步加载的：App 刚挂载时 library.games 往往还空着，只跑 onMounted
+ * 的 shuffle 会把「空库」当真——12 款摆在眼前卡片却说“游戏库还是空的”。
+ * 库一变长、而手头的 pick 还是空，就重新抽一次。
+ */
+watch(
+  () => library.games.length,
+  (n) => {
+    if (n > 0 && !pick.value) shuffle()
+  },
+)
 </script>
 
 <template>

@@ -228,35 +228,36 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
           </button>
           <button class="hero-detail" @click="goLibrary">{{ t('hero_detail') }}</button>
         </div>
+      </div>
 
-        <!-- 最近游玩 chips：取代旧封面轨 + RecentStrip，点击切换主角 -->
-        <div v-if="recentChips.length" class="hero-recent">
-          <span class="hero-recent-label">{{ t('home_recent') }}</span>
-          <div class="hero-recent-chips">
-            <button
-              v-for="chip in recentChips"
-              :key="chip.g.id"
-              type="button"
-              class="hero-recent-chip"
-              :class="{ current: chip.idx === currentIndex }"
-              :title="chip.g.title"
-              @click="selectIndex(chip.idx)"
-            >
-              <span class="hero-recent-thumb">
-                <img
-                  v-if="coverSrc(chip.g)"
-                  :src="coverSrc(chip.g)"
-                  :alt="chip.g.title"
-                  loading="lazy"
-                  :class="{ 'nsfw-blur': nsfwHidden(chip.g) }"
-                />
-              </span>
-              <span class="hero-recent-body">
-                <span class="hero-recent-title">{{ chip.g.title }}</span>
-                <span class="hero-recent-time">{{ fmtPlayed(chip.g.lastPlayed) }}</span>
-              </span>
-            </button>
-          </div>
+      <!-- 最近游玩 chips：基准口径 = 卡底通栏一横排（只占封面左侧的区域），
+           不是嵌在文本列里竖着堆。取代旧封面轨 + RecentStrip，点击切换主角 -->
+      <div v-if="recentChips.length" class="hero-recent">
+        <span class="hero-recent-label">{{ t('home_recent') }}</span>
+        <div class="hero-recent-chips">
+          <button
+            v-for="chip in recentChips"
+            :key="chip.g.id"
+            type="button"
+            class="hero-recent-chip"
+            :class="{ current: chip.idx === currentIndex }"
+            :title="chip.g.title"
+            @click="selectIndex(chip.idx)"
+          >
+            <span class="hero-recent-thumb">
+              <img
+                v-if="coverSrc(chip.g)"
+                :src="coverSrc(chip.g)"
+                :alt="chip.g.title"
+                loading="lazy"
+                :class="{ 'nsfw-blur': nsfwHidden(chip.g) }"
+              />
+            </span>
+            <span class="hero-recent-body">
+              <span class="hero-recent-title">{{ chip.g.title }}</span>
+              <span class="hero-recent-time">{{ fmtPlayed(chip.g.lastPlayed) }}</span>
+            </span>
+          </button>
         </div>
       </div>
 
@@ -318,14 +319,18 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   pointer-events: none;
 }
 
+/* 基准口径的网格：右列封面通贯两行，左上文字、左下最近游玩通栏横排 */
 .hero-animated {
   position: relative;
   z-index: 1;
   width: 100%;
-  display: flex;
-  align-items: stretch;
-  justify-content: space-between;
-  gap: var(--hh-space-x8);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 224px;
+  grid-template-areas:
+    'main cover'
+    'recent cover';
+  align-items: start;
+  gap: var(--hh-space-x6) var(--hh-space-x8);
   padding: var(--hh-space-x6) var(--hh-space-x8);
   animation: hero-slide-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
@@ -347,7 +352,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 
 /* 左列：基准口径 = 左置左对齐，不是居中大字 */
 .hero-main {
-  flex: 1;
+  grid-area: main;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -478,8 +483,9 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 
 /* ============ 最近游玩 chips（承接封面轨 + RecentStrip 的职能） ============ */
 .hero-recent {
-  margin-top: var(--hh-space-x6);
+  grid-area: recent;
   width: 100%;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   gap: var(--hh-space-x2);
@@ -490,16 +496,19 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   font-weight: 600;
   color: var(--hh-color-on-cover-text-dim);
 }
+/* 基准是 4 枚一横排，但它的左区有 600px；我们 1280 窗里左区只有 ~320px，
+   4 枚挤成 78px 宽、标题竖排成灾。改 2x2：单枚宽度与基准同款（~150px），
+   只是排成两行——观感优先于行列数照抄。 */
 .hero-recent-chips {
-  display: flex;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--hh-space-x2);
 }
 .hero-recent-chip {
   display: flex;
   align-items: center;
   gap: var(--hh-space-x2);
-  max-width: 220px;
+  min-width: 0;
   padding: 5px 10px 5px 5px;
   border: 1px solid var(--hh-color-on-cover-chip-border);
   border-radius: var(--hh-radius-md);
@@ -544,7 +553,6 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  max-width: 150px;
 }
 .hero-recent-time {
   font-size: var(--hh-font-caption-size);
@@ -552,14 +560,12 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   font-variant-numeric: tabular-nums;
 }
 
-/* ============ 右列竖版封面 ============ */
+/* ============ 右列竖版封面（网格通贯两行，占满卡右侧全高） ============ */
 .hero-cover {
+  grid-area: cover;
   position: relative;
   z-index: 1;
-  flex: none;
-  align-self: flex-start;
-  width: 220px;
-  aspect-ratio: var(--hh-layout-cover-ratio);
+  width: 224px;
   padding: 0;
   border: none;
   border-radius: var(--hh-radius-md);
@@ -621,14 +627,15 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 /* 窄窗：封面缩一档但保留（跳库入口 + NSFW 交互都在封面上） */
 @media (max-width: 720px) {
   .hero-animated {
+    grid-template-columns: minmax(0, 1fr) 150px;
     padding: var(--hh-space-x4) var(--hh-space-x6);
     gap: var(--hh-space-x4);
   }
   .hero-cover {
     width: 150px;
   }
-  .hero-recent-chip {
-    max-width: 180px;
+  .hero-recent-chips {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 </style>

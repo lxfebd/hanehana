@@ -346,10 +346,14 @@ const sessions = []
 for (let d = 34; d >= 0; d--) {
   // 每天的会话数按「近几天更活跃」造一点节奏，别像尺子一样等距
   const dayBase = d < 7 ? 3 : d < 20 ? 2 : d % 2 === 0 ? 1 : 0
+  // 当日 0 点（本地）——会话时刻是「那一天的 13:00 起」，不是「种子时刻 + 13h」：
+  // 后者在早上跑脚本时会把 k=2 的场次推到次日凌晨，造出「明天」分组。
+  const day0 = new Date(now - d * 86400000)
+  day0.setHours(0, 0, 0, 0)
   for (let k = 0; k < dayBase; k++) {
     const gIdx = (d * 3 + k * 5) % 12
     const g = games[gIdx]
-    const start = now - d * 86400000 + 13 * 3600000 + k * 3 * 3600000 + Math.floor(Math.random() * 1800000)
+    const start = day0.getTime() + 13 * 3600000 + k * 3 * 3600000 + Math.floor(Math.random() * 1800000)
     const ms = Math.floor((25 + Math.random() * 90) * 60000)
     sessions.push({ gameId: g.id, title: g.title, start, end: start + ms, ms })
   }

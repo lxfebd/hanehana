@@ -89,7 +89,8 @@ await send('Runtime.enable')
 await send('Page.enable')
 function pass(name, ok, extra = '') { console.log(`  ${ok ? '[PASS]' : '[FAIL]'} ${name}${extra ? '  -- ' + extra : ''}`); if (!ok) process.exitCode = 1 }
 
-for (let i = 0; i < 60; i++) { if (await ev('!!(window.hh && document.querySelector(".cover-card"))')) break; await sleep(300) }
+// B8：启动页 = home（hero 在首页、封面墙在库页）。hero 在启动页就绪即可开测
+for (let i = 0; i < 60; i++) { if (await ev('!!(window.hh && document.querySelector(".hero"))')) break; await sleep(300) }
 await sleep(800)
 
 console.log('==== 进程状态机（主进程权威 + 推送 + 派生）====')
@@ -143,6 +144,9 @@ pass('B4 按钮显示「运行中」',
 pass('B5 推送真的收到了（starting→running）', !!(later && later.pushes.length >= 1), `pushes=${later && JSON.stringify(later.pushes)}`)
 
 console.log('== C 主进程与渲染层一致 ==')
+// 封面墙（运行角标）在库页：导航过去数角标；D 段的 hero-play 再回首页
+await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+await sleep(900)
 const bothRaw = await ev(`window.hh.runningGames().then(r => JSON.stringify({ mainRunning: r, renderRunning: document.querySelectorAll('.cover-running').length })).catch(e => 'ERR:' + (e && e.message))`)
 console.log('  [diag] =', bothRaw)
 const both = bothRaw.startsWith('{') ? JSON.parse(bothRaw) : { mainRunning: [], renderRunning: 0 }
@@ -150,6 +154,9 @@ pass('C1 主进程 runningGames 含 g1', both.mainRunning.includes('g1'), `main=
 pass('C2 渲染层封面墙有运行角标', both.renderRunning >= 1, `marks=${both.renderRunning}`)
 
 console.log('== D 状态不会永久卡在启动中 ==')
+// 回首页：D2 看的是 hero 启动按钮文案
+await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('首页') || (x.textContent || '').includes('Home')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+await sleep(700)
 // notepad 开着窗口不会自己退出——走查自己 taskkill 靶进程，
 // 主进程监听 exit → 状态转 exited / 清条目 → 按钮恢复。
 // （旧注释「notepad 会立刻退出」是错的，脚本因此永远挂在 D）
