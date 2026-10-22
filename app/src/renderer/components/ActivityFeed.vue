@@ -185,7 +185,11 @@ function addedDate(ts: number): string {
 .activity-feed {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  /* 右栏滚动容器：flex 填充 + min-height:0 闭合高度链。
+     曾用 height:100%——在 flex item（.detail）的 stretch 高度下百分比
+     不解析，主体分不到剩余空间，整条动态流滑不动。 */
+  flex: 1;
+  align-self: stretch;
   min-height: 0;
   background: var(--hh-color-panel-glass);
   border: 1px solid var(--hh-color-panel-glass-border);

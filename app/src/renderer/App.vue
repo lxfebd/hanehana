@@ -366,9 +366,16 @@ async function submitAddTask(input: {
   color: var(--hh-color-select-text);
 }
 
+/* 右栏高度链的最后一环。.detail 是 .layout 的 flex item，flex stretch
+   给的高度不是 definite height——里头若写 height:100%（ActivityFeed 就是），
+   百分比会塌成 auto，子项不收缩，.af-body 的 flex:1 抢不到剩余空间，
+   overflow-y:auto 永远不滚（详情面板当初 32px banner 的同一条病根）。
+   align-self:stretch 显式化 + min-height:0 允许收缩，环才闭合。 */
 .detail {
   width: var(--hh-layout-detail-w);
   position: relative;
+  align-self: stretch;
+  min-height: 0;
 }
 
 /* 页头右侧主操作：图标 + 文字（基准 §0-8）。带文字才叫「主操作」，

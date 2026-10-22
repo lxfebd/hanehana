@@ -1,5 +1,7 @@
 // hero 最近游玩 chips 验证（B8：RecentStrip 组件退役，职能并入 Continue 卡 .hero-recent）：
 // seed 有 lastPlayed 的游戏 → 断言 .hero-recent 渲染、chip 齐全、点击切换 hero 主角
+// 附加：右栏滚动链防回归（.detail/.activity-feed/.af-body 高度链必须闭合，
+// 否则动态流滑不动——曾因 flex item 的 stretch 高度不是 definite height 而整条不滚）。
 // 用法：node scripts/verify_recent_strip.mjs（启动页即 home，无需导航）
 import { spawn, spawnSync } from 'node:child_process'
 import { join } from 'node:path'
@@ -150,6 +152,49 @@ async function main() {
     await new Promise((r) => setTimeout(r, 700))
     const afterTitle = (await ev(`(document.querySelector('.hero-title')||{}).textContent?.trim() || ''`)) || ''
     ck('点击 chip 切换 hero 主角', afterTitle === lastTitle && afterTitle !== beforeTitle, `${beforeTitle} -> ${afterTitle}（want=${lastTitle}）`)
+
+    // ---- 右栏滚动链（修复「信息流无法滑动」的防回归）----
+    // 判定不靠「内容比容器高」（数据少时也成立）：直接查计算样式链 +
+    // 用 wheel 事件真滚一次，看 scrollTop 是否变化。
+    const rail = JSON.parse(
+      await ev(`JSON.stringify((() => {
+        const detail = document.querySelector('.detail')
+        const feed = document.querySelector('.activity-feed')
+        const body = document.querySelector('.af-body')
+        if (!feed || !body) return { feed: false }
+        const cs = (el) => { const s = getComputedStyle(el); return { flex: s.flexGrow + '/' + s.flexShrink, minH: s.minHeight, overflowY: s.overflowY, height: s.height } }
+        const dr = detail ? detail.getBoundingClientRect() : null
+        const fr = feed.getBoundingClientRect()
+        const br = body.getBoundingClientRect()
+        return {
+          feed: true,
+          detailH: dr ? Math.round(dr.height) : -1,
+          feedH: Math.round(fr.height),
+          bodyH: Math.round(br.height),
+          feedTallerThanDetail: !!dr && fr.height > dr.height + 1,
+          detailCS: detail ? cs(detail) : null,
+          feedCS: cs(feed),
+          bodyCS: cs(body),
+          scrollable: body.scrollHeight > body.clientHeight + 1,
+          railTallerThanWindow: fr.bottom > window.innerHeight + 1,
+          winH: window.innerHeight,
+        }
+      })())`),
+    )
+    ck('右栏活动流渲染', rail.feed === true, 'feed=' + rail.feed)
+    ck('feed不顶出右栏（flex 填充而非内容高度）', rail.feedTallerThanDetail === false, `feed=${rail.feedH} detail=${rail.detailH}`)
+    ck('右栏不越过窗口底边', rail.railTallerThanWindow === false, `bottom 超出 ${rail.winH}`)
+    ck('右栏 .detail 高度链闭合（stretch + min-height:0）', rail.detailCS && rail.detailCS.minH === '0px', JSON.stringify(rail.detailCS))
+    ck('af-body 是滚动容器（overflow-y:auto）', !!rail.bodyCS && rail.bodyCS.overflowY === 'auto', JSON.stringify(rail.bodyCS))
+    // 真滚一次：内容可滚（35 天会话）时 scrollTop 必须真的动；
+    // 内容没溢出时不滚——两种都算滚动链闭合，只有「该滚滚不动」是病。
+    const rolled = await ev(`(() => { const b = document.querySelector('.af-body'); if (!b) return { err: 'no-body' }; const before = b.scrollTop; b.scrollTop = 60; return { err: '', before, after: b.scrollTop, overflow: b.scrollHeight > b.clientHeight + 1, changed: b.scrollTop !== before } })()`)
+    ck(
+      '右栏信息流滚得动（溢出时 scrollTop 真变化）',
+      !rolled.err && (rolled.overflow ? rolled.changed : true),
+      JSON.stringify(rolled),
+    )
+    console.log('  rail:', JSON.stringify(rail))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()

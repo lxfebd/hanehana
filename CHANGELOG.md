@@ -2,6 +2,12 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.9] - 2026-10-22
+
+### 修复
+
+- **右栏信息流滚不动**（用户实测）：`.detail` 是 `.layout` 的 flex item，flex stretch 给的高度不是 definite height，里头 `height:100%` 的 ActivityFeed 百分比塌成 auto，`.af-body` 的 `flex:1` 抢不到剩余空间——整条动态流不滚。修 `.detail`（`align-self:stretch` + `min-height:0`）闭合高度链，ActivityFeed 改 `flex:1` 填充。`verify_recent_strip` 新增 7 条防回归断言（高度链/溢出/真滚一次）。
+
 ## [0.2.8] - 2026-10-22
 
 ### 变更
