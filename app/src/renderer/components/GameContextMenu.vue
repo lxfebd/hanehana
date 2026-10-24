@@ -23,7 +23,7 @@ import {
 } from 'lucide-vue-next'
 import { message } from 'ant-design-vue'
 import { library, openEdit, openScrape, refreshGames, toggleFavorite } from '../stores/library'
-import { t } from '../i18n'
+import { t, tf } from '../i18n'
 
 /** 菜单目标（游戏 id）+ 屏幕坐标。null = 关着的。 */
 const target = ref<{ id: string; title: string; dir: string; favorite: boolean } | null>(null)
@@ -98,10 +98,17 @@ async function actFavorite(): Promise<void> {
   if (id) await toggleFavorite(id)
 }
 
-function actOpenDir(): void {
+/** 打开目录：失败（目录被移动/删除）必须提示——静默失败时按钮「点了没反应」。 */
+async function actOpenDir(): Promise<void> {
   const dir = target.value?.dir
   close()
-  if (dir) void window.hh.openDir(dir)
+  if (!dir) return
+  try {
+    const why = await window.hh.openDir(dir)
+    if (why) message.error(tf('dv_open_dir_fail', { why }))
+  } catch (e) {
+    message.error(tf('dv_open_dir_fail', { why: e instanceof Error ? e.message : String(e) }))
+  }
 }
 
 async function actCopyTitle(): Promise<void> {

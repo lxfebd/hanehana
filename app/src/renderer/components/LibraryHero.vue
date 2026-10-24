@@ -300,7 +300,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   background-position: center 35%;
   filter: blur(30px) saturate(1.3);
   transform: scale(1.15);
-  opacity: 0.28;
+  opacity: var(--hh-color-hero-bg-opacity);
   pointer-events: none;
 }
 
@@ -325,10 +325,10 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   z-index: 1;
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 224px;
+  grid-template-columns: minmax(0, 1fr) 240px;
   grid-template-areas:
     'main cover'
-    'recent cover';
+    'recent recent';
   align-items: start;
   gap: var(--hh-space-x6) var(--hh-space-x8);
   padding: var(--hh-space-x6) var(--hh-space-x8);
@@ -377,8 +377,8 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   font-size: var(--hh-font-page-head-size);
   line-height: var(--hh-font-page-head-lh);
   font-weight: 700;
-  color: var(--hh-color-on-cover-text);
-  text-shadow: 0 2px 16px var(--hh-shade-text);
+  color: var(--hh-color-hero-text);
+  text-shadow: var(--hh-color-hero-title-shadow);
   display: -webkit-box;
   -webkit-box-orient: vertical;
   -webkit-line-clamp: 2;
@@ -389,7 +389,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 .hero-native {
   max-width: 100%;
   font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-on-cover-text-dim);
+  color: var(--hh-color-hero-text-dim);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -400,7 +400,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   flex-direction: column;
   gap: 2px;
   font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-on-cover-text-soft);
+  color: var(--hh-color-hero-text-soft);
   max-width: 100%;
 }
 .hm-line {
@@ -426,7 +426,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   padding: 0 22px;
   border: none;
   border-radius: var(--hh-radius-pill);
-  background: white;
+  background: var(--hh-color-hero-btn-bg);
   color: var(--hh-color-hero-btn-text);
   font-size: var(--hh-font-bodyLg-size);
   font-weight: 600;
@@ -434,14 +434,14 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   transition:
     background 180ms ease,
     box-shadow 180ms ease;
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+  box-shadow: 0 0 0 3px var(--hh-color-hero-btn-ring);
 }
 .hero-play:hover {
   background: var(--hh-color-hero-btn-hover);
-  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.35);
+  box-shadow: 0 0 0 3px var(--hh-color-hero-btn-ring-hover);
 }
 .hero-play:focus-visible {
-  outline: 2px solid white;
+  outline: 2px solid var(--hh-color-accent);
   outline-offset: 4px;
 }
 .hero-play:disabled {
@@ -467,10 +467,10 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 .hero-detail {
   height: 38px;
   padding: 0 16px;
-  border: 1px solid var(--hh-color-on-cover-glass-border);
+  border: 1px solid var(--hh-color-hero-glass-border);
   border-radius: var(--hh-radius-pill);
-  background: var(--hh-color-on-cover-glass-bg);
-  color: var(--hh-color-on-cover-text);
+  background: var(--hh-color-hero-glass-bg);
+  color: var(--hh-color-hero-text);
   font-size: var(--hh-font-body-size);
   font-weight: 500;
   cursor: pointer;
@@ -478,7 +478,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   backdrop-filter: blur(10px);
 }
 .hero-detail:hover {
-  background: var(--hh-color-on-cover-chip-bg);
+  background: var(--hh-color-hero-chip-bg);
 }
 
 /* ============ 最近游玩 chips（承接封面轨 + RecentStrip 的职能） ============ */
@@ -494,26 +494,28 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   font-size: var(--hh-font-caption-size);
   letter-spacing: 0.12em;
   font-weight: 600;
-  color: var(--hh-color-on-cover-text-dim);
+  color: var(--hh-color-hero-text-dim);
 }
-/* 基准是 4 枚一横排，但它的左区有 600px；我们 1280 窗里左区只有 ~320px，
-   4 枚挤成 78px 宽、标题竖排成灾。改 2x2：单枚宽度与基准同款（~150px），
-   只是排成两行——观感优先于行列数照抄。 */
+/* 基准口径：最近游玩是**卡底通栏一横排**（横跨封面下方的整卡宽度），不是嵌在
+   文本列里的 2x2 方块——2x2 时 1280 窗里每枚只有 ~78px，标题被裁成「美..」、
+   时间换行成灾。通栏之后单枚 ~150px，与基准同档；窄窗横向滚动而不是缩列。 */
 .hero-recent-chips {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  display: flex;
   gap: var(--hh-space-x2);
+  overflow-x: auto;
+  min-width: 0;
 }
 .hero-recent-chip {
   display: flex;
   align-items: center;
   gap: var(--hh-space-x2);
-  min-width: 0;
+  flex: 1 1 152px;
+  min-width: 132px;
   padding: 5px 10px 5px 5px;
-  border: 1px solid var(--hh-color-on-cover-chip-border);
+  border: 1px solid var(--hh-color-hero-chip-border);
   border-radius: var(--hh-radius-md);
-  background: var(--hh-color-on-cover-glass-bg);
-  color: var(--hh-color-on-cover-text);
+  background: var(--hh-color-hero-glass-bg);
+  color: var(--hh-color-hero-text);
   cursor: pointer;
   text-align: left;
   transition:
@@ -521,10 +523,10 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
     border-color var(--hh-motion-med) ease;
 }
 .hero-recent-chip:hover {
-  background: var(--hh-color-on-cover-chip-bg);
+  background: var(--hh-color-surface-strong);
 }
 .hero-recent-chip.current {
-  border-color: var(--hh-color-on-cover-rule);
+  border-color: var(--hh-color-hero-rule);
 }
 .hero-recent-thumb {
   display: block;
@@ -556,7 +558,8 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 }
 .hero-recent-time {
   font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-on-cover-text-soft);
+  white-space: nowrap;
+  color: var(--hh-color-hero-text-soft);
   font-variant-numeric: tabular-nums;
 }
 
@@ -565,7 +568,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   grid-area: cover;
   position: relative;
   z-index: 1;
-  width: 224px;
+  width: 240px;
   padding: 0;
   border: none;
   border-radius: var(--hh-radius-md);
@@ -588,7 +591,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   filter: blur(22px) saturate(0.9) brightness(0.8);
 }
 .hero-cover:focus-visible {
-  outline: 2px solid var(--hh-color-on-cover-text);
+  outline: 2px solid var(--hh-color-accent);
   outline-offset: 2px;
 }
 /* 无封面兜底：大字标题占位（同封面墙海报口径） */
@@ -605,7 +608,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   font-size: 28px;
   line-height: 1.3;
   font-weight: 700;
-  color: var(--hh-color-on-cover-text);
+  color: var(--hh-color-poster-ink);
   word-break: break-all;
 }
 
@@ -620,8 +623,8 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 }
 
 .hero.running .hero-play {
-  background: var(--hh-success);
-  color: var(--hh-on-success);
+  background: var(--hh-color-success);
+  color: var(--hh-color-on-success);
 }
 
 /* 窄窗：封面缩一档但保留（跳库入口 + NSFW 交互都在封面上） */
@@ -634,8 +637,8 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   .hero-cover {
     width: 150px;
   }
-  .hero-recent-chips {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+  .hero-recent-chip {
+    flex: 0 0 132px;
   }
 }
 </style>

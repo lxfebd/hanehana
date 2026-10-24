@@ -176,8 +176,8 @@ function moreAction(fn: () => void): void {
 <style scoped>
 /* ============ 侧栏 ============ */
 .sidebar {
-  width: 208px;
-  padding: 12px;
+  width: 108px;
+  padding: 10px 8px;
   position: relative;
   /* .glass 的 backdrop-filter 会建立层叠上下文且 z-index 仍为 auto，
      内容区里后绘制的封面（position:absolute 行项）会盖住悬出的 .more-menu。
@@ -193,9 +193,9 @@ function moreAction(fn: () => void): void {
   display: flex;
   justify-content: flex-start;
   align-items: center;
-  gap: 8px;
-  height: 34px;
-  padding: 0 10px;
+  gap: 6px;
+  height: 32px;
+  padding: 0 8px;
   border-radius: var(--hh-radius-sm);
   margin-bottom: 2px;
   cursor: pointer;

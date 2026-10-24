@@ -18,7 +18,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { CalendarDays, Gamepad2, Timer } from 'lucide-vue-next'
 import { library, overviewState, refreshOverview } from '../stores/library'
-import { fmtDurMs } from '../../shared/format'
+import { fmtDurMsKpi } from '../../shared/format'
 import { t } from '../i18n'
 import LibraryHero from './LibraryHero.vue'
 import RandomCard from './RandomCard.vue'
@@ -28,10 +28,10 @@ const period = ref<PeriodKey>('month')
 
 const ov = computed(() => overviewState.data)
 const kpiTotalGames = computed(() => String(library.games.length))
-const kpiTotalTime = computed(() => fmtDurMs(ov.value?.totalMs ?? 0))
-const kpiToday = computed(() => fmtDurMs(ov.value?.todayMs ?? 0))
+const kpiTotalTime = computed(() => fmtDurMsKpi(ov.value?.totalMs ?? 0))
+const kpiToday = computed(() => fmtDurMsKpi(ov.value?.todayMs ?? 0))
 const kpiPeriod = computed(() =>
-  fmtDurMs(period.value === 'week' ? (ov.value?.weekMs ?? 0) : (ov.value?.monthMs ?? 0)),
+  fmtDurMsKpi(period.value === 'week' ? (ov.value?.weekMs ?? 0) : (ov.value?.monthMs ?? 0)),
 )
 
 onMounted(() => {
@@ -142,10 +142,9 @@ onMounted(() => {
   flex: none;
 }
 .hk-val {
-  /* 22px（title 档）不是 kpi 的 26px：1280 CSS 宽的窗口里，侧栏 208 +
-     右栏 400 之后 KPI 面板每格内容宽只有 ~117px，26px 的「446h 6min」
-     会被裁成「446h 6…」。基准的 30px 大数是在 1806 宽的窗里，比例换过来
-     就是这个档。宽窗（>1600）再升回 kpi。 */
+  /* 22px（title 档）不是 kpi 的 26px：窄窗里每格内容宽只有 ~117px，26px 的长
+     时长会被裁。基准的 30px 大数是在 1806 宽的窗里，比例换过来就是这个档。
+     宽窗（>1600）升回 kpi；窄窗的时长由 fmtDurMsKpi 收短，两者共同保证不截断。 */
   font-size: var(--hh-font-title-size);
   line-height: var(--hh-font-title-lh);
   font-weight: 700;
@@ -161,7 +160,9 @@ onMounted(() => {
     line-height: var(--hh-font-kpi-lh);
   }
 }
+/* 周期格比其余三格更宽：label（本月）+ 周/月 toggle 同排，等宽时 label 会被挤成「本」 */
 .hk-period {
+  flex: 1.35;
   gap: var(--hh-space-x2);
 }
 .hk-top {

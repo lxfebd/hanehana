@@ -16,6 +16,7 @@
  * 剥干净只留正文——基准把 `[From url=…]Wikipedia[/url]]` 直接怼到界面上。
  */
 import { computed, ref, watch } from 'vue'
+import { message } from 'ant-design-vue'
 import {
   Activity,
   Check,
@@ -160,8 +161,16 @@ async function toggleCategory(): Promise<void> {
   await applyPatch(game.id, { categories: next })
 }
 
-function openDir(): void {
-  if (g.value) void window.hh.openDir(g.value.dir)
+/** 打开目录：失败（目录被移动/删除）弹提示——静默失败时按钮「点了没反应」。 */
+async function openDir(): Promise<void> {
+  const game = g.value
+  if (!game) return
+  try {
+    const why = await window.hh.openDir(game.dir)
+    if (why) message.error(tf('dv_open_dir_fail', { why }))
+  } catch (e) {
+    message.error(tf('dv_open_dir_fail', { why: e instanceof Error ? e.message : String(e) }))
+  }
 }
 
 async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {

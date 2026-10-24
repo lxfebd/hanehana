@@ -159,7 +159,7 @@ watch(
 .rc-cover {
   position: relative;
   flex: none;
-  width: 104px;
+  width: 132px;
   aspect-ratio: var(--hh-layout-cover-ratio);
   border-radius: var(--hh-radius-md);
   overflow: hidden;

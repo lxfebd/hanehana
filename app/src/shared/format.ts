@@ -93,6 +93,21 @@ export function fmtDurMs(ms: number | null | undefined): string {
   return `${totalMin}min`
 }
 
+/**
+ * KPI 窄格专用紧凑时长（1280 CSS 宽的窗口里，侧栏 + 400 右栏之后每格内容宽只有
+ * ~117px，`446h 6min` 会被裁成「446h 6…」——基准图里没有这种粗粒度的截断）。
+ * 口径与 fmtDurMs 同源，只是 ≥10h 舍掉分钟、<10h 用 `m` 缩写；详情/活动流仍用 fmtDurMs。
+ */
+export function fmtDurMsKpi(ms: number | null | undefined): string {
+  if (!ms || !Number.isFinite(ms) || ms <= 0) return '0min'
+  const totalMin = Math.floor(ms / 60000)
+  const h = Math.floor(totalMin / 60)
+  const m = totalMin % 60
+  if (h >= 10) return `${h}h`
+  if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`
+  return `${totalMin}min`
+}
+
 /** 本地时区 yyyy-mm-dd（会话归日/日序列分组用，与主进程 stats.ts 同一口径）。 */
 export function dayKey(ts: number): string {
   const d = new Date(ts)

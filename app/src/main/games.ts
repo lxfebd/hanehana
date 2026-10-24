@@ -214,8 +214,15 @@ export function handleBatchRemove(ids: string[]): BatchResult {
   return { updated: 0, removed }
 }
 
-export function handleOpenDir(dir: string): void {
-  shell.openPath(dir)
+/**
+ * 打开游戏目录：shell.openPath 的失败（目录已不存在/被移动/权限）只在返回的
+ * 错误字符串里体现，不 throw——原来吞掉返回值，目录失效时按钮「点了没反应」，
+ * 用户完全无从知道是路径没了。现在把失败原样带回渲染层提示。
+ */
+export async function handleOpenDir(dir: string): Promise<string> {
+  if (!existsSync(dir)) return `目录不存在（${dir}），游戏可能已被移动或删除`
+  const why = await shell.openPath(dir)
+  return why
 }
 
 export function handleOpenExeDir(exePath: string): void {
@@ -441,6 +448,37 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
         }
       }
     }
+    // Magpie 缩放（G2）路径解析：设置显式路径 > 环境变量 > 常见安装位置。
+    // 老游戏不能全屏时靠 Magpie 把窗口放大接管（超分辨率缩放），所以和 LE 一样
+    // 在 spawn 前解析：勾了 Magpie 却找不到工具时直接报错给用户去设置里指路径，
+    // 不再静默跳过（以前游戏照常启动、缩放却没发生，用户只觉得「开关没用」）。
+    let magpiePath = ''
+    if (g.useMagpie) {
+      const cfgMg = toolPathsFn?.().magpie.trim() ?? ''
+      magpiePath =
+        cfgMg && existsSync(cfgMg)
+          ? cfgMg
+          : process.env.HANEHANA_MAGPIE_PATH && existsSync(process.env.HANEHANA_MAGPIE_PATH)
+            ? process.env.HANEHANA_MAGPIE_PATH
+            : detectToolPath([
+                'C:\\Program Files\\Magpie\\Magpie.exe',
+                'C:\\Program Files (x86)\\Magpie\\Magpie.exe',
+                'D:\\Tools\\Magpie\\Magpie.exe',
+                'C:\\Magpie\\Magpie.exe',
+                // winget 安装（`winget install -id Blibla.Magpie`）的 link 与包目录
+                `${process.env.LOCALAPPDATA}\\Microsoft\\WinGet\\Links\\magpie.exe`,
+                `${process.env.LOCALAPPDATA}\\Microsoft\\WinGet\\Links\\Magpie.exe`,
+                // 手工便携版常见落点
+                `${process.env.LOCALAPPDATA}\\Programs\\Magpie\\Magpie.exe`,
+                'C:\\tools\\magpie\\magpie.exe',
+              ])
+      if (!magpiePath) {
+        return {
+          ok: false,
+          error: '游戏启用了 Magpie 缩放，但找不到 Magpie.exe（请到设置→工具里指定 Magpie 路径，或先安装 Magpie）',
+        }
+      }
+    }
     // spawn 前同步预检：cmd 存在性 + cwd 有效性。spawn 的 ENOENT 走异步 error
     // 事件，handleLaunch 已经返回 ok:true，用户看到「已启动」但游戏根本没起来——
     // 这里把最常见的两种失败提前拦截成同步返回，错误立刻可见。
@@ -504,31 +542,17 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
       setProcState(id, { status: 'exited', pid: null })
     })
 
-    // Magpie 缩放（G2）：游戏起来后拉起 Magpie，置前台接管渲染缩放。
+    // Magpie 缩放（G2）：游戏起来后拉起 Magpie，置前台接管渲染缩放（老游戏全屏）。
     // Magpie 用命令行动态缩放模式：Magpie.exe --launch <exePath>（<1.0 同义）。
-    if (g.useMagpie) {
-      const cfgMg = toolPathsFn?.().magpie.trim() ?? ''
-      const magpie =
-        cfgMg && existsSync(cfgMg)
-          ? cfgMg
-          : process.env.HANEHANA_MAGPIE_PATH && existsSync(process.env.HANEHANA_MAGPIE_PATH)
-            ? process.env.HANEHANA_MAGPIE_PATH
-            : detectToolPath([
-                'C:\\Program Files\\Magpie\\Magpie.exe',
-                'C:\\Program Files (x86)\\Magpie\\Magpie.exe',
-                'D:\\Tools\\Magpie\\Magpie.exe',
-                'C:\\Magpie\\Magpie.exe',
-              ])
-      if (magpie) {
-        // 等 1s 让游戏窗口出现，再让 Magpie 接管（太早会抓不到目标窗口）
-        setTimeout(() => {
-          try {
-            spawn(magpie, ['--launch', exe], { detached: true, stdio: 'ignore', windowsHide: false })
-          } catch {
-            // Magpie 拉起失败不阻塞游戏本体；用户仍可手动开
-          }
-        }, 1000)
-      }
+    if (magpiePath) {
+      // 等 1s 让游戏窗口出现，再让 Magpie 接管（太早会抓不到目标窗口）
+      setTimeout(() => {
+        try {
+          spawn(magpiePath, ['--launch', exe], { detached: true, stdio: 'ignore', windowsHide: false })
+        } catch {
+          // Magpie 拉起失败不阻塞游戏本体；用户仍可手动开
+        }
+      }, 1000)
     }
 
     // 启动后挂接命令（G2）：不等待，并行拉起辅助工具（OCR/翻译/进度条）

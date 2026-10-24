@@ -77,7 +77,7 @@ const view = computed(() => {
         stroke-width="1"
       />
       <!-- 面积 + 折线：accent 色；面积低透明 -->
-      <path v-if="view.area" :d="view.area" fill="var(--hh-color-accent)" opacity="0.14" />
+      <path v-if="view.area" :d="view.area" fill="var(--hh-color-accent)" opacity="0.04" />
       <path
         :d="view.line"
         fill="none"

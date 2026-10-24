@@ -2,7 +2,7 @@
  * 游戏库 IPC：列表/删改/启动/手动入库/导出。通道名全部来自 Ipc，一字不改。
  */
 import { dialog, ipcMain } from 'electron'
-import { existsSync, writeFileSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { resolve as resolvePath } from 'node:path'
 import { Ipc } from '../../shared/ipc'
 import { getGames, getGame, sanitizeGamePatch } from '../gameStore'
@@ -88,12 +88,12 @@ export function registerGamesHandlers(ctx: IpcCtx): void {
   // 进程状态快照：渲染层启动时取一次对齐，之后靠 GameProcessChanged 推送增量
   ipcMain.handle(Ipc.GameProcesses, () => handleProcessStates())
 
-  // 打开目录只接受磁盘上真实存在的路径
-  ipcMain.handle(Ipc.OpenDir, (_e, dir: unknown) => {
-    if (typeof dir !== 'string' || !dir.trim() || dir.length > 4000) return
-    const p = dir.trim()
-    if (!existsSync(p)) return
-    handleOpenDir(p)
+  // 打开目录只接受合法字符串路径；失败（不存在 / shell 报错）把错误字符串
+  // 原样带回（空串 = 成功）——以前静默 return，目录被移走后「打开目录」按钮
+  // 点了毫无反应，用户不知道原因。
+  ipcMain.handle(Ipc.OpenDir, async (_e, dir: unknown) => {
+    if (typeof dir !== 'string' || !dir.trim() || dir.length > 4000) return '路径无效'
+    return handleOpenDir(dir.trim())
   })
 
   ipcMain.handle(Ipc.GameAddOne, (_e, exePath: unknown) => {

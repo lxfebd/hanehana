@@ -2,7 +2,25 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.11] - 2026-10-24
+
+### 变更
+
+- **默认主题翻浅色（对标基准 ReinaManager）**：`DEFAULT_DARK=false`（tokens.ts）、`stores/ui.ts` `dark:false`、`DEFAULT_SETTINGS` `theme_mode:'light'` 三处同源对齐，`global.css` 的 `color-scheme` 移出 `:root` 默认值、按 `data-theme` 设置。
+- **starnight 浅色种子 accent 改 `#1976D2`**（hover `#1E88E5`）——基准「Launch Game」按钮的品牌蓝实底实测色。
+- **hero 深卡化（对照基准 Continue 大卡）**：`deriveLight` 里 hero 改为深卡语义——封面模糊底退成 0.10 水印，双层 scrim 用近黑藏青 `rgba(8,14,30,…)`（基准卡底实测 (8,14,30)）垫在模糊封面上，白字体系 + `heroBtnBg=s.accent` 实底主按钮（基准 Launch 按钮 #1976D2 实测）替代深色主题的白底黑字；`LibraryHero` 标题恢复两行 clamp、封面列 224→240px、最近游玩改卡底通栏一横排（chips `flex:1 1 152px` 横滚，窄窗 `flex:0 0 132px`），`.hero-bg` 透明度走 token；浅色卡片改实底（card `#FFFFFF` / cardBorder `#E1E5E9`）。
+- **`App.vue` 详情面板改库页专属**：`DetailPanel` 条件收窄为 `page==='library' && !ui.detailCollapsed && selectedGame`，首页右栏常驻 ActivityFeed（基准同款）；`.app-bg` 透明度 token 化（`--hh-app-bg-op`）。
+- **首页 KPI 窄窗时长缩写**：`shared/format.ts` 新增 `fmtDurMsKpi`（≥10h 只显 h、<10h 缩写 m），HomeView KPI 与统计周期格改用；周期格 `flex:1.35` 防挤压。
+- **封面微调**：RandomCard 封面 104→132px（基准比例）；封面墙无封面海报字按标题长度自适应（14–30px，固定 21px 长标题糊成团）、海报配色走 `posterGrad`/`posterInk` token；标签 chips 行无条件渲染（虚拟化 itemSize 恒定高度，无标签卡不再矮一截）；PlayChart 面积透明度 0.14→0.04；详情面板宽 400→361；侧栏「更多」收纳菜单紧凑化（208→108px）。
+
+### 修复
+
+- **「打开目录」静默失败**（用户实测点了没反应）：`Ipc.OpenDir` 改 async + 错误串回传（`existsSync` 预检，`shell.openPath` 失败原因原样带回），`DetailPanel.openDir`、`GameContextMenu.actOpenDir` 失败弹 `dv_open_dir_fail` 提示。
+- **Magpie 启动找不到 exe 才报错**：`handleLaunch` 里路径解析提前到 spawn 前，缺失即返「请到设置→工具里指定 Magpie 路径，或先安装 Magpie」。
+- **回归脚本三处修复**：`ui_walkthrough_hero_themes` 预设 accent 按深浅双值取（默认翻浅色后深色写死值失效）；`ui_scrape_walkthrough` 适配默认首页（启动是 home 不是库页，先导航到库页再走刮削；页内异常不再被静默吞掉伪装成别的原因）；`ui_walkthrough_reina` 截图钉 DPR=1 绕 Windows 150% 缩放双重曝光。
+
 ## [0.2.10] - 2026-10-22
+
 
 ### 修复
 

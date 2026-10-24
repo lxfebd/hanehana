@@ -144,6 +144,14 @@ function placeholderBg(g: Game): string {
   return palette[h % palette.length]
 }
 
+/** 占位海报字号：按标题长度自适应（14–30px）。
+ *  固定 21px 时长标题挤成 5 行糊成一团、短标题又小得可怜；
+ *  176px 内容宽 × 5 行的容量反推：≈ 300/字数 落进这个区间。 */
+function posterFont(title: string): number {
+  const n = Math.max(1, title.length)
+  return Math.max(14, Math.min(30, Math.round(300 / n)))
+}
+
 /** 副行：开发商优先，退回发行年 / 时长（tabular-nums） */
 function fmtSub(g: Game): string {
   if (g.developer) return g.developer
@@ -293,7 +301,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <!-- 无封面：主色底 + 渐变层 + 大字标题占位（海报占位，不是糊图） -->
               <template v-else>
                 <div class="cover-poster-grad" aria-hidden="true"></div>
-                <span class="cover-letter" :title="it.g.title">{{ it.g.title }}</span>
+                <span class="cover-letter" :style="{ fontSize: posterFont(it.g.title) + 'px' }" :title="it.g.title">{{ it.g.title }}</span>
               </template>
 
               <div v-if="runningGames.has(it.g.id)" class="cover-running">
@@ -337,8 +345,11 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
                 <span class="cover-sub" v-if="fmtSub(it.g)">{{ fmtSub(it.g) }}</span>
               </div>
             </div>
-            <!-- 标签 chips：最多 2 个，超出用 +N 收尾（提升网格信息密度，又不刷屏） -->
-            <div v-if="it.g.tags.length" class="cover-tags">
+            <!-- 标签 chips：最多 2 个，超出用 +N 收尾（提升网格信息密度，又不刷屏）。
+                 行无条件渲染（无标签也占 20px）：虚拟化 itemSize 328 按「标题区+标签行+
+                 书架板」恒定高度排版，卡片实际高度必须一致——否则无标签卡矮 20px，
+                 书架板与下一行的间距参差不齐（封面墙上「下面那条」歪斜的根源）。 -->
+            <div class="cover-tags">
               <span v-for="tag in it.g.tags.slice(0, 2)" :key="tag" class="cover-tag">{{ tag }}</span>
               <span v-if="it.g.tags.length > 2" class="cover-tag more">+{{ it.g.tags.length - 2 }}</span>
             </div>
@@ -635,9 +646,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   position: absolute;
   inset: 0;
   z-index: 1;
-  background:
-    linear-gradient(150deg, var(--hh-color-on-cover-chip-bg), transparent 55%),
-    linear-gradient(to top, var(--hh-color-shade-thumb-soft), transparent 62%);
+  background: var(--hh-color-poster-grad);
 }
 .cover-letter {
   position: absolute;
@@ -655,9 +664,12 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   font-size: 21px;
   line-height: 1.35;
   font-weight: 600;
-  color: var(--hh-color-on-cover-text);
-  text-shadow: 0 2px 14px var(--hh-shade-text);
-  word-break: break-all;
+  color: var(--hh-color-poster-ink);
+  text-shadow: var(--hh-color-hero-title-shadow);
+  /* 按词断行（CJK 自然逐字断，不需要 break-all）。break-all 会把
+     "Japanese" 拆成 "Japan ese" 这种半截词，占位海报看着像溢出乱码。 */
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 /* 运行中徽章（评分不上卡） */

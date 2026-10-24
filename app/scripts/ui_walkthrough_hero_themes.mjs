@@ -335,10 +335,13 @@ const applyPreset = (label) => app1.ev(`(() => {
 })()`)
 const clickSave = () => app1.ev(`(() => { const sv=document.querySelector('.dlg-foot .ant-btn-primary'); if(!sv) return 'no-save-btn'; sv.click(); return 'save clicked' })()`)
 
-for (const [label, expectAccentHex] of [
-  ['影院', '#D8B36A'],
-  ['极光', '#8FB7E8'],
-]) {
+// 套件 accent 按当前深浅模式取值（DEFAULT_DARK=false：启动默认浅色，
+// 套件切过去读的是浅色种子；脚本不再假设启动模式，按 data-theme 取期望值）
+const PRESET_ACCENT = {
+  '影院': { dark: '#D8B36A', light: '#A97F2E' },
+  '极光': { dark: '#8FB7E8', light: '#3E6FB0' },
+}
+for (const label of ['影院', '极光']) {
   // 每次先重新打开设置（保存后对话框会关闭）+ 切到外观标签
   await openSettingsDialog()
   await sleep(500)
@@ -347,8 +350,10 @@ for (const [label, expectAccentHex] of [
   const pick = await applyPreset(label)
   const sv = await clickSave()
   await sleep(900)
+  const mode = await app1.ev(`document.documentElement.dataset.theme`)
+  const expectAccentHex = PRESET_ACCENT[label][mode] ?? PRESET_ACCENT[label].dark
   const accent = await app1.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
-  pass(`切${label}：accent 变量更新为预期色`, accent.toLowerCase() === expectAccentHex.toLowerCase(), `${pick}/${sv} → accent=${accent}（期望 ${expectAccentHex}）`)
+  pass(`切${label}：accent 变量更新为预期色（${mode}）`, accent.toLowerCase() === expectAccentHex.toLowerCase(), `${pick}/${sv} → accent=${accent}（期望 ${expectAccentHex}）`)
   await app1.shot(`D_theme_${label}.png`)
 }
 console.log('  html[data-theme] =', await app1.ev(`document.documentElement.dataset.theme`))
@@ -365,8 +370,10 @@ const app1b = await launchApp()
 // B8：启动页 = home，hero 就在启动页（cover grid 在库页，本阶段不需要）
 await app1b.waitFor('!!(window.hh && document.querySelector(".hero"))', 'app1b + hero (home)')
 await sleep(700)
+const restartMode = await app1b.ev(`document.documentElement.dataset.theme`)
+const expectRestartAccent = (PRESET_ACCENT['极光'][restartMode] ?? PRESET_ACCENT['极光'].dark).toLowerCase()
 const accentAfterRestart = await app1b.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
-pass('重启后 accent 仍为极光色（持久化生效）', accentAfterRestart.toLowerCase() === '#8fb7e8', `accent=${accentAfterRestart}（期望 #8FB7E8）`)
+pass('重启后 accent 仍为极光色（持久化生效）', accentAfterRestart.toLowerCase() === expectRestartAccent, `mode=${restartMode} accent=${accentAfterRestart}（期望 ${expectRestartAccent.toUpperCase()}）`)
 // 持久化主题下 hero 仍正常渲染
 const pr = JSON.parse(await app1b.ev(heroStateExpr()))
 pass('重启后 hero 仍正常渲染', pr.hero && pr.coverLoaded, `hero=${pr.hero} coverLoaded=${pr.coverLoaded}`)

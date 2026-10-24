@@ -73,7 +73,7 @@ const base = {
   layout: {
     titlebarH: 40,
     sidebarW: 208,
-    detailW: 400,
+    detailW: 361,
     cardW: 184,
     cardGap: 16,
     // 封面竖版比例（宽/高）。VNDB/YMGal 的官方封面实测 3:4，
@@ -302,14 +302,38 @@ function deriveDark(s: DarkSeeds) {
     onCoverChipBg: 'rgba(255,255,255,0.1)',
     onCoverGlassBorder: 'rgba(255,255,255,0.3)',
     onCoverGlassBg: 'rgba(255,255,255,0.08)',
+    // hero 卡前景（Continue 大卡）：深浅两态各一套值，键集合恒定。
+    // 深色 = 压在模糊封面上的白字体系；浅色 = 浅卡深字（见 deriveLight）。
+    // 不用 onCover 系列：那是「真正压在封面图上」的白字（封面墙徽章），
+    // hero 在浅色下已经不再是压图卡，两套语义必须分开。
+    heroText: 'rgba(255,255,255,0.96)',
+    heroTextSoft: 'rgba(255,255,255,0.74)',
+    heroTextDim: 'rgba(255,255,255,0.58)',
+    heroRule: 'rgba(255,255,255,0.5)',
+    heroChipBorder: 'rgba(255,255,255,0.2)',
+    heroChipBg: 'rgba(255,255,255,0.1)',
+    heroGlassBorder: 'rgba(255,255,255,0.3)',
+    heroGlassBg: 'rgba(255,255,255,0.08)',
+    heroTitleShadow: '0 2px 16px rgba(0,0,0,0.5)',
+    // 模糊底图强度：深色下封面是氛围主角（0.28）；浅色下退成水印（0.10），
+    // 否则白卡被压成灰泥，基准那种疏朗感立刻消失。
+    heroBgOpacity: '0.28',
     // hero 遮罩双层：纵向上下压、横向从右往左渐重（文字在左下，右侧留封面原色）。
     heroScrimV: 'linear-gradient(180deg, rgba(0,0,0,0.72), transparent 38%, rgba(0,0,0,0.78))',
     heroScrimH: 'linear-gradient(90deg, rgba(0,0,0,0.94), rgba(0,0,0,0.64) 42%, rgba(0,0,0,0.12) 80%)',
     // hero 封面轨羽化遮罩黑（mask-image 的完全不透明层，语义是遮罩不是颜色）。
-    // hero 主按钮：白底黑字（压图最稳，深/浅主题同值），hover 浅灰。
+    // hero 主按钮：深色下白底黑字（压图最稳）；浅色下换成 accent 实底（见 deriveLight）。
     heroMaskBlack: '#000000',
+    heroBtnBg: '#FFFFFF',
     heroBtnText: '#111827',
     heroBtnHover: '#EEEFF4',
+    heroBtnRing: 'rgba(255,255,255,0.25)',
+    heroBtnRingHover: 'rgba(255,255,255,0.35)',
+    // 无封面海报（占位封面自带的中性渐变 + 大字）：深色下白字压暗角，
+    // 浅色下必须反过来——白字压在浅灰底上会糊成一片（实测不可读）。
+    posterGrad:
+      'linear-gradient(150deg, rgba(255,255,255,0.1), transparent 55%), linear-gradient(to top, rgba(0,0,0,0.38), transparent 62%)',
+    posterInk: 'rgba(255,255,255,0.96)',
   }
 }
 
@@ -317,15 +341,15 @@ function deriveLight(s: LightSeeds) {
   const tb = s.textBase
   return {
     windowFallback: rgbToHex(s.night),
-    bgScrim: `linear-gradient(180deg, rgba(${rgbCss(s.night)},0.55) 0%, rgba(${rgbCss(s.night)},0.80) 100%)`,
-    panelGlass: 'rgba(255,255,255,0.66)',
-    panelGlassBorder: rgba(tb, 0.1),
-    panelGlassHighlight: 'rgba(255,255,255,0.75)',
-    card: rgba(tb, 0.035),
-    cardBorder: rgba(tb, 0.1),
-    cardHover: rgba(tb, 0.06),
+    bgScrim: `linear-gradient(180deg, rgba(${rgbCss(s.night)},0.92) 0%, rgba(${rgbCss(s.night)},0.97) 100%)`,
+    panelGlass: 'rgba(255,255,255,0.94)',
+    panelGlassBorder: 'rgba(225,229,233,0.9)',
+    panelGlassHighlight: 'rgba(255,255,255,0.85)',
+    card: '#FFFFFF',
+    cardBorder: '#E1E5E9',
+    cardHover: 'rgba(23,35,48,0.04)',
     float: rgbToHex(s.float),
-    floatBorder: rgba(tb, 0.14),
+    floatBorder: '#E1E5E9',
     input: rgbToHex(s.input),
     text: rgba(tb, 0.92),
     textSecondary: rgba(tb, 0.68),
@@ -355,9 +379,9 @@ function deriveLight(s: LightSeeds) {
     accentSelectedBorder: rgba(hexToRgb(s.accent), 0.45),
     accentShadow: rgba(hexToRgb(s.accent), 0.28),
     accentShadowHover: rgba(hexToRgb(s.accent), 0.4),
-    surfaceHoverSoft: rgba(tb, 0.06),
-    thumbShadow: rgba(tb, 0.22),
-    thumbShadowSoft: rgba(tb, 0.14),
+    surfaceHoverSoft: 'rgba(23,35,48,0.045)',
+    thumbShadow: 'rgba(23,35,48,0.18)',
+    thumbShadowSoft: 'rgba(23,35,48,0.12)',
     shineSweep: 'rgba(255,255,255,0.55)',
     textHot: rgba(s.textHot, 0.96),
     textGhost: rgba(tb, 0.16),
@@ -409,7 +433,7 @@ function deriveLight(s: LightSeeds) {
     shadeBanner: rgba(tb, 0.28),
     bannerScrim: gradToTop(s.bannerBase, 0.55, 0.2),
     palette: s.palette,
-    // 压图前景（同 dark，压在封面上的白字体系）
+    // 压图前景（同 dark：封面墙徽章/占位海报压在图上，白字体系不随主题）
     onCoverText: 'rgba(255,255,255,0.96)',
     onCoverTextSoft: 'rgba(255,255,255,0.74)',
     onCoverTextDim: 'rgba(255,255,255,0.58)',
@@ -418,13 +442,35 @@ function deriveLight(s: LightSeeds) {
     onCoverChipBg: 'rgba(255,255,255,0.1)',
     onCoverGlassBorder: 'rgba(255,255,255,0.3)',
     onCoverGlassBg: 'rgba(255,255,255,0.08)',
-    // hero 遮罩双层（同 dark）
-    heroScrimV: 'linear-gradient(180deg, rgba(0,0,0,0.72), transparent 38%, rgba(0,0,0,0.78))',
-    heroScrimH: 'linear-gradient(90deg, rgba(0,0,0,0.94), rgba(0,0,0,0.64) 42%, rgba(0,0,0,0.12) 80%)',
-    // hero 封面轨羽化遮罩黑 / 主按钮字色与 hover（同 dark：压在图上与主题无关）
+    // hero 卡前景（浅色 = 基准 ReinaManager 口径：hero 本身就是深卡，整卡浮在
+    // 浅色页面之上。文字保持白字体系 + 封面模糊底 0.10 水印 + 近黑藏青双层 scrim）。
+    heroText: 'rgba(255,255,255,0.96)',
+    heroTextSoft: 'rgba(255,255,255,0.74)',
+    heroTextDim: 'rgba(255,255,255,0.58)',
+    heroRule: 'rgba(255,255,255,0.5)',
+    heroChipBorder: 'rgba(255,255,255,0.2)',
+    heroChipBg: 'rgba(255,255,255,0.1)',
+    heroGlassBorder: 'rgba(255,255,255,0.3)',
+    heroGlassBg: 'rgba(255,255,255,0.08)',
+    heroTitleShadow: '0 2px 16px rgba(0,0,0,0.5)',
+    heroBgOpacity: '0.10',
+    // 双层 scrim：近黑藏青（基准 Continue 卡底 8,14,30）垫在模糊封面上，
+    // 左列文字区最重、右侧封面区留原色（浅色下 hero 是深卡，文字白字体系）。
+    heroScrimV: 'linear-gradient(180deg, rgba(8,14,30,0.94), rgba(8,14,30,0.82) 38%, rgba(8,14,30,0.92))',
+    heroScrimH: 'linear-gradient(90deg, rgba(8,14,30,0.97), rgba(8,14,30,0.86) 42%, rgba(8,14,30,0.55) 80%)',
+    // hero 封面轨羽化遮罩黑（语义是遮罩不是颜色，同 dark）。
+    // hero 主按钮：accent 实底 + on-accent 字（基准 Launch Game 实心品牌蓝），
+    // hover 提亮、focus 光环 accent 半透（替代深色的白色光环）。
     heroMaskBlack: '#000000',
-    heroBtnText: '#111827',
-    heroBtnHover: '#EEEFF4',
+    heroBtnBg: s.accent,
+    heroBtnText: s.onAccent,
+    heroBtnHover: s.accentHover,
+    heroBtnRing: 'rgba(25,118,210,0.22)',
+    heroBtnRingHover: 'rgba(25,118,210,0.32)',
+    // 无封面海报占位：封面底是 coverFallback 浅色系 → 洗一层浅墨做纵深 + 墨字
+    posterGrad:
+      'linear-gradient(150deg, rgba(255,255,255,0.1), transparent 55%), linear-gradient(to top, rgba(0,0,0,0.38), transparent 62%)',
+    posterInk: 'rgba(255,255,255,0.96)',
   }
 }
 
@@ -552,8 +598,8 @@ const STARNIGHT_LIGHT: LightSeeds = {
   input: [255, 255, 255],
   textBase: [23, 35, 48],
   textHot: [23, 35, 48],
-  accent: '#2E7A9E',
-  accentHover: '#3A90B8',
+  accent: '#1976D2',
+  accentHover: '#1E88E5',
   onAccent: '#FFFFFF',
   star: '#B45309',
   coverFallback: '#E3EDF7',
@@ -783,7 +829,7 @@ const defaultColorsLight = deriveLight(themePresets[DEFAULT_PRESET].light)
 export const themeColors = { dark: defaultColorsDark, light: defaultColorsLight } as const
 
 /** tokens.color 响应式真值：切主题时原地替换，组件 computed 自动重算 */
-export const colorState = reactive({ ...defaultColorsDark })
+export const colorState = reactive({ ...defaultColorsLight })
 
 /** 深色主题（默认，向后兼容组件 import { tokens }）；
  *  color 是 reactive，切主题由 setTheme 原地更新 */
@@ -802,7 +848,7 @@ export type Tokens = typeof tokens
 
 export type TokenColors = ReturnType<typeof deriveDark>
 
-const DEFAULT_DARK = true
+const DEFAULT_DARK = false
 
 /** 运行时当前主题（applyCssVars/setTheme 前由 main.ts 设置） */
 export let currentDarkMode = DEFAULT_DARK

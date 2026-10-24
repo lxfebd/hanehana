@@ -16,7 +16,7 @@ export const ui = reactive({
    * 库内筛选，收藏夹本身是按开发商/系列分组的浏览页，不是又一个筛选开关）。 */
   page: 'home' as 'home' | 'library' | 'downloads' | 'games' | 'stats' | 'collection',
   settingsOpen: false,
-  dark: true,
+  dark: false,
   /** 主题套件 id（settings.theme_preset）。默认星海：
       樱夜的紫夜底 + 樱花粉是典型"AI 紫"配色，用户明确不接受，故换夜蓝+星青。 */
   preset: 'starnight' as 'sakura' | 'starnight' | 'mint' | 'cinema' | 'aurora',

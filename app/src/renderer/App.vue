@@ -215,7 +215,7 @@ async function submitAddTask(input: {
             @collapse="ui.detailCollapsed = true"
           />
           <ActivityFeed
-            v-else-if="(page === 'library' && !ui.detailCollapsed) || (page === 'home' && !ui.detailCollapsed)"
+            v-else-if="page === 'home' && !ui.detailCollapsed"
             class="detail"
           />
           <button
@@ -282,7 +282,7 @@ async function submitAddTask(input: {
   background-position: center;
   filter: blur(120px) saturate(1.8);
   transform: scale(1.12);
-  opacity: 0.86;
+  opacity: var(--hh-app-bg-op, 0.86);
   pointer-events: none;
 }
 .app-bg::after {
@@ -290,6 +290,10 @@ async function submitAddTask(input: {
   position: absolute;
   inset: -12%;
   background: var(--hh-color-bg-scrim);
+}
+/* 浅色主题：动态封面底退成近静态浅底（对标基准 ReinaManager 的页面底色） */
+:root[data-theme='light'] .app-bg {
+  opacity: 0.3;
 }
 /* 标题栏与内容区抬到光晕底之上 */
 .app-shell > .titlebar,
@@ -322,8 +326,8 @@ async function submitAddTask(input: {
 .layout {
   flex: 1;
   display: flex;
-  gap: 16px;
-  padding: 0 20px 20px;
+  gap: 6px;
+  padding: 0 6px 12px;
   min-height: 0;
 }
 

@@ -86,6 +86,11 @@ const send = (method, params = {}) =>
 async function ev(expression) {
   const m = await send('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true })
   if (m.error) throw new Error(JSON.stringify(m.error))
+  // 页内 throw 不走协议 error，只在 result.exceptionDetails 里——不检查的话
+  // 「cover-card not found」会被吞成 undefined，伪装成下一行的「按钮找不到」
+  if (m.result?.exceptionDetails) {
+    throw new Error('page eval threw: ' + String(m.result.exceptionDetails.exception?.description ?? '').slice(0, 240))
+  }
   return m.result?.result?.value
 }
 async function shot(name) {
@@ -94,11 +99,20 @@ async function shot(name) {
   console.log('[shot]', name)
 }
 await send('Page.enable')
+// 启动默认页是首页（home，v0.2.8 起的默认启动页）——封面墙只在库页，
+// 不导航的话 .cover-card 永远等不到。等 nav-item 挂载后点侧栏「全部游戏」切过去。
 for (let i = 0; i < 60; i++) {
+  if (await ev('!!(window.hh && document.querySelector(".nav-item"))')) {
+    const clicked = await ev(`(() => {
+      const item = [...document.querySelectorAll('.nav-item')].find((e) => (e.textContent||'').includes('全部游戏'))
+      if (item) item.click()
+      return !!item
+    })()`)
+    if (clicked) console.log('[nav] -> library page')
+  }
   if (await ev('!!(window.hh && document.querySelector(".cover-card"))')) break
   await sleep(300)
 }
-
 async function openScrapeFor(title) {
   // 点封面卡 → 点详情页「刮削」按钮
   await ev(`(() => {

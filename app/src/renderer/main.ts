@@ -4,7 +4,8 @@ import 'ant-design-vue/dist/reset.css'
 import './design/global.css'
 import { applyCssVars } from './design/tokens'
 
-// 启动默认深色；App 的 initTasks 拿到主进程设置后会调 applyDarkFromSettings 校正，
+// 启动默认浅色（对标基准 ReinaManager 的浅色克制基调，DEFAULT_DARK=false 同源）；
+// App 的 initTasks 拿到主进程设置后会调 applyDarkFromSettings 校正，
 // 深浅主题与 settings.json 保持一致。
 applyCssVars()
 

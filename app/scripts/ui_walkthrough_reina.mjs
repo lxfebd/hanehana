@@ -30,7 +30,7 @@ spawnSync(process.execPath, [join(APP_ROOT, 'scripts', 'seed_layout.mjs'), DATA_
 })
 const env = { ...process.env, HANEHANA_DEBUG_PORT: String(PORT), HANEHANA_DATA_DIR: DATA_DIR }
 delete env.ELECTRON_RUN_AS_NODE
-const proc = spawn(join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'), ['.'], {
+const proc = spawn(join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe'), ['.', '--force-device-scale-factor=1'], {
   cwd: APP_ROOT,
   env,
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -103,7 +103,16 @@ async function main() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   async function shot(name) {
     mkdirSync(SHOTS, { recursive: true })
-    const m = await send('Page.captureScreenshot', { format: 'png' })
+    // Windows 150% 缩放（DPR 1.5）下 surface 截图会把 blur/scale 合成层
+    // 画两遍（双重曝光，与业务渲染无关）。先钉到 DPR 1 再截，绕开该缺陷。
+    await send('Emulation.setDeviceMetricsOverride', {
+      width: 1280,
+      height: 800,
+      deviceScaleFactor: 1,
+      mobile: false,
+    }).catch(() => {})
+    await new Promise((r) => setTimeout(r, 300))
+    const m = await send('Page.captureScreenshot', { format: 'png', fromSurface: true, captureBeyondViewport: false })
     writeFileSync(join(SHOTS, name + '.png'), Buffer.from(m.result.data, 'base64'))
     console.log('  shot:' + name + '.png')
   }

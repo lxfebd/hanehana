@@ -9,7 +9,9 @@
  *     （禁进滚动容器），hover 行为各自声明——曾有一个 .glass-card 全局类，
  *     零引用后移除（P2 死代码）。
  */
-:root {
+/* color-scheme 由 token 层的 applyCssVars/setTheme 按 data-theme 设置，
+   这里不放默认值——放死 dark 会让浅色默认下原生控件（滚动条/输入框）仍是黑底。 */
+:root[data-theme='dark'] {
   color-scheme: dark;
 }
 :root[data-theme='light'] {
