@@ -15,7 +15,7 @@
  * 口径：KPI 取主进程 computeOverview（与统计页同一份聚合）——基准首页 1666h
  * 与统计页 538.6h 互相矛盾，我们不重演。
  */
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { CalendarDays, Gamepad2, Timer } from 'lucide-vue-next'
 import { library, overviewState, refreshOverview } from '../stores/library'
 import { fmtDurMsKpi } from '../../shared/format'
@@ -27,11 +27,74 @@ type PeriodKey = 'week' | 'month'
 const period = ref<PeriodKey>('month')
 
 const ov = computed(() => overviewState.data)
-const kpiTotalGames = computed(() => String(library.games.length))
-const kpiTotalTime = computed(() => fmtDurMsKpi(ov.value?.totalMs ?? 0))
-const kpiToday = computed(() => fmtDurMsKpi(ov.value?.todayMs ?? 0))
+
+// ---------------------------------------------------------------- KPI 数字滚动（count-up）
+
+/**
+ * KPI 是一个「仪表盘」，数字直接跳出来像静态截图；滚上去才有「刚统计完」的
+ * 生命感。只滚数值、不滚单位：格式化仍走 fmtDurMsKpi，落点与不做动效时
+ * 逐字相同（回归脚本读文本时动画早已结束，不会读到中间值）。
+ */
+interface KpiNums {
+  games: number
+  total: number
+  today: number
+  week: number
+  month: number
+}
+
+const targets = computed<KpiNums>(() => ({
+  games: library.games.length,
+  total: ov.value?.totalMs ?? 0,
+  today: ov.value?.todayMs ?? 0,
+  week: ov.value?.weekMs ?? 0,
+  month: ov.value?.monthMs ?? 0,
+}))
+
+const anim = ref<KpiNums | null>(null)
+let raf = 0
+
+/** 500ms easeOutCubic：起步快、收尾慢——数字是「滑」到位，不是匀速走表 */
+function easeOutCubic(t: number): number {
+  return 1 - Math.pow(1 - t, 3)
+}
+
+function tween(target: KpiNums): void {
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  if (reduce) {
+    anim.value = target
+    return
+  }
+  const from: KpiNums = anim.value ?? { games: 0, total: 0, today: 0, week: 0, month: 0 }
+  const start = performance.now()
+  cancelAnimationFrame(raf)
+  const step = (now: number): void => {
+    const t = Math.min(1, (now - start) / 500)
+    const k = easeOutCubic(t)
+    anim.value = {
+      games: Math.round(from.games + (target.games - from.games) * k),
+      total: Math.round(from.total + (target.total - from.total) * k),
+      today: Math.round(from.today + (target.today - from.today) * k),
+      week: Math.round(from.week + (target.week - from.week) * k),
+      month: Math.round(from.month + (target.month - from.month) * k),
+    }
+    if (t < 1) raf = requestAnimationFrame(step)
+  }
+  raf = requestAnimationFrame(step)
+}
+
+watch(targets, (tg) => tween(tg), { immediate: true })
+onUnmounted(() => cancelAnimationFrame(raf))
+
+const kpiTotalGames = computed(() => String(anim.value?.games ?? targets.value.games))
+const kpiTotalTime = computed(() => fmtDurMsKpi(anim.value?.total ?? targets.value.total))
+const kpiToday = computed(() => fmtDurMsKpi(anim.value?.today ?? targets.value.today))
 const kpiPeriod = computed(() =>
-  fmtDurMsKpi(period.value === 'week' ? (ov.value?.weekMs ?? 0) : (ov.value?.monthMs ?? 0)),
+  fmtDurMsKpi(
+    period.value === 'week'
+      ? (anim.value?.week ?? targets.value.week)
+      : (anim.value?.month ?? targets.value.month),
+  ),
 )
 
 onMounted(() => {

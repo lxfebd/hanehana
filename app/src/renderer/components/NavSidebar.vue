@@ -7,7 +7,7 @@
  * 不设 props；与 App 的唯一通信是 enterFullscreen（需要 window.hh，留在 App）。
  * 「更多」菜单自持开关。模板只写单方法调用（prettier 会拆多语句表达式）。
  */
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   BarChart3,
   Compass,
@@ -46,6 +46,41 @@ const favCount = computed(() => library.games.filter((g) => g.favorite).length)
 /** 「更多」菜单开关 */
 const moreMenuOpen = ref(false)
 
+/**
+ * 选中块指示器（滑动高亮）：不是每个 nav-item 各自亮底，而是**一块**
+ * 统一的高亮块从旧位置滑到新位置——这是侧栏「连贯」的来源。
+ * 位置在切页后 nextTick 量（DOM 已换好 active 类），窗口尺寸变化时重量。
+ */
+const navEl = ref<HTMLElement | null>(null)
+const hl = ref({ top: 0, height: 0, visible: false })
+function measureHl(): void {
+  const nav = navEl.value
+  const active = nav?.querySelector<HTMLElement>('.nav-item.active')
+  if (!nav || !active) {
+    hl.value = { ...hl.value, visible: false }
+    return
+  }
+  // offsetTop/offsetHeight 相对 offsetParent（.sidebar 是 position:relative），
+  // 不掺 scrollTop——侧栏本身不滚动，量出来就是最终位置。
+  hl.value = { top: active.offsetTop, height: active.offsetHeight, visible: true }
+}
+watch(
+  () => ui.page,
+  () => {
+    void nextTick(measureHl)
+  },
+)
+watch(moreMenuOpen, () => {
+  void nextTick(measureHl)
+})
+function onResize(): void {
+  void nextTick(measureHl)
+}
+onMounted(() => {
+  void nextTick(measureHl)
+  window.addEventListener('resize', onResize)
+})
+
 /** 点菜单外任意处收起「更多」菜单 */
 function closeMore(e: MouseEvent): void {
   const more = document.querySelector('.more-wrap')
@@ -53,7 +88,10 @@ function closeMore(e: MouseEvent): void {
   if (moreMenuOpen.value && more && !more.contains(target)) moreMenuOpen.value = false
 }
 onMounted(() => document.addEventListener('click', closeMore))
-onUnmounted(() => document.removeEventListener('click', closeMore))
+onUnmounted(() => {
+  document.removeEventListener('click', closeMore)
+  window.removeEventListener('resize', onResize)
+})
 
 /** 切页 + 顺手收起菜单（单方法调用） */
 function goPage(p: 'home' | 'library' | 'downloads' | 'games' | 'stats' | 'collection'): void {
@@ -81,7 +119,19 @@ function moreAction(fn: () => void): void {
 </script>
 
 <template>
-  <nav class="glass sidebar" :aria-label="t('app_nav_aria')">
+  <nav ref="navEl" class="glass sidebar" :aria-label="t('app_nav_aria')">
+    <!-- 滑动选中块：一块高亮在条目间平移（不是每条各亮一次）。
+         高度/位置由 measureHl 量当前 active 条目；opacity 管首帧淡入，
+         避免挂载时高亮从 y=0 一路滑下来。 -->
+    <span
+      class="nav-hl"
+      aria-hidden="true"
+      :style="{
+        transform: `translateY(${hl.top}px)`,
+        height: hl.height + 'px',
+        opacity: hl.visible ? 1 : 0,
+      }"
+    ></span>
     <!-- 首页仪表盘（B8，对标基准 Home）：KPI/Continue/Random/Activity。
          基准的导航顺序就是 Home 在 Library 前面——仪表盘先行、浏览其次。 -->
     <button
@@ -185,6 +235,10 @@ function moreAction(fn: () => void): void {
   width: 144px;
   padding: 10px 8px;
   position: relative;
+  /* 滑动高亮的容器必须建层叠上下文：.nav-item 提升到 z-index 1 之上，
+     指示块（z-index 0）才不会压住条目文字/图标。glass 已有 backdrop-filter
+     会自建上下文，这里显式声明不依赖它。 */
+  isolation: isolate;
   /* .glass 的 backdrop-filter 会建立层叠上下文且 z-index 仍为 auto，
      内容区里后绘制的封面（position:absolute 行项）会盖住悬出的 .more-menu。
      抬到 2：压过内容区 z-index:auto 的定位子树，仍低于弹层 30/40。 */
@@ -226,15 +280,39 @@ function moreAction(fn: () => void): void {
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-glow);
 }
-/* 选中态：低透明 accent 底 + accent 亮字 + 左侧 2px 亮线指示当前位置。
-   不用 accent 实色铺满——高饱和粉大面积填充显廉价（"AI 味"），
-   粉色只留在图标与指示线上。 */
+/* 选中态：颜色与权重留在条目上，**底**交给 .nav-hl 滑动块（见下）。
+   不动 accent 实色铺满——高饱和粉大面积填充显廉价（"AI 味"），
+   粉色只留在图标与指示块左侧亮线上。 */
+.nav-item {
+  z-index: 1;
+}
 .nav-item.active {
-  background: var(--hh-color-select-bg);
   color: var(--hh-color-select-text);
   font-weight: 600;
 }
-.nav-item.active::before {
+.nav-item.active .nav-ic {
+  opacity: 1;
+  color: var(--hh-color-select-icon);
+}
+
+/* 滑动选中块：整条侧栏只有这一块低透明 accent 底，靠 transform 平移。
+   top 由 JS 量（translateY 驱动），height 随条目高度变化平滑过渡。
+   左缘 2px 亮线嵌在块内，跟着块一起走——「连贯」的关键就在这。 */
+.nav-hl {
+  position: absolute;
+  left: var(--hh-space-x2);
+  right: var(--hh-space-x2);
+  top: 0;
+  z-index: 0;
+  border-radius: var(--hh-radius-sm);
+  background: var(--hh-color-select-bg);
+  pointer-events: none;
+  transition:
+    transform var(--hh-motion-slow) var(--hh-motion-ease-slide),
+    height var(--hh-motion-slow) var(--hh-motion-ease-slide),
+    opacity var(--hh-motion-fast) var(--hh-motion-ease-fade);
+}
+.nav-hl::before {
   content: '';
   position: absolute;
   left: 0;
@@ -244,10 +322,6 @@ function moreAction(fn: () => void): void {
   height: 18px;
   border-radius: var(--hh-radius-pill);
   background: var(--hh-color-accent);
-}
-.nav-item.active .nav-ic {
-  opacity: 1;
-  color: var(--hh-color-select-icon);
 }
 .nav-item .count {
   margin-left: auto;

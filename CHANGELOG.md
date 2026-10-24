@@ -2,6 +2,32 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.17] - 2026-10-25
+
+### 新增
+
+- **详情卡「右栏 ⇄ 整页」双形态**（`DetailPanel.vue` + `App.vue`）：头部动作区两组图标钮——展开整页 / 收回右栏（`Maximize2`/`Minimize2`，Esc 也能收回）。整页态用 View Transitions 让 banner **连续长大**（`view-transition-name: dp-banner`），不是「关一个开一个」的硬切；展开后左栏元数据 + 右栏相似推荐两栏布局，banner 260px、封面 132×198、元数据 3 列、简介 6→12 行。抽屉态用 `display:contents` 让两层新容器**不参与布局**，视觉零变化（DETAIL 回归断言不变）。
+- **相似游戏推荐**（`DetailPanel.vue`）：按「共享标签 ×2 + 同开发商 ×3 + 同系列 ×2」打分，同分按游玩时长降序取前 8，点击直接换选中游戏。抽屉态 2 列、整页态 3 列，封面沿用统一比例 token，图加载失败退首字母。
+- **导航选中块滑动**（`NavSidebar.vue`）：选中高亮从「每项各自变色」改成**一块会滑动的底片**——`translateY` + 高度过渡（easeSlide），左侧 2px accent 亮线；换页/展开「更多」菜单时按 `offsetTop/offsetHeight` 重新测量，窗口 resize 也跟着。`.nav-item.active` 不再画自己的背景。
+- **KPI 数字滚动**（`HomeView.vue`）：首页四格 KPI 从 0 滚到目标值（500ms easeOutCubic，rAF 插值），只动数值不动单位——落点与不做动效时**逐字相同**，回归脚本读文本不受影响；`prefers-reduced-motion` 直接落位。
+- **动效 token 与曲线**（`tokens.ts` / `global.css`）：新增 `--hh-motion-ease-out / -ease-in / -ease-slide` 三条曲线（16,1,0.3,1 / 0.7,0,0.84,0 / 0.22,0.61,0.36,1），全部动效改走 token，不再散落硬编码 `cubic-bezier`。
+
+### 变更
+
+- **页面/右栏切换动效**（`App.vue` + `global.css`）：中栏页面切换走 `<Transition name="page" mode="out-in">`（新页淡入 + 上移 6px，旧页 83ms 淡出）；右栏「详情 ⇄ 动态流」就地交接走 `<Transition name="aside">`（横向 12px 滑入，离场绝对定位避免叠帧）。`GameSites` 保持在 Transition **之外**（`v-show` 保活语义不变）。
+- **右栏容器抽成 `.aside`**（`App.vue`）：宽度动画到 28px 的收起态、`.aside > .detail` 高度链、空态占位都挂在容器上，组件只负责内容。整页展开的 `position:fixed` 让位规则写在 `App.vue`——`.aside > .detail` 与组件内 `.detail-panel.is-expanded` 特异性打平（均 0,3,0）而 App 样式在产物里更靠后，不显式让位会被拽回抽屉尺寸（实测 rect 400×748 / computed position=relative）。
+- **详情分页切换动效**：四个 pane（统计/简介/编辑/存档）改 `<Transition name="pane" mode="out-in">` 各带 key，切换时淡入 + 上移 4px。
+- **封面墙按压反馈**（`CoverGrid.vue`）：`:active` 微缩 0.985（与 hover 浮起同一根 easeOut 曲线），三条 transition 与封面图过渡统一改用 token 曲线。
+
+### 修复
+
+- `.desc.clamped` 规则缺右花括号（上一轮插入整页态样式时切断），postcss 报 `Unknown word .detail-panel.is-expanded`、build 失败；已恢复原规则并把「整页态 12 行」改成独立的 `.detail-panel.is-expanded .desc.clamped`。
+- lint：`startViewTransition` 类型声明里未使用的 `cb` 形参改 `_cb`（0 warning）。
+
+### 验证
+
+typecheck 0；lint 0 problem；build OK；npm test 88 pass / 0 fail；regression:static 8+32+23 PASS；regression:reina 五屏全 true（HOME kpiCells4 hero recent4 random feed；LIBRARY ph toolbar cards12；DETAIL meta6 tags6 tabs4 chart；STATS kpi6 hours24；COLLECTION groups5）；regression:hero 26 PASS 0 FAIL；regression:accent 25 PASS；regression:process 12 PASS。CDP 探针（`probe_motion.mjs`，临时脚本目录）：nav 高亮 translateY 10px→44px、抽屉↔整页（contents→grid、8 个相似项、Esc 收回）、整页态 rect 12,48,1256×740。
+
 ## [0.2.16] - 2026-10-25
 
 ### 性能

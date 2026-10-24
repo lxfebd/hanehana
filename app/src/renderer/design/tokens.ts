@@ -47,6 +47,15 @@ const base = {
     easeEnter: 'cubic-bezier(0,0,0,1)',
     easeMove: 'cubic-bezier(0.55,0.55,0,1)',
     easeFade: 'linear',
+    /**
+     * 入口缓出（起步快、收尾长）：页面/区块/抽屉「落位」用它，
+     * 观感比 ease-out 更有质量——素材从上方 6px 落到位即停，不飘。
+     */
+    easeOut: 'cubic-bezier(0.16,1,0.3,1)',
+    /** 出口缓入：元素离场时加速消失，避免停在半透明状态上「挂着」。 */
+    easeIn: 'cubic-bezier(0.7,0,0.84,0)',
+    /** 位移滑动（侧栏指示块/抽屉横移）：快起慢收，横向位移用它最顺。 */
+    easeSlide: 'cubic-bezier(0.22,0.61,0.36,1)',
   },
   type: {
     // 阶梯整体上一档（对标 ReinaManager 的字号尺度）：12px 中文在深色底上

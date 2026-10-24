@@ -586,10 +586,16 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   background: var(--hh-color-card);
   border: 1px solid var(--hh-color-card-border);
   transition:
-    transform var(--hh-motion-med) ease,
-    background var(--hh-motion-med) ease,
-    border-color var(--hh-motion-med) ease;
+    transform var(--hh-motion-med) var(--hh-motion-ease-out),
+    background var(--hh-motion-med) var(--hh-motion-ease-fade),
+    border-color var(--hh-motion-med) var(--hh-motion-ease-fade);
   /* 焦点环交给全局 :focus-visible（WCAG 2.4.11），不留 outline:none 掐死它 */
+}
+/* 按压：点击瞬间微缩 + 落回，与 hover 的浮起是同一根曲线（easeOut），
+   手感连续——悬停抬起来、按下压下去、松开弹回，一气呵成 */
+.cover-card:active {
+  transform: translateY(-1px) scale(0.985);
+  transition-duration: var(--hh-motion-fast);
 }
 /* hover：封面微抬（translateY -3px）+ 阴影加深 + 边框提亮。
    克制原则：不做 scale 放大（相邻封面边缘会露白），抬升幅度小到不晃眼，
@@ -620,8 +626,8 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   position: relative;
   box-shadow: 0 6px 20px var(--hh-color-thumb-shadow);
   transition:
-    box-shadow var(--hh-motion-med) ease,
-    transform var(--hh-motion-med) ease;
+    box-shadow var(--hh-motion-med) var(--hh-motion-ease-out),
+    transform var(--hh-motion-med) var(--hh-motion-ease-out);
 }
 /* hover 抬升时封面跟着浮起（与卡片同向，阴影加深制造悬浮感） */
 .cover-card:hover .cover-thumb {
@@ -633,7 +639,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   height: 100%;
   object-fit: cover;
   display: block;
-  transition: transform var(--hh-motion-page) cubic-bezier(0.22, 0.61, 0.36, 1);
+  transition: transform var(--hh-motion-page) var(--hh-motion-ease-slide);
 }
 .cover-card:hover .cover-thumb img {
   /* 只做极轻微的提亮（1.02），不做放大——缩放会让相邻封面边缘露白 */

@@ -153,6 +153,68 @@ body,
   box-shadow: var(--hh-shadow-float);
 }
 
+/* ============ 动效原语（§ 连贯性） ============
+   跨页/右栏互换这类「同一套语义、多处复用」的过渡放全局，组件只写
+   <Transition name="page"> 这样的名字；单组件内部的微交互仍留在组件里。
+   曲线与时长全部来自 tokens（--hh-motion-*），换主题不改这里。 */
+
+/* 页面切换（App.vue 的 <Transition name="page" mode="out-in">）：
+   进场淡入 + 6px 上浮落位，退场只做快速淡出——两段不同曲线才像「翻页」。 */
+.page-enter-from {
+  opacity: 0;
+  transform: translateY(6px);
+}
+.page-enter-active {
+  transition:
+    opacity var(--hh-motion-med) var(--hh-motion-ease-out),
+    transform var(--hh-motion-slow) var(--hh-motion-ease-out);
+}
+.page-leave-active {
+  transition: opacity var(--hh-motion-fast) var(--hh-motion-ease-in);
+}
+.page-leave-to {
+  opacity: 0;
+}
+
+/* 右栏互换（详情面板 ⇄ 动态流）：离场就地淡出（absolute 铺满，不占第二列宽），
+   进场从右侧 12px 滑入。不加 mode="out-in"——右栏不该有 167ms 空档。 */
+.aside-enter-from {
+  opacity: 0;
+  transform: translateX(12px);
+}
+.aside-enter-active {
+  transition:
+    opacity var(--hh-motion-med) var(--hh-motion-ease-out),
+    transform var(--hh-motion-slow) var(--hh-motion-ease-out);
+}
+.aside-leave-active {
+  position: absolute;
+  inset: 0;
+  transition: opacity var(--hh-motion-fast) var(--hh-motion-ease-in);
+}
+.aside-leave-to {
+  opacity: 0;
+}
+
+/* ============ 形态切换（View Transitions） ============ */
+/* 详情「右栏 ⇄ 整页」用 View Transitions：浏览器对整页快照做交叉淡入，
+   带 view-transition-name 的元素（banner）在两种形态间连续变形。
+   默认时长/曲线是线性的 250ms，这里对齐设计 token：进场 333ms easeOut、
+   退场 167ms easeIn、变形走 easeSlide。
+   注意 ::view-transition-* 挂在根伪元素上，只能写在非 scoped 的全局样式里。 */
+::view-transition-group(*) {
+  animation-duration: var(--hh-motion-page);
+  animation-timing-function: var(--hh-motion-ease-slide);
+}
+::view-transition-old(root) {
+  animation-duration: var(--hh-motion-med);
+  animation-timing-function: var(--hh-motion-ease-in);
+}
+::view-transition-new(root) {
+  animation-duration: var(--hh-motion-page);
+  animation-timing-function: var(--hh-motion-ease-out);
+}
+
 /* ============ 动效降级（§0-6） ============ */
 @media (prefers-reduced-motion: reduce) {
   *,
@@ -160,6 +222,12 @@ body,
   *::after {
     animation-duration: 0.01ms !important;
     transition-duration: 0.01ms !important;
+  }
+  /* View Transitions 的伪元素不在 * 的匹配范围里，要单独关 */
+  ::view-transition-group(*),
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
   }
   .glass,
   .glass-float {

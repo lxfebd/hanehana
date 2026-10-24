@@ -15,7 +15,7 @@
  * 对基准的优势项：简介里的 BBCode（[url=…][/url]、[b]/[i] 等源站标记）在渲染前
  * 剥干净只留正文——基准把 `[From url=…]Wikipedia[/url]]` 直接怼到界面上。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   Activity,
@@ -25,6 +25,8 @@ import {
   Flower2,
   FolderOpen,
   Heart,
+  Maximize2,
+  Minimize2,
   PanelRightClose,
   Pencil,
   Play,
@@ -51,11 +53,35 @@ import PlayChart from './PlayChart.vue'
 import { t, tf, type I18nKey } from '../i18n'
 import { tokens } from '../design/tokens'
 import { ONE_DAY_MS } from '../../shared/format'
-import type { DayStat, PlaySession } from '../../shared/types'
+import type { DayStat, Game, PlaySession } from '../../shared/types'
 
 const emit = defineEmits<{ collapse: [] }>()
 const g = computed(() => selectedGame.value)
 const descExpanded = ref(false)
+/**
+ * 右栏 ⇄ 整页展开。
+ *
+ * 用 View Transitions（Electron 里 Chromium 111+ 可用）让 banner 在两种形态间
+ * **连续变形**——不是「关一个开一个」的硬切，用户看到的是同一张卡长大。
+ * 不支持该 API、或用户开了「减少动效」时直接切：形态切换是功能，不是装饰，
+ * 不能因为动效偏好就失效。
+ */
+const expanded = ref(false)
+function toggleExpand(): void {
+  const doc = document as Document & {
+    startViewTransition?: (_cb: () => void | Promise<void>) => unknown
+  }
+  const reduce = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false
+  if (reduce || typeof doc.startViewTransition !== 'function') {
+    expanded.value = !expanded.value
+    return
+  }
+  void doc.startViewTransition(async () => {
+    expanded.value = !expanded.value
+    await nextTick()
+  })
+}
+
 /** 评分星星色（真值 tokens；reactive，切主题自动刷新） */
 const starColor = computed(() => tokens.color.star)
 
@@ -72,6 +98,9 @@ watch(g, () => {
   tagQuery.value = ''
   tagsExpanded.value = false
   dpTab.value = 'stats'
+  // 换游戏时退出整页形态：整页是「看这一个」的语境，跟着换到下一个游戏
+  // 会把上一个游戏的全屏状态带过去（用户以为没切成功）
+  expanded.value = false
 })
 
 function fmtPlay(ms: number): string {
@@ -373,18 +402,81 @@ const sourceText = computed(() => g.value?.sources?.[0]?.provider ?? '')
 const releaseText = computed(() => g.value?.releaseDate ?? '')
 const addedText = computed(() => (g.value?.addedAt ? fmtDate(g.value.addedAt) : ''))
 const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) : ''))
+
+// ---------------------------------------------------------------- 相似游戏（详情页的下一站）
+
+/**
+ * 相似推荐：共享标签 ×2 + 同开发商 ×3 + 同系列 ×2 加权，按分排序取前 8。
+ *
+ * 为什么是这三项：库内数据只有标签/开发商/系列能表达「为什么像」——
+ * 时长排序会让推荐退化成「大家玩得多的」（本来就见过），
+ * 而 galgame 的用户决策链是「同一系列 → 同一会社 → 同类标签」。
+ * 纯内存计算（library.games 已在内存里），不做主进程查询。
+ */
+const similarGames = computed<Game[]>(() => {
+  const game = g.value
+  if (!game) return []
+  const tags = new Set(game.tags)
+  const series = new Set(game.series ?? [])
+  const dev = game.developer ?? ''
+  const scored: { game: Game; score: number }[] = []
+  for (const other of library.games) {
+    if (other.id === game.id) continue
+    let score = 0
+    for (const tg of other.tags) if (tags.has(tg)) score += 2
+    if (dev && other.developer === dev) score += 3
+    for (const s of other.series ?? []) if (series.has(s)) score += 2
+    if (score > 0) scored.push({ game: other, score })
+  }
+  // 同分时按游玩时长降序：同分里先给用户可能更熟的那部
+  scored.sort((a, b) => b.score - a.score || (b.game.playMs ?? 0) - (a.game.playMs ?? 0))
+  return scored.slice(0, 8).map((s) => s.game)
+})
+
+/** 相似项封面加载失败：隐掉 img，露出底下首字兜底（不卸载，避免布局跳动） */
+function hideImg(e: Event): void {
+  const el = e.target as HTMLImageElement
+  el.style.opacity = '0'
+}
+
+/** 整页形态下 Esc 收回（全屏的东西必须有一条不用找按钮的退路） */
+function onKey(e: KeyboardEvent): void {
+  if (e.key === 'Escape' && expanded.value) {
+    e.stopPropagation()
+    expanded.value = false
+  }
+}
+onMounted(() => document.addEventListener('keydown', onKey))
+onUnmounted(() => document.removeEventListener('keydown', onKey))
 </script>
 
 <template>
-  <aside class="detail-panel glass">
-    <button
-      class="detail-collapse"
-      :title="t('app_collapse_detail')"
-      :aria-label="t('app_collapse_detail')"
-      @click="emit('collapse')"
-    >
-      <PanelRightClose :size="14" />
-    </button>
+  <aside class="detail-panel glass" :class="{ 'is-expanded': expanded }">
+    <!-- 头部动作：整页展开 ⇄ 收回，以及把右栏整条收成 28px 窄条。
+         sticky + margin-bottom:-40px 的写法沿用原折叠钮——它要浮在 banner
+         右上角，但滚动时不跟着 content 走。 -->
+    <div class="dp-head-actions">
+      <button
+        class="dp-icon-btn"
+        type="button"
+        :title="expanded ? t('dp_collapse_panel') : t('dp_expand_panel')"
+        :aria-label="expanded ? t('dp_collapse_panel') : t('dp_expand_panel')"
+        :aria-pressed="expanded"
+        @click="toggleExpand"
+      >
+        <Minimize2 v-if="expanded" :size="14" />
+        <Maximize2 v-else :size="14" />
+      </button>
+      <button
+        class="dp-icon-btn"
+        type="button"
+        :title="t('app_collapse_detail')"
+        :aria-label="t('app_collapse_detail')"
+        @click="emit('collapse')"
+      >
+        <PanelRightClose :size="14" />
+      </button>
+    </div>
     <!-- 未选中空态 -->
     <div v-if="!g" class="empty-state">
       <Flower2 :size="36" :stroke-width="1.5" class="empty-icon" />
@@ -450,6 +542,11 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
           <ClipboardCopy :size="14" /> {{ copyDone ? t('dp_copied') : t('dp_copy') }}
         </button>
       </div>
+
+      <!-- ============ 双栏：整页态左右两栏，抽屉态两个容器 display:contents
+            （各自的孩子直接成为面板 flex item，视觉零变化） ============ -->
+      <div class="dp-cols">
+        <div class="dp-col dp-col-main">
 
       <!-- 元数据行：数据来源 / 开发商 / 发售日 / 加入时间 / 预计时长 / 评分（基准一行摊开） -->
       <div class="dp-meta" :aria-label="t('dp_source')">
@@ -543,8 +640,12 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
         </button>
       </div>
 
+      <!-- 分页内容切换：out-in 让旧页 83ms 淡出后新页 4px 上浮入场。
+           右栏四页高度差很大（曲线 vs 存档按钮组），不 out-in 会看到两页
+           叠一帧、内容跳一下。 -->
+      <Transition name="pane" mode="out-in">
       <!-- ============ 游玩数据 ============ -->
-      <div v-if="dpTab === 'stats'" id="dp-pane-stats" class="dp-pane" role="tabpanel">
+      <div v-if="dpTab === 'stats'" id="dp-pane-stats" key="stats" class="dp-pane" role="tabpanel">
         <div class="pc-range">
           <button
             v-for="r in ranges"
@@ -598,7 +699,7 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
       </div>
 
       <!-- ============ 简介（BBCode 已剥干净） ============ -->
-      <div v-else-if="dpTab === 'intro'" id="dp-pane-intro" class="dp-pane" role="tabpanel">
+      <div v-else-if="dpTab === 'intro'" id="dp-pane-intro" key="intro" class="dp-pane" role="tabpanel">
         <!-- 系列 chips（series 关联：前作/续作/外传，点击聚合筛选同系列） -->
         <div v-if="g.series?.length" class="series">
           <span class="meta-key series-key">{{ t('dp_series') }}</span>
@@ -630,7 +731,7 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
       </div>
 
       <!-- ============ 编辑（原文字段编辑：复用 EditDialog 触发） ============ -->
-      <div v-else-if="dpTab === 'edit'" id="dp-pane-edit" class="dp-pane" role="tabpanel">
+      <div v-else-if="dpTab === 'edit'" id="dp-pane-edit" key="edit" class="dp-pane" role="tabpanel">
         <button class="dp-pane-btn" type="button" @click="openEdit(g.id)">
           <Pencil :size="14" /> {{ t('detail_edit') }}
         </button>
@@ -679,7 +780,7 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
       </div>
 
       <!-- ============ 存档（备份开关 + 备份记录入口） ============ -->
-      <div v-else id="dp-pane-saves" class="dp-pane" role="tabpanel">
+      <div v-else id="dp-pane-saves" key="saves" class="dp-pane" role="tabpanel">
         <label class="dp-switch">
           <input :checked="!!g.backupEnabled" type="checkbox" @change="toggleBackup" />
           <span class="dp-switch-box" aria-hidden="true"></span>
@@ -690,6 +791,45 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
         <button class="dp-pane-btn" type="button" :aria-pressed="!!library.backupOpen" @click="openBackups">
           <DatabaseBackup :size="14" /> {{ t('detail_backup_records') }}
         </button>
+      </div>
+      </Transition>
+        </div>
+
+        <!-- 右列（只给整页态：抽屉里它接在分页内容之后，滚到底才看到） -->
+        <aside class="dp-col dp-col-side">
+          <!-- 相似游戏：标签/开发商/系列三项加权，点一下就在本面板里换游戏
+               （不跳页、不关面板——详情最常用的动作就是「顺着看下一部」） -->
+          <section class="dp-similar" :aria-label="t('dp_similar')">
+            <div class="dp-similar-head">
+              <span class="dp-similar-title">{{ t('dp_similar') }}</span>
+              <span class="dp-similar-count">{{ similarGames.length }}</span>
+            </div>
+            <div v-if="similarGames.length" class="dp-similar-grid">
+              <button
+                v-for="sg in similarGames"
+                :key="sg.id"
+                class="dp-sim-item"
+                type="button"
+                :title="sg.title"
+                @click="library.selectedId = sg.id"
+              >
+                <span class="dp-sim-cover">
+                  <img
+                    v-if="thumbUrl(sg)"
+                    :src="thumbUrl(sg)"
+                    :alt="sg.title"
+                    class="dp-sim-img"
+                    loading="lazy"
+                    @error="hideImg"
+                  />
+                  <span class="dp-sim-letter">{{ sg.title.slice(0, 1) }}</span>
+                </span>
+                <span class="dp-sim-name">{{ sg.title }}</span>
+              </button>
+            </div>
+            <p v-else class="dp-similar-empty">{{ t('dp_similar_empty') }}</p>
+          </section>
+        </aside>
       </div>
     </template>
   </aside>
@@ -706,11 +846,19 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   /* 8px 列距：右栏 8 个区块的间距合计省 28px，全部记在曲线的头上 */
   gap: var(--hh-space-x2);
 }
-.detail-collapse {
+/* 头部动作组（展开整页 / 收成窄条）：sticky 让它浮在 banner 右上角，
+   滚动时不跟着内容走；负 margin 让 banner 顶上来，不占布局高度。 */
+.dp-head-actions {
   position: sticky;
   top: 0;
   z-index: 5;
   align-self: flex-end;
+  display: flex;
+  gap: 6px;
+  margin-bottom: -40px;
+  flex: none;
+}
+.dp-icon-btn {
   width: 28px;
   height: 28px;
   display: flex;
@@ -723,13 +871,16 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   cursor: pointer;
   transition:
     background var(--hh-motion-med),
-    color var(--hh-motion-med);
-  margin-bottom: -40px;
-  flex: none;
+    color var(--hh-motion-med),
+    transform var(--hh-motion-fast) var(--hh-motion-ease-out);
 }
-.detail-collapse:hover {
+.dp-icon-btn:hover {
   background: var(--hh-color-surface-hover);
   color: var(--hh-color-text-glow);
+}
+/* 按压回弹：40ms 内缩到 0.92，松开走 easeOut 回弹——手感比纯变色「实」 */
+.dp-icon-btn:active {
+  transform: scale(0.92);
 }
 
 .empty-state {
@@ -1441,14 +1592,133 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
   margin: 0;
   white-space: pre-wrap;
   overflow-wrap: break-word;
-  word-wrap: break-word;
-  hyphens: auto;
 }
+
+/* 详情卡片在形态切换时由 View Transitions 接管（banner 单独命名 → 它会长大，
+   其它内容淡入淡出）。旧浏览器/减少动效下直接切，不报错。 */
+.banner {
+  view-transition-name: dp-banner;
+}
+
+/* ============ 分页切换动效 ============ */
+/* out-in：旧页 83ms 淡出后再入场，两页不叠帧。宽度不变所以不做位移横滑 */
+.pane-enter-from {
+  opacity: 0;
+  transform: translateY(4px);
+}
+.pane-enter-active {
+  transition:
+    opacity var(--hh-motion-med) var(--hh-motion-ease-out),
+    transform var(--hh-motion-slow) var(--hh-motion-ease-out);
+}
+.pane-leave-active {
+  transition: opacity var(--hh-motion-fast) var(--hh-motion-ease-in);
+}
+.pane-leave-to {
+  opacity: 0;
+}
+
+/* ============ 相似游戏 ============ */
+.dp-similar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hh-space-x2);
+}
+.dp-similar-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--hh-space-x2);
+}
+.dp-similar-title {
+  font-size: var(--hh-font-caption-size);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--hh-color-text-bright);
+}
+.dp-similar-count {
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+.dp-similar-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--hh-space-x2);
+}
+.detail-panel.is-expanded .dp-similar-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.dp-sim-item {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.dp-sim-cover {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: var(--hh-layout-cover-ratio);
+  border-radius: var(--hh-radius-sm);
+  overflow: hidden;
+  background: var(--hh-color-surface-soft);
+  transition:
+    transform var(--hh-motion-slow) var(--hh-motion-ease-out),
+    box-shadow var(--hh-motion-slow) var(--hh-motion-ease-out);
+}
+.dp-sim-item:hover .dp-sim-cover {
+  transform: translateY(-2px) scale(1.02);
+}
+.dp-sim-item:active .dp-sim-cover {
+  transform: scale(0.985);
+  transition-duration: var(--hh-motion-fast);
+}
+.dp-sim-img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: opacity var(--hh-motion-fast) var(--hh-motion-ease-fade);
+}
+.dp-sim-letter {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--hh-color-text-dim);
+}
+.dp-sim-name {
+  font-size: 11px;
+  line-height: 14px;
+  color: var(--hh-color-text-mid);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.dp-sim-item:hover .dp-sim-name {
+  color: var(--hh-color-text-glow);
+}
+.dp-similar-empty {
+  margin: 0;
+  font-size: var(--hh-font-caption-size);
+  color: var(--hh-color-text-dim);
+}
+
 .desc.clamped {
   display: -webkit-box;
   -webkit-line-clamp: 6;
   -webkit-box-orient: vertical;
   overflow: hidden;
+}
+/* 整页态简介多给行数：抽屉 400px 宽时 6 行够用，整页态有纵向空间，
+   12 行能装完长篇简介，不必先点「展开」 */
+.detail-panel.is-expanded .desc.clamped {
+  -webkit-line-clamp: 12;
 }
 .desc-toggle {
   align-self: flex-start;
@@ -1461,5 +1731,62 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
 }
 .desc-toggle:hover {
   color: var(--hh-color-accent-hover);
+}
+
+/* ============ 分栏容器 ============ */
+/* 抽屉态：两层容器都不参与布局（display:contents），孩子直接落到面板的
+   flex 列里——与改造前逐像素一致，整页态再切成两栏。 */
+.dp-cols {
+  display: contents;
+}
+.dp-col {
+  display: contents;
+}
+/* 整页态：左栏（元数据/标签/分页）宽一点，右栏（相似游戏）窄一点 */
+.detail-panel.is-expanded .dp-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  gap: var(--hh-space-x4);
+  flex: 1;
+  min-height: 0;
+}
+.detail-panel.is-expanded .dp-col {
+  display: flex;
+  flex-direction: column;
+  gap: var(--hh-space-x2);
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: var(--hh-space-x1);
+}
+
+/* ============ 整页形态 ============ */
+/* fixed 铺满主区域而不是改布局：面板仍在右栏的 DOM 位置，只是视觉上接管
+   整个窗口，收回时宽度回到 token，右栏布局零改动。
+   左右 12px / 底部 12px 留呼吸，顶部让过标题栏。 */
+.detail-panel.is-expanded {
+  position: fixed;
+  top: calc(var(--hh-layout-titlebar-h) + 8px);
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  width: auto;
+  z-index: 60;
+  overflow: hidden;
+  padding: var(--hh-space-x4);
+  gap: var(--hh-space-x3);
+  background: var(--hh-color-card);
+  border: 1px solid var(--hh-color-panel-glass-border);
+}
+/* 整页态的 banner 长高：hero 是「这一部游戏」的门面，全屏时给它 260px */
+.detail-panel.is-expanded .banner {
+  height: 260px;
+  flex: none;
+}
+.detail-panel.is-expanded .banner-cover {
+  width: 132px;
+  height: 198px;
+}
+.detail-panel.is-expanded .dp-meta {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 </style>

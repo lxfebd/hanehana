@@ -369,6 +369,11 @@ export const en: Record<I18nKey, string> = {
   dp_le: 'LE locale',
   dp_collapse: 'Collapse',
   dp_expand: 'Expand',
+  // Panel form switch (page ⇄ right rail) — distinct from description expand above
+  dp_expand_panel: 'Expand to page',
+  dp_collapse_panel: 'Back to panel',
+  dp_similar: 'Similar games',
+  dp_similar_empty: 'No similar titles',
   // ---- Cover grid ----
   cg_loading: 'Loading library…',
   cg_empty_hint: 'Try a different keyword or category',

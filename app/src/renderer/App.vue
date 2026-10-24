@@ -173,62 +173,62 @@ async function submitAddTask(input: {
 
           <!-- 中栏 -->
           <main class="content">
-            <template v-if="page === 'home'">
+            <!-- 页面切换：<Transition mode="out-in">让两页不并存——退场快淡出，
+                 进场淡入 + 6px 上浮落位（曲线见 global.css .page-*）。
+                 GameSites 必须留在 Transition 之外：它 v-if 挂载 + v-show 保活，
+                 进了 Transition 就会被当成「每一页」反复挂载。 -->
+            <Transition name="page" mode="out-in">
               <!-- 首页仪表盘（B8，对标基准 home.png）：合并 KPI 面板 + Continue 卡
                    + 随机游戏卡。浏览工具（搜索/筛选/封面墙）不在首页——那是库页的事 -->
-              <HomeView />
-            </template>
+              <HomeView v-if="page === 'home'" key="home" />
 
-            <template v-else-if="page === 'library'">
-              <!-- 页头（面包屑 + 大标题 + 右上主操作）：页面要有名字，
-                   工具栏是工具不是导航——此前工具栏直接顶到标题栏下的问题在这里修 -->
-              <PageHeader :crumbs="['nav_home', 'nav_library']" :title="'nav_library'">
-                <template #actions>
-                  <button class="tool-btn labeled" type="button" @click="library.scanOpen = true">
-                    <ScanSearch :size="14" />
-                    <span>{{ t('lib_scan') }}</span>
+              <div v-else-if="page === 'library'" key="library" class="page-col">
+                <!-- 页头（面包屑 + 大标题 + 右上主操作）：页面要有名字，
+                     工具栏是工具不是导航——此前工具栏直接顶到标题栏下的问题在这里修 -->
+                <PageHeader :crumbs="['nav_home', 'nav_library']" :title="'nav_library'">
+                  <template #actions>
+                    <button class="tool-btn labeled" type="button" @click="library.scanOpen = true">
+                      <ScanSearch :size="14" />
+                      <span>{{ t('lib_scan') }}</span>
+                    </button>
+                    <button class="tool-btn labeled" type="button" @click="ui.addGameOpen = true">
+                      <Plus :size="14" />
+                      <span>{{ t('lib_add_one') }}</span>
+                    </button>
+                  </template>
+                </PageHeader>
+
+                <!-- 工具栏（G17 拆出 LibraryToolbar：搜索/分类/智能列表/导出/视图） -->
+                <LibraryToolbar
+                  :filtered-count="filteredCount"
+                  :export-menu-open="exportMenuOpen"
+                  @toggle-export="exportMenuOpen = !exportMenuOpen"
+                  @export="doExport"
+                  @clear-meta="clearMeta()"
+                />
+
+                <div class="cover-wrap">
+                  <CoverGrid
+                    :games="filteredGames"
+                    :view="library.view"
+                    @select="library.selectedId = $event"
+                  />
+                  <BatchEditOverlay @done="library.selectMode = false" />
+                </div>
+
+                <div v-if="library.error" class="error-banner glass">
+                  {{ library.error }}
+                  <button class="glass-btn" :title="t('app_clear_error')" @click="library.error = ''">
+                    <X :size="14" />
                   </button>
-                  <button class="tool-btn labeled" type="button" @click="ui.addGameOpen = true">
-                    <Plus :size="14" />
-                    <span>{{ t('lib_add_one') }}</span>
-                  </button>
-                </template>
-              </PageHeader>
-
-              <!-- 工具栏（G17 拆出 LibraryToolbar：搜索/分类/智能列表/导出/视图） -->
-              <LibraryToolbar
-                :filtered-count="filteredCount"
-                :export-menu-open="exportMenuOpen"
-                @toggle-export="exportMenuOpen = !exportMenuOpen"
-                @export="doExport"
-                @clear-meta="clearMeta()"
-              />
-
-              <div class="cover-wrap">
-                <CoverGrid :games="filteredGames" :view="library.view" @select="library.selectedId = $event" />
-                <BatchEditOverlay @done="library.selectMode = false" />
+                </div>
               </div>
 
-              <div v-if="library.error" class="error-banner glass">
-                {{ library.error }}
-                <button class="glass-btn" :title="t('app_clear_error')" @click="library.error = ''">
-                  <X :size="14" />
-                </button>
-              </div>
-            </template>
-
-            <template v-else-if="page === 'collection'">
               <!-- 收藏夹浏览页（B6）：按开发商/系列分组的浏览，不是库内又一个筛选开关 -->
-              <CollectionView />
-            </template>
-
-            <template v-else-if="page === 'downloads'">
-              <DownloadView />
-            </template>
-
-            <template v-else-if="page === 'stats'">
-              <StatsView />
-            </template>
+              <CollectionView v-else-if="page === 'collection'" key="collection" />
+              <DownloadView v-else-if="page === 'downloads'" key="downloads" />
+              <StatsView v-else-if="page === 'stats'" key="stats" />
+            </Transition>
 
             <!-- 游戏站：v-if 首次进入才挂载，之后 v-show 保活（webview 的会话与已打开页面不销毁）。
                  不能放进上面的 v-else 分支：v-if/v-else-if/v-else 链会让整个分支在别的页卸载，
@@ -236,27 +236,43 @@ async function submitAddTask(input: {
             <GameSites v-if="gamesMounted" v-show="page === 'games'" />
           </main>
 
-          <!-- 右侧栏（基准布局）：home → Activity（home.png 右栏）；
+          <!-- 右栏（基准布局）：home → Activity（home.png 右栏）；
                library → 选中游戏时详情面板、未选中时 Activity（B4：右栏永远有内容）。
-               库页选中态是库页的语境，首页不沿用——首页刚进去就是动态流。 -->
-          <DetailPanel
-            v-if="page === 'library' && !ui.detailCollapsed && selectedGame"
-            class="detail"
-            @collapse="ui.detailCollapsed = true"
-          />
-          <ActivityFeed
-            v-else-if="page === 'home' && !ui.detailCollapsed"
-            class="detail"
-          />
-          <button
-            v-if="(page === 'library' || page === 'home') && ui.detailCollapsed"
-            class="detail-collapsed"
-            :title="t('app_expand_detail')"
-            :aria-label="t('app_expand_detail')"
-            @click="ui.detailCollapsed = false"
+               库页选中态是库页的语境，首页不沿用——首页刚进去就是动态流。
+
+               详情⇄动态流用 <Transition name="aside"> 就地交接：新内容淡入右滑、
+               旧内容淡出（离场铺满右栏宽，不并排两列，所以中栏宽度不跳）。
+               这里**不**用 out-in——右栏不该出现 167ms 的空档，那看起来像闪了一下。
+               收起态整栏宽度动画到 28px（.aside.collapsed）。 -->
+          <aside
+            v-if="page === 'home' || page === 'library'"
+            class="aside"
+            :class="{ collapsed: ui.detailCollapsed }"
           >
-            <ChevronLeft :size="14" />
-          </button>
+            <Transition name="aside">
+              <DetailPanel
+                v-if="page === 'library' && !ui.detailCollapsed && selectedGame"
+                key="detail"
+                class="detail"
+                @collapse="ui.detailCollapsed = true"
+              />
+              <ActivityFeed
+                v-else-if="page === 'home' && !ui.detailCollapsed"
+                key="feed"
+                class="detail"
+              />
+              <span v-else key="blank" class="aside-blank" aria-hidden="true" />
+            </Transition>
+            <button
+              v-if="ui.detailCollapsed"
+              class="detail-collapsed"
+              :title="t('app_expand_detail')"
+              :aria-label="t('app_expand_detail')"
+              @click="ui.detailCollapsed = false"
+            >
+              <ChevronLeft :size="14" />
+            </button>
+          </aside>
         </div>
 
         <ScanDialog v-model:open="library.scanOpen" />
@@ -452,12 +468,25 @@ async function submitAddTask(input: {
   color: var(--hh-color-select-text);
 }
 
-/* 右栏高度链的最后一环。.detail 是 .layout 的 flex item，flex stretch
+/* 中栏一页（库页等复合页）：纵向排页头/工具栏/封面墙/错误浮层，
+   flex:1 + min-height:0 让 .cover-wrap 的 flex:1 高度链在 Transition 包裹下仍闭合 */
+.page-col {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  flex: 1;
+  min-height: 0;
+}
+
+/* 右栏容器：宽度交给 token，收起态动画到 28px（.aside.collapsed）。
+   width 的 transition 是「连贯」的一部分——收起时中栏是平滑让宽的。
+
+   高度链的最后一环在 .aside > .detail：.detail 是 flex item，flex stretch
    给的高度不是 definite height——里头若写 height:100%（ActivityFeed 就是），
    百分比会塌成 auto，子项不收缩，.af-body 的 flex:1 抢不到剩余空间，
    overflow-y:auto 永远不滚（详情面板当初 32px banner 的同一条病根）。
    align-self:stretch 显式化 + min-height:0 允许收缩，环才闭合。 */
-.detail {
+.aside {
   width: var(--hh-layout-detail-w);
   /* 右栏固定宽：ActivityFeed 根的 flex:1 会把 width 顶掉（flex-basis 0 + grow），
      实测 361 token 被撑成 557，主列被挤到 555。基准 home.png 主列 699 : 活动 395。
@@ -466,6 +495,37 @@ async function submitAddTask(input: {
   position: relative;
   align-self: stretch;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  transition: width var(--hh-motion-slow) var(--hh-motion-ease-slide);
+}
+.aside.collapsed {
+  width: 28px;
+}
+.aside > .detail {
+  width: 100%;
+  flex: 1;
+  position: relative;
+  min-height: 0;
+}
+/* 详情整页展开：这一条必须写在 App.vue 里，而不是在组件内加大特异性。
+   .aside > .detail（含 scoped 属性 = 0,3,0）与组件内 .detail-panel.is-expanded
+   （同为 0,3,0）打平，产物里 App 的样式排在组件样式之后——面板虽然拿到了
+   position:fixed，又被宽高/定位拽回抽屉尺寸（实测 rect 400x748、
+   computed position=relative）。在这里显式让位。 */
+.aside > .detail.is-expanded {
+  width: auto;
+  flex: none;
+  position: fixed;
+}
+
+/* 右栏空态占位（收起时 Transition 里的第三个分支）：占满宽度保持结构，
+   不显示任何东西。 */
+.aside-blank {
+  display: block;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
 }
 
 /* 页头右侧主操作：图标 + 文字（基准 §0-8）。带文字才叫「主操作」，
@@ -514,6 +574,11 @@ async function submitAddTask(input: {
     background var(--hh-motion-med),
     color var(--hh-motion-med);
   margin: 8px;
+}
+/* 收起态：aside 只有 28px 宽，横向 margin 会被挤出容器（28 + 16 > 28），
+   归零只留纵向间距。 */
+.aside.collapsed .detail-collapsed {
+  margin: 8px 0;
 }
 .detail-collapsed:hover {
   background: var(--hh-color-surface-hover);

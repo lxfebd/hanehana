@@ -378,6 +378,11 @@ export const zh = {
   dp_le: 'LE 转区',
   dp_collapse: '收起',
   dp_expand: '展开',
+  // 详情面板的「整页 / 右栏」形态切换（与上面的简介展开是两件事，键名分开）
+  dp_expand_panel: '展开整页',
+  dp_collapse_panel: '收回右栏',
+  dp_similar: '相似游戏',
+  dp_similar_empty: '暂无相似作品',
   // ---- 封面墙 ----
   cg_loading: '正在加载游戏库…',
   cg_empty_hint: '换换关键词或分类试试',
