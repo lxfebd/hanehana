@@ -98,6 +98,7 @@ export const zh = {
   toolbar_export_json: '导出 JSON',
   toolbar_fav: '只看收藏',
   toolbar_select: '多选模式',
+  toolbar_batch_actions: '批量操作',
   toolbar_grid: '网格视图',
   toolbar_list: '列表视图',
   toolbar_all: '全部',
@@ -122,7 +123,7 @@ export const zh = {
   detail_backup_on: '备份已开',
   detail_backup_records: '备份记录',
   detail_empty: '点击封面查看详情',
-  count_suffix: '款',
+  count_suffix: '款游戏',
   // ---- P2-3 下载页 ----
   dl_filter_downloading: '下载中',
   dl_filter_paused: '已暂停',

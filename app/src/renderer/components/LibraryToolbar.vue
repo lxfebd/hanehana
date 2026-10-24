@@ -78,17 +78,18 @@ const emit = defineEmits<{
       <Heart :size="15" />
     </button>
 
+    <!-- 批量操作开关（基准库页头部口径：文字标签 + 药丸 toggle，主操作不许纯图标） -->
     <button
-      class="tool-btn"
-      :class="{ active: library.selectMode }"
+      class="batch-toggle"
+      :class="{ on: library.selectMode }"
       :title="t('toolbar_select')"
       :aria-pressed="library.selectMode"
       @click="enterSelectMode(!library.selectMode)"
     >
-      <CheckSquare :size="15" />
+      <CheckSquare :size="15" class="bt-ic" />
+      <span class="bt-label">{{ t('toolbar_batch_actions') }}</span>
+      <span class="bt-switch" aria-hidden="true"><i class="bt-knob" /></span>
     </button>
-
-    <div class="toolbar-count">{{ filteredCount }} {{ t('count_suffix') }}</div>
 
     <!-- G14 导出：主操作带文字（基准口径：图标 + 文字，不纯图标）+ 小菜单（CSV / JSON） -->
     <div class="export-wrap">
@@ -130,6 +131,9 @@ const emit = defineEmits<{
         <List :size="16" />
       </button>
     </div>
+
+    <!-- 计数压轴在最右（基准 library.png：左控件组 / 右「107 games total」） -->
+    <div class="toolbar-count">{{ filteredCount }} {{ t('count_suffix') }}</div>
   </div>
 </template>
 
@@ -255,6 +259,71 @@ const emit = defineEmits<{
   white-space: nowrap;
 }
 
+/* 批量操作开关（基准口径：标签 + 药丸 switch，收进同一控件）。
+   关闭 = 描边卡底 + 灰 knob；开启 = select 态低透明 accent 底 + accent 实 knob。 */
+.batch-toggle {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 8px 0 10px;
+  border-radius: var(--hh-radius-pill);
+  border: 1px solid var(--hh-color-card-border);
+  background: var(--hh-color-surface-bright);
+  color: var(--hh-color-text-mid);
+  cursor: pointer;
+  transition:
+    background var(--hh-motion-med) ease,
+    border-color var(--hh-motion-med) ease,
+    color var(--hh-motion-med) ease;
+}
+.batch-toggle:hover {
+  background: var(--hh-color-surface-mid);
+  color: var(--hh-color-text-glow);
+}
+.bt-ic {
+  flex-shrink: 0;
+}
+.bt-label {
+  white-space: nowrap;
+  font-size: var(--hh-font-caption-size);
+  font-weight: 600;
+}
+.bt-switch {
+  position: relative;
+  width: 34px;
+  height: 18px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-surface-mid);
+  border: 1px solid var(--hh-color-card-border);
+  transition: background var(--hh-motion-med) ease;
+}
+.bt-knob {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--hh-color-text-tertiary);
+  transition:
+    transform var(--hh-motion-med) ease,
+    background var(--hh-motion-med) ease;
+}
+.batch-toggle.on {
+  background: var(--hh-color-select-bg);
+  border-color: var(--hh-color-accent-selected-border);
+  color: var(--hh-color-select-text);
+}
+.batch-toggle.on .bt-switch {
+  background: var(--hh-color-accent);
+  border-color: var(--hh-color-accent);
+}
+.batch-toggle.on .bt-knob {
+  transform: translateX(16px);
+  background: var(--hh-color-on-accent);
+}
+
 /* 智能列表下拉 + 收藏/多选工具按钮（与 seg-btn 同口径） */
 .smart-select {
   height: 32px;
@@ -310,10 +379,13 @@ const emit = defineEmits<{
   color: var(--hh-color-select-text);
 }
 
-/* G14 导出：小菜单浮在按钮正下方（玻璃材质复用全局 .glass） */.export-wrap {
+/* G14 导出：小菜单浮在按钮正下方（玻璃材质复用全局 .glass）。
+   margin-left:auto：从这里起算「右侧组」（导出 / 视图切换 / 计数压最右），
+   对齐基准 library.png 的「左控件组 … 右 107 games total」布局。 */.export-wrap {
   position: relative;
   display: flex;
   align-items: center;
+  margin-left: auto;
 }
 .export-menu {
   position: absolute;

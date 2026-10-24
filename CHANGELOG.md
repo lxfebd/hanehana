@@ -2,6 +2,14 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.15] - 2026-10-25
+
+### 变更
+
+- **库页工具栏对标基准 library.png**：批量操作从纯图标钮升级为「图标 + 文字 + 药丸开关」的 Batch Actions 控件（基准口径主操作不许纯图标；开关开启 = select 态低透明 accent 底 + accent 实色 knob，与分类 chip/多选选中态同口径）。计数文案 `N 款` → `N 款游戏`（en `N games total`，对齐基准「107 games total」措辞），并 `margin-left:auto` 靠右对齐（基准布局 = 左控件组 / 右计数）。
+- **取证修正**：此前判定基准库页有「平台筛选 chips 条」是误读——逐像素裁切（x140-1100、y315-355 段）确认那些是**封面自带的平台 logo 美术**（PlayStation 2 / XBOX 360 / Xbox LIVE），基准这一带只有「Batch Actions + 开关」一行与「107 games total」；我们的工具栏（搜索/分类/智能列表/收藏/批量/导出/视图）是功能超集，无需新增筛选条。
+- 闸：typecheck 0 / lint 0 err（48 既有 warning）/ regression:static 23+32 PASS / regression:reina 五屏全 true / npm test 88 pass。
+
 ## [0.2.14] - 2026-10-25
 
 ### 修复
