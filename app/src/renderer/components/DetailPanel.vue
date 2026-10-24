@@ -20,6 +20,8 @@ import { message } from 'ant-design-vue'
 import {
   Activity,
   Check,
+  ChevronLeft,
+  ChevronRight,
   ClipboardCopy,
   DatabaseBackup,
   Flower2,
@@ -37,6 +39,7 @@ import {
 } from 'lucide-vue-next'
 import {
   applyPatch,
+  filteredGames,
   launchGame,
   library,
   openEdit,
@@ -66,6 +69,8 @@ const descExpanded = ref(false)
  * 不支持该 API、或用户开了「减少动效」时直接切：形态切换是功能，不是装饰，
  * 不能因为动效偏好就失效。
  */
+/** 主动翻页标记：整页形态下按 ←/→ 换一部要留在整页里，别被 watch(g) 弹回抽屉 */
+let keepExpandedOnSwitch = false
 const expanded = ref(false)
 function toggleExpand(): void {
   const doc = document as Document & {
@@ -99,8 +104,10 @@ watch(g, () => {
   tagsExpanded.value = false
   dpTab.value = 'stats'
   // 换游戏时退出整页形态：整页是「看这一个」的语境，跟着换到下一个游戏
-  // 会把上一个游戏的全屏状态带过去（用户以为没切成功）
-  expanded.value = false
+  // 会把上一个游戏的全屏状态带过去（用户以为没切成功）。
+  // 例外是用户主动按 ←/→ 翻页——那是「在整页里连续浏览」，收掉会让翻页闪一下。
+  if (keepExpandedOnSwitch) keepExpandedOnSwitch = false
+  else expanded.value = false
 })
 
 function fmtPlay(ms: number): string {
@@ -406,11 +413,12 @@ const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) :
 // ---------------------------------------------------------------- 相似游戏（详情页的下一站）
 
 /**
- * 相似推荐：共享标签 ×2 + 同开发商 ×3 + 同系列 ×2 加权，按分排序取前 8。
+ * 相似推荐：共享标签 ×2 + 同开发商 ×3 + 同系列 ×2 + 时长权重，按分排序取前 8。
  *
- * 为什么是这三项：库内数据只有标签/开发商/系列能表达「为什么像」——
+ * 为什么是这几项：库内数据只有标签/开发商/系列能表达「为什么像」——
  * 时长排序会让推荐退化成「大家玩得多的」（本来就见过），
  * 而 galgame 的用户决策链是「同一系列 → 同一会社 → 同类标签」。
+ * 时长权重（playWeight）是调味：真玩过的同类更能代表口味，但封顶 3 分。
  * 纯内存计算（library.games 已在内存里），不做主进程查询。
  */
 const similarGames = computed<Game[]>(() => {
@@ -426,12 +434,20 @@ const similarGames = computed<Game[]>(() => {
     for (const tg of other.tags) if (tags.has(tg)) score += 2
     if (dev && other.developer === dev) score += 3
     for (const s of other.series ?? []) if (series.has(s)) score += 2
-    if (score > 0) scored.push({ game: other, score })
+    if (score > 0) scored.push({ game: other, score: score + playWeight(other.playMs ?? 0) })
   }
   // 同分时按游玩时长降序：同分里先给用户可能更熟的那部
   scored.sort((a, b) => b.score - a.score || (b.game.playMs ?? 0) - (a.game.playMs ?? 0))
   return scored.slice(0, 8).map((s) => s.game)
 })
+
+/** 游玩时长权重：log10(1+小时) 封顶 3 分——1h 约 0.9、10h 约 2、100h 约 3。
+ *  对数压缩让「打了几百小时的神作」只比「玩了十小时」多 1 分，不会霸榜；
+ *  它只是给「真玩过」的同类作品一点点优先，主排序仍是标签/会社/系列。 */
+function playWeight(ms: number): number {
+  if (!ms || ms <= 0) return 0
+  return Math.min(3, Math.log10(1 + ms / 3600000))
+}
 
 /** 相似项封面加载失败：隐掉 img，露出底下首字兜底（不卸载，避免布局跳动） */
 function hideImg(e: Event): void {
@@ -439,11 +455,57 @@ function hideImg(e: Event): void {
   el.style.opacity = '0'
 }
 
-/** 整页形态下 Esc 收回（全屏的东西必须有一条不用找按钮的退路） */
+// ---------------------------------------------------------------- 上一部 / 下一部
+
+/**
+ * 翻页顺序 = 当前筛选结果的顺序（filteredGames），不是全库顺序：
+ * 用户从「最近玩过」或搜索结果里点开一部，期望的「下一部」就是列表里相邻的那张，
+ * 而不是入库顺序的下一张（那两张在屏上根本不相邻）。
+ */
+const navPos = computed(() => filteredGames.value.findIndex((x) => x.id === g.value?.id))
+const prevGame = computed(() => (navPos.value > 0 ? filteredGames.value[navPos.value - 1] : null))
+const nextGame = computed(() =>
+  navPos.value >= 0 && navPos.value < filteredGames.value.length - 1
+    ? filteredGames.value[navPos.value + 1]
+    : null,
+)
+
+function goGame(target: Game | null): void {
+  if (!target) return
+  keepExpandedOnSwitch = expanded.value
+  library.selectedId = target.id
+}
+
+/** 输入框/文本域里打字时，快捷键要让位（否则 ctrl+E 会把展开态和输入一起搅乱） */
+function isTypingTarget(el: EventTarget | null): boolean {
+  const node = el as HTMLElement | null
+  if (!node) return false
+  return node.tagName === 'INPUT' || node.tagName === 'TEXTAREA' || node.isContentEditable
+}
+
+/** 整页形态下 Esc 收回（全屏的东西必须有一条不用找按钮的退路）；
+ *  Ctrl/⌘+E 升降形态（与头部按钮同一函数，动效也同一套）；
+ *  整页态下 ←/→ 翻上一部/下一部（抽屉态不抢方向键——那是列表滚动） */
 function onKey(e: KeyboardEvent): void {
+  if (isTypingTarget(e.target)) return
+  if ((e.ctrlKey || e.metaKey) && (e.key === 'e' || e.key === 'E')) {
+    if (!g.value) return
+    e.preventDefault()
+    toggleExpand()
+    return
+  }
   if (e.key === 'Escape' && expanded.value) {
     e.stopPropagation()
     expanded.value = false
+    return
+  }
+  if (!expanded.value) return
+  if (e.key === 'ArrowLeft' && prevGame.value) {
+    e.preventDefault()
+    goGame(prevGame.value)
+  } else if (e.key === 'ArrowRight' && nextGame.value) {
+    e.preventDefault()
+    goGame(nextGame.value)
   }
 }
 onMounted(() => document.addEventListener('keydown', onKey))
@@ -456,6 +518,28 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
          sticky + margin-bottom:-40px 的写法沿用原折叠钮——它要浮在 banner
          右上角，但滚动时不跟着 content 走。 -->
     <div class="dp-head-actions">
+      <template v-if="expanded">
+        <button
+          class="dp-icon-btn"
+          type="button"
+          :disabled="!prevGame"
+          :title="t('dp_prev_game')"
+          :aria-label="t('dp_prev_game')"
+          @click="goGame(prevGame)"
+        >
+          <ChevronLeft :size="14" />
+        </button>
+        <button
+          class="dp-icon-btn"
+          type="button"
+          :disabled="!nextGame"
+          :title="t('dp_next_game')"
+          :aria-label="t('dp_next_game')"
+          @click="goGame(nextGame)"
+        >
+          <ChevronRight :size="14" />
+        </button>
+      </template>
       <button
         class="dp-icon-btn"
         type="button"
@@ -881,6 +965,15 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
 /* 按压回弹：40ms 内缩到 0.92，松开走 easeOut 回弹——手感比纯变色「实」 */
 .dp-icon-btn:active {
   transform: scale(0.92);
+}
+/* 首/尾到头（没有上一部、下一部）：变淡且不吃 hover 高亮。
+   按钮留在原位只是点不动，比直接藏掉更能说明「这里能翻，只是到头了」 */
+.dp-icon-btn:disabled,
+.dp-icon-btn:disabled:hover {
+  opacity: 0.35;
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-mid);
+  cursor: default;
 }
 
 .empty-state {

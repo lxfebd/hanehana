@@ -372,6 +372,9 @@ export const en: Record<I18nKey, string> = {
   // Panel form switch (page ⇄ right rail) — distinct from description expand above
   dp_expand_panel: 'Expand to page',
   dp_collapse_panel: 'Back to panel',
+  // ←/→ paging in page form (order follows the current filtered list)
+  dp_prev_game: 'Previous title',
+  dp_next_game: 'Next title',
   dp_similar: 'Similar games',
   dp_similar_empty: 'No similar titles',
   // ---- Cover grid ----

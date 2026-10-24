@@ -381,6 +381,9 @@ export const zh = {
   // 详情面板的「整页 / 右栏」形态切换（与上面的简介展开是两件事，键名分开）
   dp_expand_panel: '展开整页',
   dp_collapse_panel: '收回右栏',
+  // 整页态 ←/→ 翻页（顺序跟当前筛选结果，与封面墙一致）
+  dp_prev_game: '上一部',
+  dp_next_game: '下一部',
   dp_similar: '相似游戏',
   dp_similar_empty: '暂无相似作品',
   // ---- 封面墙 ----

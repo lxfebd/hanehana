@@ -2,6 +2,21 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.18] - 2026-10-25
+
+### 新增
+
+- **整页态「上一部 / 下一部」翻页**（`DetailPanel.vue`）：整页阅读时按 ←/→ 连续往下看，头部多两个箭标钮（到头变淡、不吃 hover 高亮，但不隐藏——说明「这里能翻，只是到头了」）。翻页顺序取**当前筛选结果**（`filteredGames`）而不是全库顺序：从「最近玩过」或搜索结果点开的作品，下一部就该是墙上相邻那张。整页态翻页**保持整页**（`keepExpandedOnSwitch` 一次性标记让 `watch(g)` 的收卡逻辑让路），抽屉态不抢方向键（那是列表滚动）。
+- **⌘/Ctrl+E 升降形态**（`DetailPanel.vue`）：键盘直接切换右栏 ⇄ 整页，与头部图标钮同一函数、同一套 View Transitions；输入框/文本域里打字时让位（`isTypingTarget` 判定 INPUT/TEXTAREA/contentEditable），不会把展开态和输入一起搅乱。
+
+### 变更
+
+- **相似推荐加入游玩时长权重**（`DetailPanel.vue`）：`playWeight(ms) = min(3, log10(1 + 小时))` 叠加到「共享标签 ×2 + 同开发商 ×3 + 同系列 ×2」的得分上——1h ≈ 0.9、10h ≈ 2、100h ≈ 3 分。对数压缩让时长最长的不至于霸榜，只是给「真玩过」的同类一点点优先；同分仍按时长降序取前 8。
+
+### 验证
+
+typecheck 0；lint 0 problem；build OK；npm test 88 pass / 0 fail；regression:static 8+32+23 PASS；regression:reina 五屏全 true（HOME kpiCells4 hero recent4 random feed；LIBRARY ph toolbar cards12；DETAIL meta6 tags6 tabs4 chart；STATS kpi6 hours24；COLLECTION groups5）；regression:hero 26 PASS 0 FAIL；regression:accent 25 PASS；regression:process 12 PASS。CDP 探针（`probe_paging.mjs`，临时脚本目录）：抽屉 btns=2 → ⌘/Ctrl+E 展开 btns=4（首个箭头 disabled）→ → 键标题「美少女万华镜」→「命运石之门」且保持整页 rect 12,48,1256×740 → ← 键回到万华镜 → 首项再按 ← 不变 → Esc 收回抽屉 rect 874,40,400×748 → Ctrl+E 再展开/再收回。
+
 ## [0.2.17] - 2026-10-25
 
 ### 新增
