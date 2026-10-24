@@ -2,6 +2,15 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.13] - 2026-10-25
+
+### 修复
+
+- **首页内容溢出 800 视口（随机卡「查看详情/启动游戏」按钮掉出截图外）**：hero 卡 515 高（基准实测 343）把随机卡挤到 y684 起、按钮 y818 在视口外——走查截图（`captureBeyondViewport:false`）只拍 800px，按钮被截掉，日常窗口同样看不到。两处压缩让三块全部落回首屏（总高 937→775）：
+  - **LibraryHero**：网格内距/行距 `x6/x8`（24/32）收 `x4/x6`（16/24）；右列封面定高 224px（原不设高、随源图比例漂——3:4 源图撑到 320 把行 1 顶高 96px）；最近游玩 chips padding 收 `4px 8px 4px 4px`；窄窗（≤720px）封面 150×160（h>w 仍满足 hero_themes 窄窗断言）。hero 卡 515→391。
+  - **RandomCard**：封面 132→104px（封面高 176→139），卡 253→215；随机卡底 y777 < 800，按钮 y677..713 可见。
+- 闸：typecheck 0 / lint 0 err（48 既有 warning）/ regression:reina 0 / regression:hero 26 PASS 0 FAIL / regression:static 23+32 PASS。
+
 ## [0.2.12] - 2026-10-24
 
 ### 变更

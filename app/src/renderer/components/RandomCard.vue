@@ -155,11 +155,13 @@ watch(
   min-width: 0;
 }
 
-/* 竖版封面（统一 cover-ratio token），点击 = 进库页选中 */
+/* 竖版封面（统一 cover-ratio token），点击 = 进库页选中。
+   104 = 基准随机卡封面宽度（卡 148 高档）：132 时封面 176 把卡顶到 253，
+   首页总高溢出视口。 */
 .rc-cover {
   position: relative;
   flex: none;
-  width: 132px;
+  width: 104px;
   aspect-ratio: var(--hh-layout-cover-ratio);
   border-radius: var(--hh-radius-md);
   overflow: hidden;
@@ -204,9 +206,11 @@ watch(
   line-height: var(--hh-font-subtitle-lh);
   font-weight: 600;
   color: var(--hh-color-text-glow);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  word-break: break-word;
 }
 
 .rc-sub {

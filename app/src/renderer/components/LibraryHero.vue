@@ -208,13 +208,6 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
       <div class="hero-main">
         <span class="hero-kicker">{{ t('home_continue') }}</span>
         <h2 class="hero-title" :title="heroGame.title">{{ heroGame.title }}</h2>
-        <div
-          v-if="heroGame.titleNative && heroGame.titleNative !== heroGame.title"
-          class="hero-native"
-          :title="heroGame.titleNative"
-        >
-          {{ heroGame.titleNative }}
-        </div>
         <div class="hero-meta">
           <span v-if="heroGame.lastPlayed" class="hm-line">{{ tf('home_last_played', { date: dayKey(heroGame.lastPlayed) }) }}</span>
           <span class="hm-line">{{ tf('home_hero_meta', { week: weekText, total: totalText }) }}</span>
@@ -330,8 +323,11 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
     'main cover'
     'recent recent';
   align-items: start;
-  gap: var(--hh-space-x6) var(--hh-space-x8);
-  padding: var(--hh-space-x6) var(--hh-space-x8);
+  /* 基准实测 hero 343 高：旧 x6/x8（24/32）内距 + 3:4 源图封面撑到 320
+     把卡顶到 515，首页总高 937 溢出 800 视口（随机卡按钮掉出截图）。
+     收到 x4/x6 + 封面定高，卡回 ~380 档，三块全部落回首屏。 */
+  gap: var(--hh-space-x4) var(--hh-space-x6);
+  padding: var(--hh-space-x4) var(--hh-space-x6);
   animation: hero-slide-in 300ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 @keyframes hero-slide-in {
@@ -386,15 +382,6 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   overflow-wrap: break-word;
 }
 
-.hero-native {
-  max-width: 100%;
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-hero-text-dim);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .hero-meta {
   display: flex;
   flex-direction: column;
@@ -422,6 +409,8 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  flex: none;
+  white-space: nowrap;
   height: 38px;
   padding: 0 22px;
   border: none;
@@ -466,7 +455,8 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 /* 次按钮：玻璃拟态 */
 .hero-detail {
   height: 38px;
-  padding: 0 16px;
+  padding: 0 18px;
+  white-space: nowrap;
   border: 1px solid var(--hh-color-hero-glass-border);
   border-radius: var(--hh-radius-pill);
   background: var(--hh-color-hero-glass-bg);
@@ -511,7 +501,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   gap: var(--hh-space-x2);
   flex: 1 1 152px;
   min-width: 132px;
-  padding: 5px 10px 5px 5px;
+  padding: 4px 8px 4px 4px;
   border: 1px solid var(--hh-color-hero-chip-border);
   border-radius: var(--hh-radius-md);
   background: var(--hh-color-hero-glass-bg);
@@ -552,9 +542,11 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 .hero-recent-title {
   font-size: var(--hh-font-body-size);
   font-weight: 600;
-  white-space: nowrap;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
+  word-break: break-word;
 }
 .hero-recent-time {
   font-size: var(--hh-font-caption-size);
@@ -569,6 +561,9 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   position: relative;
   z-index: 1;
   width: 240px;
+  /* 定高裁切（基准封面 275x257 是横裁观感）：高度不再随源图比例漂，
+     2:3 源图也不会把行 1 撑到 320+ */
+  height: 224px;
   padding: 0;
   border: none;
   border-radius: var(--hh-radius-md);
@@ -636,6 +631,7 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   }
   .hero-cover {
     width: 150px;
+    height: 160px;
   }
   .hero-recent-chip {
     flex: 0 0 132px;
