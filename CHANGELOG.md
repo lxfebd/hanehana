@@ -2,6 +2,13 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.14] - 2026-10-25
+
+### 修复
+
+- **首页左右分栏失衡（Activity 右栏 557px 把主列挤到 555）**：`.activity-feed` 根上的 `flex:1`（本意是闭合高度链的 flex 填充）与 App 的 `.detail{width:var(--hh-layout-detail-w)}` 冲突——flex-basis 0 + grow 直接顶掉 width，token 宽 361 实测渲染成 557，主列被压到 555（基准 home.png 主列 699 : 活动 395 ≈ 64:36，我们实测约 50:50）。修复：`.detail` 加 `flex:none` 让 token 宽度真正生效，`detailW` 361→400（对齐基准 395）。1280 窗口实测主列 712 : 活动 400 = 64:36，与基准一致。
+- 闸：typecheck 0 / lint 0 err（48 既有 warning）/ regression:reina 0（HOME kpiCells4 hero recent random feed 全 true、总高 775 不溢出）/ regression:hero 26 PASS 0 FAIL（窄窗 150×160 断言过）/ regression:static 23+32 PASS。
+
 ## [0.2.13] - 2026-10-25
 
 ### 修复

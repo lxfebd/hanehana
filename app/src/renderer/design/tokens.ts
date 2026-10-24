@@ -73,7 +73,7 @@ const base = {
   layout: {
     titlebarH: 40,
     sidebarW: 208,
-    detailW: 361,
+    detailW: 400,
     cardW: 184,
     cardGap: 16,
     // 封面竖版比例（宽/高）。VNDB/YMGal 的官方封面实测 3:4，

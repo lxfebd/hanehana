@@ -452,6 +452,10 @@ async function submitAddTask(input: {
    align-self:stretch 显式化 + min-height:0 允许收缩，环才闭合。 */
 .detail {
   width: var(--hh-layout-detail-w);
+  /* 右栏固定宽：ActivityFeed 根的 flex:1 会把 width 顶掉（flex-basis 0 + grow），
+     实测 361 token 被撑成 557，主列被挤到 555。基准 home.png 主列 699 : 活动 395。
+     flex:none 让 token 宽度真正生效，主列自动吃剩余。 */
+  flex: none;
   position: relative;
   align-self: stretch;
   min-height: 0;
