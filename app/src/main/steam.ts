@@ -8,7 +8,7 @@
  * 用 appmanifest 做主数据源：它给的是 Steam 官方名称（比文件夹名干净），
  * 且能覆盖「文件夹名与游戏名不一致」的情况。找不到 manifest 时才退回文件夹名。
  */
-import { readdir, readFile, stat } from 'node:fs/promises'
+import { readdir, readFile } from 'node:fs/promises'
 import { existsSync, type Dirent } from 'node:fs'
 import { basename, join } from 'node:path'
 

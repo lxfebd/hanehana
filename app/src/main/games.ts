@@ -274,7 +274,8 @@ export interface CrashRecord {
 }
 const recentCrashes = new Map<string, CrashRecord>()
 
-function recordExit(id: string, title: string, dir: string, code: number | null, signal: string | null): void {
+// signal 参数保留位置（调用方按位传），但当前判定只看退出码：信号终止同样是非 0。
+function recordExit(id: string, title: string, dir: string, code: number | null, _signal: string | null): void {
   // 正常退出：code 0 或 null（用户自己关窗口）；异常：非 0 退出码 / 信号终止
   const abnormal = code !== 0 && code !== null
   if (abnormal) {

@@ -16,13 +16,11 @@ import DetailPanel from './components/DetailPanel.vue'
 import ScanDialog from './components/ScanDialog.vue'
 import AddGameDialog from './components/AddGameDialog.vue'
 import ScrapeDialog from './components/ScrapeDialog.vue'
-import DownloadView from './components/DownloadView.vue'
 import NewDownloadDialog from './components/NewDownloadDialog.vue'
 import SettingsDialog from './components/SettingsDialog.vue'
-import GameSites from './components/GameSites.vue'
 import BatchEditOverlay from './components/BatchEditOverlay.vue'
 import EditDialog from './components/EditDialog.vue'
-import StatsView from './components/StatsView.vue'
+
 import SteamImportDialog from './components/SteamImportDialog.vue'
 import BackupDialog from './components/BackupDialog.vue'
 import FullscreenView from './components/FullscreenView.vue'
@@ -33,7 +31,16 @@ import ShortcutHelp from './components/ShortcutHelp.vue'
 import GameContextMenu from './components/GameContextMenu.vue'
 import PageHeader from './components/PageHeader.vue'
 import ActivityFeed from './components/ActivityFeed.vue'
-import CollectionView from './components/CollectionView.vue'
+import { defineAsyncComponent } from 'vue'
+
+// 非首屏页面按需加载：统计/收藏夹/下载/游戏站都只在切到那一页时才需要，
+// 但它们的 antd Select/Modal/Popconfirm 静态打进首包，等于给首帧加解析负担。
+// 三个页面都由 v-if 页签控制，异步组件天然安全（不改它们任何行为）。
+const StatsView = defineAsyncComponent(() => import('./components/StatsView.vue'))
+const CollectionView = defineAsyncComponent(() => import('./components/CollectionView.vue'))
+const DownloadView = defineAsyncComponent(() => import('./components/DownloadView.vue'))
+const GameSites = defineAsyncComponent(() => import('./components/GameSites.vue'))
+
 
 // 启动编排（hello/刷新/订阅/窄窗口折叠/全屏控制）收在 useBoot 里，
 // 组件只拿结果：bootInfo 标题栏版本号、全屏/保存回调、gamesMounted 保活开关。

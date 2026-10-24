@@ -2,7 +2,7 @@
  * IPC 域注册共享：校验助手 + 各 register* 的上下文类型。
  * 渲染层输入一律当不可信；通道名在 shared/ipc 的 Ipc 枚举里，本目录一字不改。
  */
-import type { BrowserWindow, dialog, SaveDialogOptions, OpenDialogOptions } from 'electron'
+import type { BrowserWindow, SaveDialogOptions, OpenDialogOptions } from 'electron'
 import type { TrackCheckResult } from '../../shared/types'
 import type { Manager } from '../manager'
 import type { Store } from '../store'

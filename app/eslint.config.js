@@ -41,8 +41,17 @@ export default [
       'no-useless-assignment': 'off',
       // 控制字符过滤正则（[\x00-\x1f]）是刻意的输入消毒，不是事故
       'no-control-regex': 'off',
-      // 同上的误报源：只留「声明了没用」的警告（_ 前缀豁免）
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      // 未使用变量：只留「声明了没用」的警告（_ 前缀豁免）。
+      // 用 @typescript-eslint/no-unused-vars 而不是基础规则——基础规则不认识
+      // TS 语法位置：函数类型里的形参（(task: EngineTask) => void）、
+      // constructor 的 public 参数属性（public readonly url）都会当成「定义了
+      // 没用」，实测 45 条warning 里绝大多数是这类误报。TS 版规则认得这些位置，
+      // 只报真正的死变量/死参数。
+      'no-unused-vars': 'off',
+      '@typescript-eslint/no-unused-vars': [
+        'warn',
+        { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
+      ],
       // ── 危险模式：几乎总是 bug，见到就修 ──
       'no-constant-condition': ['error', { checkLoops: false }],
       'no-unreachable': 'error',

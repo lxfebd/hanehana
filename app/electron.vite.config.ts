@@ -31,5 +31,22 @@ export default defineConfig({
         '@': fileURLToPath(new URL('./src', import.meta.url)),
       },
     },
+    build: {
+      rollupOptions: {
+        output: {
+          // 分包：单块 2.28MB 的 index 让首帧必须等整包解析完。按「变不变」切分——
+          // vue/antd/图标/虚拟滚动都是版本锁死的第三方，业务代码改一行不应该让
+          // 这几块全部失效重解析（Electron 从磁盘读，解析耗时才是启动大头）。
+          manualChunks(id: string) {
+            if (!id.includes('node_modules')) return undefined;
+            if (id.includes('ant-design-vue') || id.includes('@ant-design')) return 'vendor-antd'
+            if (id.includes('lucide-vue-next')) return 'vendor-icons'
+            if (id.includes('vue-virtual-scroller') || id.includes('vue-observe-visibility') || id.includes('vue-resize')) return 'vendor-scroller'
+            if (id.includes('/vue/') || id.includes('@vue/')) return 'vendor-vue'
+            return 'vendor'
+          },
+        },
+      },
+    },
   },
 })

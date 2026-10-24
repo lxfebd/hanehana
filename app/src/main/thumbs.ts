@@ -7,7 +7,7 @@
  *
  * 生成失败不致命：thumbPath 留空，UI 走占位色。
  */
-import { app, nativeImage, protocol, net } from 'electron'
+import { nativeImage, protocol, net } from 'electron'
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'

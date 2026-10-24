@@ -53,6 +53,7 @@ function migrateFromLegacyDir(): void {
   ) {
     return
   }
+  // eslint-disable-next-line no-console -- 库目录一次性迁移告知
   console.log(`[hanehana] 检测到旧版游戏库目录 ${legacy}，迁移到 ${dataDir}`)
   mkdirSync(dataDir, { recursive: true })
   copyFileSync(join(legacy, 'games.json'), gamesPath)

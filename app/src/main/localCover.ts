@@ -143,6 +143,7 @@ export function backfillLocalCovers(games: Game[]): void {
       if (g.coverPath && existsSync(g.coverPath)) continue
       if (adoptLocalCover(g)) n++
     }
+    // eslint-disable-next-line no-console -- 启动期封面回填摘要
     if (n > 0) console.log(`[hanehana] 本地封面回填 ${n} 张`)
   })
 }

@@ -9,7 +9,7 @@
  * Node 是单线程的，不需要显式互斥锁——
  * 主进程的事件循环就是唯一的执行上下文，不存在并发写。
  */
-import { basename, dirname, extname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { existsSync, rmSync, statSync, statfsSync } from 'node:fs'
 import { EngineTask } from './engine'
 import { randomBytes } from 'node:crypto'

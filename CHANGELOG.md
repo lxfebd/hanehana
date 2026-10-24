@@ -2,6 +2,29 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.16] - 2026-10-25
+
+### 性能
+
+- **首包按依赖拆块**：renderer 原来是单块 `index` 2,285.71 kB —— 改一行业务代码，整个 vendor（含 1MB antd）跟着重算/重解析。现按依赖分组（`electron.vite.config.ts` 的 `build.rollupOptions.output.manualChunks`，注释写明分组理由）：vendor-antd 1,038.22 kB / index 398.70 kB / vendor-vue 244.1 kB / vendor-k 198.1 kB / vendor-icons 36.2 kB / vendor-scroller 32.4 kB。业务改动只让 index 一块失效，vendor 六块的字节保持稳定。
+- **非首屏页面按需加载**：统计 / 收藏夹 / 下载 / 游戏站改 `defineAsyncComponent`（`App.vue`）。这四个页面本来就由 `v-if` 页签控制，异步组件不改变任何行为；延迟 JS 合计 86.1 kB（下载 39.7 / 统计 20 / 游戏站 19.7 / 收藏夹 5.0）。游戏站的 webview 保活语义不变（首次进入 v-if 挂载 + 之后 v-show 保活）。
+- 刻意未做（留档判断）：12 个 antd 对话框不做 `v-if` + 异步化。ScanDialog / ScrapeDialog 在 `open=false` 期间仍可能收到主进程进度推送，卸载会丢事件——损失的可靠性换不回 1MB 首包。ant-design-vue 4.2.6 的 `sideEffects` 已排除 `.js`，barrel 具备 tree-shaking 条件，这 1MB 是组件真实体积，不是打包失误。
+
+### 修复（工具链）
+
+- **lint warning 48 → 0**：`no-unused-vars` 换成 `@typescript-eslint/no-unused-vars`。基础规则不认识 TS 语法位置——函数类型形参（`(task: EngineTask) => void`）、constructor 参数属性（`public readonly url: string`）都被当成「定义了没用」，48 条里 45 条是这类误报。
+- 余下 6 条真警告逐个修：`manager.ts`/`steam.ts`/`thumbs.ts` 三处未用 import；`ipc/shared.ts` 未用的 type import `dialog`；`games.ts` 的 `recordExit(... signal)` 形参保留位置改 `_signal`（判定只看退出码，注释写明）；搜索索引的 `fieldKeys` 只承担类型，改成 `type FieldKey`。
+- 三处启动期生命周期日志（清除无效封面 / 库目录迁移 / 封面回填）显式 `eslint-disable-next-line no-console` 并写明理由——它们是排障要看的事实，不是错误，不该降级成 warn。
+
+### 取证 / 待决
+
+- 五屏结构度量（亮度 ASCII 图 + 行/列剖面，见临时脚本目录）结论：**列比例与竖向节奏已对齐基准**——内容/右栏 ≈ 64:36（v0.2.14 修的就是这条）、hero 高度占屏 45%（基准 43.7%）、随机卡 18%（基准 15%）。
+- 唯一未对齐处是**详情形态**：基准 detail.png 是整页详情（左封面 290×400，右侧元数据铺满整页宽，下方标签/分页/曲线分区），我们是右栏 320px 抽屉浮在封面墙上。这是架构改动（要动路由与右栏），已留待用户拍板，不擅自改。
+
+### 验证
+
+typecheck 0；lint 0 error 0 warning；npm test 88 pass / 0 fail；regression:static 23 PASS；regression:reina 五屏全 true（HOME kpiCells4 hero recent4 random feed）；regression:hero 26 PASS 0 FAIL；regression:accent 25 PASS；regression:process 12 PASS。
+
 ## [0.2.15] - 2026-10-25
 
 ### 变更

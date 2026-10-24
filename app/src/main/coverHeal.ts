@@ -52,5 +52,7 @@ export async function healBadCovers(games: Game[]): Promise<void> {
     updateGame(g.id, { coverPath: undefined, thumbPath: undefined, thumbSrc: undefined, color: undefined })
     n++
   }
+  // 启动期自愈摘要：这是排障要看的生命周期事实，不是错误，保留 log 级别
+  // eslint-disable-next-line no-console -- 启动期一次性自愈摘要
   if (n > 0) console.log(`[hanehana] 清除无效封面 ${n} 张（已触发重新回填）`)
 }

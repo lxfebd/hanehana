@@ -165,8 +165,11 @@ function rebuildIndex(): void {
   }))
 }
 
+/** 搜索索引元组的字段键（只作类型：FIELD_PREFIXES 的取值域，无运行时值）。 */
+type FieldKey = 'title' | 'raw' | 'native' | 'tags' | 'extra' | 'dev' | 'series'
+
 /** 字段前缀 → 索引字段名。搜索式 `tag:汉化`、`dev:柚子`、`dev:` 等。 */
-const FIELD_PREFIXES: Record<string, keyof typeof fieldKeys> = {
+const FIELD_PREFIXES: Record<string, FieldKey> = {
   tag: 'tags',
   dev: 'dev',
   dev_: 'dev',
@@ -177,16 +180,6 @@ const FIELD_PREFIXES: Record<string, keyof typeof fieldKeys> = {
   orig: 'native',
   native: 'native',
 }
-const fieldKeys = {
-  title: 0,
-  raw: 1,
-  native: 2,
-  tags: 3,
-  extra: 4,
-  dev: 5,
-  series: 6,
-} as const
-
 /**
  * G19 搜索匹配。支持：
  *  - 普通模式：空格分词，词序无关（每词命中任一字段即算）；`tag:`/`dev:`/`series:`/`name:`/`orig:` 字段前缀限定字段
