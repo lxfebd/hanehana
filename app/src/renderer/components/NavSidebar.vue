@@ -170,13 +170,19 @@ function moreAction(fn: () => void): void {
         </button>
       </div>
     </div>
+
+    <!-- 基准 home.png 左下角的作者署名（© huoshen80）。位置在侧栏最底部。 -->
+    <p class="nav-copy">© huoshen80</p>
   </nav>
 </template>
 
 <style scoped>
 /* ============ 侧栏 ============ */
 .sidebar {
-  width: 108px;
+  /* 144px：图标 + 中文标签同排不换行（原 108px 下「全部游戏」会被挤到
+     图标下一行，侧栏看起来成了竖排——基准 home.png 是横排条目）。
+     窄窗 ≤620px 仍收成 56px 图标条，见文件末尾媒体查询。 */
+  width: 144px;
   padding: 10px 8px;
   position: relative;
   /* .glass 的 backdrop-filter 会建立层叠上下文且 z-index 仍为 auto，
@@ -258,6 +264,16 @@ function moreAction(fn: () => void): void {
 }
 .nav-spacer {
   flex: 1;
+}
+
+/* 侧栏底部署名（基准 left-bottom © huoshen80） */
+.nav-copy {
+  margin: var(--hh-space-x2) 0 0;
+  text-align: center;
+  font-size: 10px;
+  color: var(--hh-color-text-dim);
+  user-select: none;
+  flex: none;
 }
 
 /* P1-4 「更多」收纳菜单：侧栏底部浮层，条目与 nav-item 同观感 */

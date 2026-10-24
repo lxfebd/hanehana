@@ -2,10 +2,10 @@
 import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import { App as AntApp, ConfigProvider } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { Flower2, X, ChevronLeft, Plus, ScanSearch } from 'lucide-vue-next'
+import { X, ChevronLeft, Plus, ScanSearch, Settings } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { filteredGames, library, selectedGame, thumbUrl } from './stores/library'
-import { addTask, downloads } from './stores/downloads'
+import { addTask, downloads, openSettings } from './stores/downloads'
 import { ui } from './stores/ui'
 import { t, tf } from './i18n'
 import { useBoot } from './composables/useBoot'
@@ -131,10 +131,33 @@ async function submitAddTask(input: {
     <AntApp>
       <div class="app-shell">
         <div class="app-bg" :style="{ backgroundImage: appBgImage }" aria-hidden="true"></div>
+        <!-- 顶栏（对标基准 home.png 顶部）：返回箭头 + 圆头像 + 应用名 + BETA
+             芯片 + 右侧圆形设置钮。版本号收进头像/芯片的 title，不放正文——
+             基准顶栏没有版本号，这是「一模一样」与「信息可见」的折中。 -->
         <header class="titlebar">
-          <span class="logo"><Flower2 :size="15" class="logo-ic" />{{ t('app_logo') }}</span>
-          <span class="no-drag tag">{{ bootInfo }}</span>
-          <div class="titlebar-right no-drag"></div>
+          <button
+            class="tb-icon no-drag"
+            type="button"
+            :title="t('nav_home')"
+            :aria-label="t('nav_home')"
+            @click="page = 'home'"
+          >
+            <ChevronLeft :size="16" />
+          </button>
+          <span class="tb-avatar no-drag" :title="bootInfo" aria-hidden="true">羽</span>
+          <span class="tb-name no-drag">{{ t('app_logo') }}</span>
+          <span class="tb-beta no-drag" :title="bootInfo">BETA</span>
+          <div class="titlebar-right no-drag">
+            <button
+              class="tb-round"
+              type="button"
+              :title="t('app_prefs')"
+              :aria-label="t('app_prefs')"
+              @click="openSettings()"
+            >
+              <Settings :size="15" />
+            </button>
+          </div>
         </header>
 
         <div class="layout">
@@ -302,25 +325,77 @@ async function submitAddTask(input: {
   z-index: 1;
 }
 
-.logo {
+/* 顶栏内容（对标基准 home.png 顶部：返回箭头/头像/名称/BETA 芯片/右侧圆钮）。
+   容器 .titlebar 的 flex 排列来自 design/global.css，这里只管条目样式。 */
+.tb-icon {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-weight: 700;
-  font-size: var(--hh-font-bodyLg-size);
-  letter-spacing: 0.5px;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  margin-right: var(--hh-space-x2);
+  border: none;
+  border-radius: var(--hh-radius-sm);
+  background: transparent;
+  color: var(--hh-color-text-mid-high);
+  cursor: pointer;
+  transition: background var(--hh-motion-med);
 }
-.logo-ic {
-  color: var(--hh-color-accent);
+.tb-icon:hover {
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-glow);
+}
+.tb-avatar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  margin-right: var(--hh-space-x2);
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-accent);
+  color: var(--hh-color-on-accent);
+  font-size: var(--hh-font-caption-size);
+  font-weight: 700;
   flex: none;
 }
-.tag {
-  margin-left: 12px;
+.tb-name {
+  font-weight: 700;
+  font-size: var(--hh-font-bodyLg-size);
+  letter-spacing: 0.3px;
+  color: var(--hh-color-text-bright);
+}
+.tb-beta {
+  margin-left: var(--hh-space-x2);
+  padding: 1px 7px;
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-accent-soft);
+  color: var(--hh-color-accent-text);
   font-size: var(--hh-font-caption-size);
-  opacity: 0.55;
+  font-weight: 700;
+  letter-spacing: 0.5px;
 }
 .titlebar-right {
   flex: 1;
+  display: flex;
+  justify-content: flex-end;
+}
+.tb-round {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--hh-color-float-border);
+  border-radius: var(--hh-radius-pill);
+  background: var(--hh-color-panel-glass);
+  color: var(--hh-color-text-mid-high);
+  cursor: pointer;
+  transition: background var(--hh-motion-med);
+}
+.tb-round:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-glow);
 }
 
 .layout {
