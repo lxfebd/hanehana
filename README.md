@@ -19,7 +19,7 @@
 
 封面墙式的游戏库，把「管理已拥有的 galgame」和「下载新游戏」缝在同一件事里：扫描导入或手动选 exe 入库，VNDB / Bangumi 刮削封面与元数据，一键启动（LE 转区 / Magpie 缩放自动集成），进程监控自动计时；下载侧复用 Rust 多线程分段引擎与内嵌游戏站捕获，不用换窗口、不用换工具。
 
-外壳 Electron，界面 Vue 3 + Ant Design Vue，视觉走 Windows 11 Mica 毛玻璃 + 玻璃卡片，深色优先、五套主题（星海/樱夜/薄荷/影院/极光）、跟随系统深浅实时换肤。
+外壳 Electron，界面 Vue 3 + Ant Design Vue，视觉走 Windows 11 Mica 毛玻璃 + 玻璃卡片，**默认浅色**、五套主题（星海/樱夜/薄荷/影院/极光）各配深浅两套调色、跟随系统深浅实时换肤。
 
 > 名称取自 galgame 文化意象，并避开 GitHub 上已存在的同名项目。
 >
@@ -28,9 +28,11 @@
 
 ## 📸 界面预览
 
-| 星海·电影感封面墙 | 影院主题 |
+| **浅色首页（默认）** | 星海·电影感封面墙 |
 | --- | --- |
-| ![星海·电影感封面墙](docs/assets/screenshots/library-aurora-dark.png) | ![影院主题](docs/assets/screenshots/library-cinema.png) |
+| ![浅色首页（默认）](docs/assets/screenshots/home-light.png) | ![星海·电影感封面墙](docs/assets/screenshots/library-aurora-dark.png) |
+| **影院主题** | |
+| ![影院主题](docs/assets/screenshots/library-cinema.png) | |
 | **极光主题** | **全屏剧照舞台** |
 | ![极光主题](docs/assets/screenshots/library-aurora.png) | ![全屏剧照舞台](docs/assets/screenshots/fullscreen-stage.png) |
 | **空库沉浸引导** | |
@@ -56,6 +58,7 @@
 | 启动 | 一键启动；LE 转区、Magpie 缩放每游戏开关；常用安装路径自动探测 |
 | 记录 | 游玩时长与上次游玩（进程监控自动计时）、CSV 导出 |
 | 右键 | 封面右键菜单：启动 / 收藏 / 刮削 / 编辑 / 刷新封面 / 打开目录 / 复制标题 |
+| 详情 | 右栏抽屉 ⇄ **整页双形态**（View Transitions 连续放大）+ 相似推荐 8 项（标签/会社/系列打分、时长加权）+ 整页态 ←/→ 翻上一部/下一部 |
 
 ### ⬇️ 下载（Rust 引擎 `fastdrop-engine`）
 
@@ -78,10 +81,11 @@
 
 - Windows 11 Mica 毛玻璃窗口（22H2+，低版本自动降级）+ 自定义标题栏
 - 设计 token 单源（`design/tokens.ts`）→ CSS 变量 + antd 主题映射，组件里写颜色字面量即违规
-- 五套主题：**星海**（默认，夜蓝 + 星青）/ **樱夜**（紫调夜黑 + 樱花粉）/ **薄荷**（墨绿 + 薄荷绿）/ **影院**（纯黑舞台 + 暖金）/ **极光**（深蓝紫夜 + 雾蓝柔粉），叠加跟随系统深浅，可自定义 accent 点缀色
+- 五套主题：**星海**（默认；浅色纸白 / 深色夜蓝 + 星青）/ **樱夜**（紫调夜黑 + 樱花粉）/ **薄荷**（墨绿 + 薄荷绿）/ **影院**（纯黑舞台 + 暖金）/ **极光**（深蓝紫夜 + 雾蓝柔粉），叠加跟随系统深浅，可自定义 accent 点缀色
 - 全屏剧照舞台：电影感客厅模式——中央大封面 + 左右 ghost 旋转 + 主色光晕 + 衬线大标题 + 发光启动键，`F` 只看收藏
 - 统计页：日 / 周 / 月时长、近 30 天柱状、游戏排行，海报导出（800×1100 PNG）
 - 存档备份：快照创建 / 列出 / 恢复 / 删除 + **WebDAV 同步**
+- 详情卡双形态：右栏抽屉 ⇄ 整页（View Transitions 连续放大），`Ctrl`/`⌘`+`E` 一键切换，整页态 `←`/`→` 连续翻上一部/下一部，相似推荐按标签/会社/系列打分并以游玩时长加权
 - 中英双语界面、托盘常驻、系统通知、应用内自动更新（检查 → 静默下载 → 重启安装）
 
 ---
@@ -96,7 +100,9 @@
 | `Space` | 启动当前选中游戏（焦点不在输入框 / 按钮上时） |
 | `1` / `2` / `3` | 切页：游戏库 / 下载 / 游戏站 |
 | `F5` | 刷新游戏库 |
-| `Esc` | 依次退层：清搜索词 → 关弹层 → 退多选 |
+| `Esc` | 依次退层：清搜索词 → 关弹层 → 收详情整页 → 退多选 |
+| `Ctrl`/`⌘` + `E` | 详情卡：右栏 ⇄ 整页 切换 |
+| `←` / `→` | 详情整页态翻「上一部 / 下一部」（抽屉态不响应，留给列表滚动） |
 | `?` / `F1` | 快捷键帮助面板 |
 
 防误触是硬约束：焦点在输入框内不处理单字符键，弹层打开时不处理页面级快捷键，多选模式才认 `Delete`。
@@ -175,7 +181,9 @@ engine-rs (Rust)  ·  分段并发下载 + 校验，每任务一个子进程
 | `npm run regression:download` | 真实引擎下载链路 e2e |
 | `npm run regression:ui` | 真实 App 走查：起进程、像用户一样点封面 → 刮削 → 应用选中，读真实 DOM 与截屏 |
 | `npm run regression:dupe` | 同款不同盘目录扫两次：断言零自动入库 + `dupes` 明细回传 + 「也加进来」真能入库 |
-| `npm run regression` | 上述串联，遇错即停 |
+| `npm run regression:reina` | 五屏对标基准 ReinaManager：截图 + 结构断言（首页/库/详情/统计/收藏） |
+| `npm run regression:hero` / `:accent` / `:process` | 主题走查 / 强调色断言 / 启动·进程·计时全链路 |
+| `npm run regression` | 串联 typecheck + 静态闸 + 下载链路，遇错即停 |
 | `npm run dist:dir && npm run smoke` | 解包产物验收：进程可启动 + IPC 通 + 引擎存在 |
 
 CI（`.github/workflows/ci.yml`）在 Windows runner 上跑 typecheck / build / 静态闸 / lint / 单测 / `cargo test` / `cargo build --release`，任一项红即阻断合入。

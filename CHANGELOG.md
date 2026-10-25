@@ -2,6 +2,17 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [0.2.19] - 2026-10-25
+
+### 变更
+
+- **文档对齐现状（README）**：默认主题口径由「深色优先」改为「**默认浅色**、五套主题各配深浅两套调色」；界面预览首图换成本轮浅色首页截图（`docs/assets/screenshots/home-light.png`）；特性一览补「详情：右栏抽屉 ⇄ 整页双形态 + 相似推荐 8 项（时长加权）+ 整页态 ←/→ 翻页」；快捷键表补 `Ctrl`/`⌘`+`E`、`←`/`→`，`Esc` 退层链补「收详情整页」；质量闸门表补 `regression:reina` / `:hero` / `:accent` / `:process` 四条并修正 `regression` 串联说明（实串 typecheck + 静态闸 + 下载链路）。
+- **仓库卫生**：`.gitignore` 新增 `不要上传*/`（用户指定的临时脚本/基准图/取证夹，明确永不入库）；清理 app 根 36 个可再生成的探针数据目录（`.*-data/`、`.test-build`、空 `.ref-ui`，约 110MB，脚本跑时自动重建）；`.reina*.log`、`scripts/hero2-run.log` 与 `.shots` 顶层 120 个散落分析文件归档进不上传夹（`_cleanup-2026-10-25.md` 留清单），`.shots` 只保留 8 个证据子目录（reina/motion/hero-themes/accent/fs-stage/hero2/manual/final-review）。
+
+### 验证
+
+README/.gitignore 纯文档与卫生改动，不动源码：typecheck 与全套回归闸不受影响（源文件零改动）。
+
 ## [0.2.18] - 2026-10-25
 
 ### 新增

@@ -48,3 +48,6 @@ app/hh_sites2.png
 
 # electron-vite 热更新时落盘的临时配置副本
 app/electron.vite.config.*.mjs
+
+# 用户指定的「不上传」夹：临时脚本 / 基准图 / 取证产物，一律不入库
+不要上传*/
