@@ -1,66 +1,56 @@
 <script setup lang="ts">
-/**
- * 详情面板（右栏选中态）。
- *
- * 结构对标基准 detail.png / stats.png 的右栏密度：
- *   - 横幅 180px hero：thumb `blur(32px) saturate(1.2) scale(1.2)` opacity .55 + scrim 渐变
- *   - 元数据行：数据来源 / 开发商 / 发售日 / 加入时间 / 预计时长 / 评分一行摊开
- *     （label caption 小灰字、值正文色；空值统一「—」）
- *   - 标签区：tag 全集 + 行内搜索（实时过滤）+ 清除 + 展开/收起（默认折叠到 6 个 ≈1 行）
- *   - 四个分页（手写 segmented，无 Modal 闸）：游玩数据 / 简介 / 编辑 / 存档
- *   - 游玩数据页：7D/30D/1Y/ALL 区间切换 + 副行区间两端 + 每游戏时长曲线
- *     （缺日补零的日序列，交给 stores/sessions 的 dailyFromSessions）
- *   - 工具与开关：useLE / useMagpie 常驻小分组，不折进 More 菜单
- *
- * 对基准的优势项：简介里的 BBCode（[url=…][/url]、[b]/[i] 等源站标记）在渲染前
- * 剥干净只留正文——基准把 `[From url=…]Wikipedia[/url]]` 直接怼到界面上。
- */
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { message } from 'ant-design-vue'
 import {
   Activity,
-  Check,
   ChevronLeft,
   ChevronRight,
   ClipboardCopy,
-  DatabaseBackup,
   Flower2,
   FolderOpen,
-  Heart,
   Maximize2,
   Minimize2,
   PanelRightClose,
   Pencil,
   Play,
-  Search,
-  Star,
   Wand2,
-  X,
 } from 'lucide-vue-next'
 import {
-  applyPatch,
+  filterByMeta,
   filteredGames,
   launchGame,
   library,
   openEdit,
   openScrape,
-  refreshGames,
   runningGames,
   selectedGame,
-  thumbUrl,
-  toggleFavorite,
-  filterByMeta,
 } from '../stores/library'
-import { dailyFromSessions, loadSessions } from '../stores/sessions'
-import PlayChart from './PlayChart.vue'
-import { t, tf, type I18nKey } from '../i18n'
-import { tokens } from '../design/tokens'
-import { ONE_DAY_MS } from '../../shared/format'
-import type { DayStat, Game, PlaySession } from '../../shared/types'
+import { t, tf } from '../i18n'
+import { type Game } from '../../shared/types'
+import { lengthTextOf } from './detailShared'
+import DetailBanner from './DetailBanner.vue'
+import DetailMetaRow from './DetailMetaRow.vue'
+import DetailTags from './DetailTags.vue'
+import DetailTabs from './DetailTabs.vue'
+import DetailSimilar from './DetailSimilar.vue'
+
+/**
+ * 详情面板外壳：右栏选中态与整页双形态。1885 行单文件已拆为 1 外壳 + 5 子组件，
+ * 本文件只保留外壳与跨版块共用状态（双形态、上一部/下一部、快捷键、
+ * 目录打开与复制信息——动作栏与编辑页共用）：
+ *   - DetailBanner.vue   横幅 hero + 收藏 chip
+ *   - DetailMetaRow.vue  元数据行（开发商点选 @filter 交回本件调 filterByMeta）
+ *   - DetailTags.vue     标签区（搜索/展开状态在子件内，切游戏自行复位）
+ *   - DetailTabs.vue     四个 pane：游玩数据 / 简介 / 编辑 / 存档
+ *   - DetailSimilar.vue  右栏相似游戏（点选在子件内直写 library.selectedId）
+ */
 
 const emit = defineEmits<{ collapse: [] }>()
 const g = computed(() => selectedGame.value)
-const descExpanded = ref(false)
+
+/** 主动翻页标记：整页形态下按 ←/→ 换一部要留在整页里，别被 watch(g) 弹回抽屉 */
+let keepExpandedOnSwitch = false
+const expanded = ref(false)
 /**
  * 右栏 ⇄ 整页展开。
  *
@@ -69,9 +59,6 @@ const descExpanded = ref(false)
  * 不支持该 API、或用户开了「减少动效」时直接切：形态切换是功能，不是装饰，
  * 不能因为动效偏好就失效。
  */
-/** 主动翻页标记：整页形态下按 ←/→ 换一部要留在整页里，别被 watch(g) 弹回抽屉 */
-let keepExpandedOnSwitch = false
-const expanded = ref(false)
 function toggleExpand(): void {
   const doc = document as Document & {
     startViewTransition?: (_cb: () => void | Promise<void>) => unknown
@@ -87,115 +74,12 @@ function toggleExpand(): void {
   })
 }
 
-/** 评分星星色（真值 tokens；reactive，切主题自动刷新） */
-const starColor = computed(() => tokens.color.star)
-
-/** 横幅/封面图加载失败：置位 bannerFailed 触发 v-if 卸载（img 按 ref 记忆，
- *  display 按元素记的状态不再交叉错位）。banner-letter 的兜底同帧出现。 */
-const bannerFailed = ref(false)
-function imgErr(): void {
-  bannerFailed.value = true
-}
-// 切到别的游戏时重来：banner-letter 的兜底状态不能带过去，展开态/搜索/tab 也复位
+/** 切游戏复位整页形态：主动 ←/→ 翻页保留，其余收回右栏。
+ *  子组件各自的内部状态（bannerFailed / tagQuery / dpTab / descExpanded）由子件自己的 watch 复位。 */
 watch(g, () => {
-  bannerFailed.value = false
-  descExpanded.value = false
-  tagQuery.value = ''
-  tagsExpanded.value = false
-  dpTab.value = 'stats'
-  // 换游戏时退出整页形态：整页是「看这一个」的语境，跟着换到下一个游戏
-  // 会把上一个游戏的全屏状态带过去（用户以为没切成功）。
-  // 例外是用户主动按 ←/→ 翻页——那是「在整页里连续浏览」，收掉会让翻页闪一下。
   if (keepExpandedOnSwitch) keepExpandedOnSwitch = false
   else expanded.value = false
 })
-
-function fmtPlay(ms: number): string {
-  if (ms <= 0) return '—'
-  const h = Math.floor(ms / 3600000)
-  const m = Math.floor((ms % 3600000) / 60000)
-  return h > 0 ? tf('dp_hours_min', { h, m }) : tf('dp_minutes', { m })
-}
-
-function fmtDate(ts?: number): string {
-  if (!ts) return '—'
-  return new Date(ts).toLocaleDateString('zh-CN')
-}
-
-/** 平均通关时长：分钟 → 可读文本（VNDB length_minutes） */
-const lengthText = computed(() => {
-  const m = g.value?.lengthMinutes
-  if (!m || m <= 0) return ''
-  if (m < 60) return tf('dp_minutes', { m })
-  const h = Math.floor(m / 60)
-  const rem = m % 60
-  return rem > 0 ? tf('dp_hours_min', { h, m: rem }) : tf('dp_hours', { h })
-})
-
-/** 横幅背景：thumb 预模糊位图（有 thumb 时），无则主色渐变兜底 */
-function bannerImg(): string {
-  if (!g.value) return ''
-  if (g.value.thumbPath) return thumbUrl(g.value)
-  if (g.value.coverPath) return `file://${g.value.coverPath.replace(/\\/g, '/')}`
-  return ''
-}
-
-function bannerFallback(): string {
-  const c = g.value?.color ?? tokens.color.coverFallback
-  // 无图横幅：主色径向光晕打底 + 暗色渐变收边，不再是单色空洞。
-  // 浅色主题下 coverFallback 是近白、渐变收边色也是浅的，光晕透明度低，不依赖主题态。
-  return `radial-gradient(120% 90% at 15% 0%, ${c}55 0%, transparent 55%),
-    radial-gradient(100% 80% at 85% 100%, ${c}44 0%, transparent 60%),
-    linear-gradient(160deg, ${c}cc, ${c}22 60%, ${tokens.color.bannerBase} 100%)`
-}
-
-/**
- * 简介是否超过 6 行阈值（粗略按字符估算，180 字约 6 行）。
- * 按清洗后的正文算——剥掉的 BBCode 不该占行数。
- */
-const descTruncated = computed(() => (cleanDesc.value ?? '').length > 180)
-
-/**
- * BBCode 清洗（对基准的优势项）。
- *
- * 源站（VNDB/Bangumi/YMGal）的 description 是 BBCode 富文本：`[url=http://…]Wikipedia[/url]`、
- * `[b]`/`[i]`、`[quote]`、`[list]`/`[*]` 这类标记在 galgame 管理器里没有渲染器，
- * 直接上屏就是把「源码」给用户看。规则是「剥标记、留正文」：
- *   - `[url=x]text[/url]` → text（链接语义在窄栏里没用，文字留下）
- *   - `[img]…[/img]` 整块删（外链图在窄栏只会拖慢/破版）
- *   - 其余成对/自成标记一律剥掉，剩下纯正文
- */
-function stripBbcode(src: string): string {
-  let s = src
-  // 源站自己写歪的变体也要吃下：VNDB 的 description 里出现过 `[From url=…]Wikipedia[/url]`
-  // （标签名是 From 不是 url，严格 `[url=` 的正则会漏过去，把半截标记漏给用户）。
-  s = s.replace(/\[[a-z][a-z0-9]*\s+url=([^\]]*)\]([\s\S]*?)\[\/url\]/gi, '$2')
-  s = s.replace(/\[[a-z][a-z0-9]*\s+url=([^\]]*)\]/gi, '')
-  s = s.replace(/\[url=([^\]]*)\]([\s\S]*?)\[\/url\]/gi, '$2')
-  s = s.replace(/\[url\]([\s\S]*?)\[\/url\]/gi, '$1')
-  s = s.replace(/\[img\][\s\S]*?\[\/img\]/gi, '')
-  // 通用标记：[b]/[/b]、[color=…]、[size=20]、[quote]、[*]（列表项）…
-  s = s.replace(/\[\/?[a-z][a-z0-9=#_:.-]*\]/gi, '')
-  s = s.replace(/\[\/?\*\]/gi, '')
-  // 连续 3 个以上换行压成两个：正文空段是分节不是排版
-  s = s.replace(/\n{3,}/g, '\n\n')
-  return s.trim()
-}
-
-const cleanDesc = computed(() => {
-  const d = g.value?.description
-  return d ? stripBbcode(d) : ''
-})
-
-async function toggleCategory(): Promise<void> {
-  const game = g.value
-  if (!game) return
-  // 乐观更新：先改本地镜像 + 拉回服务端新值，不触发全量重拉，避免闪烁与掉滚动位置
-  const next = game.categories.includes('已通关')
-    ? game.categories.filter((c) => c !== '已通关')
-    : [...game.categories, '已通关']
-  await applyPatch(game.id, { categories: next })
-}
 
 /** 打开目录：失败（目录被移动/删除）弹提示——静默失败时按钮「点了没反应」。 */
 async function openDir(): Promise<void> {
@@ -207,39 +91,6 @@ async function openDir(): Promise<void> {
   } catch (e) {
     message.error(tf('dv_open_dir_fail', { why: e instanceof Error ? e.message : String(e) }))
   }
-}
-
-async function toggleFlag(flag: 'useLE' | 'useMagpie'): Promise<void> {
-  if (!g.value) return
-  await window.hh.updateGame(g.value.id, { [flag]: !g.value[flag] })
-  await refreshGames()
-}
-
-/** 备份开关（G1）：单游戏 backupEnabled，需设置页全局 backup_on_exit 配合 */
-async function toggleBackup(): Promise<void> {
-  if (!g.value) return
-  await window.hh.updateGame(g.value.id, { backupEnabled: !g.value.backupEnabled })
-  await refreshGames()
-}
-
-/** G13+G17 变体切换：n=0 默认 exePath，n≥1 = variants[n-1]，改完静默更新本地镜像 */
-async function setVariant(n: number): Promise<void> {
-  if (!g.value) return
-  await applyPatch(g.value.id, { activeVariant: n })
-}
-
-/** 当前启动目标的可读名（变体 chips 里的选中态与 meta） */
-const variantName = computed(() => {
-  const game = g.value
-  if (!game) return ''
-  const n = game.activeVariant ?? 0
-  if (n >= 1 && game.variants && n <= game.variants.length) return game.variants[n - 1]?.label ?? game.title
-  return game.title
-})
-
-/** 打开该游戏的备份/恢复对话框 */
-function openBackups(): void {
-  library.backupOpen = true
 }
 
 /**
@@ -260,7 +111,7 @@ async function copyGameInfo(): Promise<void> {
   if (game.rating) rows.push(`${t('dp_rating')}：${game.rating.toFixed(1)}`)
   if (game.developer) rows.push(`${t('dp_developer')}：${game.developer}`)
   if (game.releaseDate) rows.push(`${t('dp_release')}：${game.releaseDate}`)
-  if (game.lengthMinutes) rows.push(`${t('dp_length')}：${lengthText.value}`)
+  if (game.lengthMinutes) rows.push(`${t('dp_length')}：${lengthTextOf(game)}`)
   if (game.tags.length) rows.push(`${t('dp_tags')}：${game.tags.join('、')}`)
   if (game.series?.length) rows.push(`${t('dp_series')}：${game.series.join('、')}`)
   const text = rows.join('\n')
@@ -288,171 +139,6 @@ function flashCopied(): void {
     copyDone.value = false
     copyTimer = null
   }, 1200)
-}
-
-// ---------------------------------------------------------------- 分页（手写 segmented）
-
-type TabKey = 'stats' | 'intro' | 'edit' | 'saves'
-const dpTab = ref<TabKey>('stats')
-/** 四个 tab 的 i18n 键（顺序即展示顺序：游玩数据 / 简介 / 编辑 / 存档） */
-const dpTabs: { key: TabKey; label: I18nKey }[] = [
-  { key: 'stats', label: 'dp_tab_stats' },
-  { key: 'intro', label: 'dp_tab_intro' },
-  { key: 'edit', label: 'dp_tab_edit' },
-  { key: 'saves', label: 'dp_tab_saves' },
-]
-
-// ---------------------------------------------------------------- 标签全集 + 搜索
-
-const tagQuery = ref('')
-const tagsExpanded = ref(false)
-/** 折叠阈值：1 行多一点（360–400px 栏宽中文标签每行 5–7 个）。
- *  旧值 8 = 两行：把曲线推到视口外——右栏的「游玩数据」tab 必须默认
- *  能看到图，标签是次级浏览内容，多一行靠展开按钮要回来。 */
-const TAG_COLLAPSED = 6
-
-const filteredTags = computed(() => {
-  const all = g.value?.tags ?? []
-  const q = tagQuery.value.trim().toLowerCase()
-  return q ? all.filter((tag) => tag.toLowerCase().includes(q)) : all
-})
-
-const visibleTags = computed(() =>
-  tagsExpanded.value ? filteredTags.value : filteredTags.value.slice(0, TAG_COLLAPSED),
-)
-
-/** 搜索结果为空时给一句「没有匹配的标签」，而不是一块空白 */
-const tagsEmpty = computed(() => filteredTags.value.length === 0)
-/** 过滤后仍超出折叠阈值才给展开按钮 */
-const tagsOverflow = computed(() => filteredTags.value.length > TAG_COLLAPSED)
-
-// ---------------------------------------------------------------- 游玩数据（曲线 + 小统计）
-
-/** 当前选中游戏的会话明细（最近 500 条；主进程 limit ≤ 500） */
-const sessions = ref<PlaySession[]>([])
-const sessionsLoading = ref(false)
-
-async function loadFor(id: string): Promise<void> {
-  sessionsLoading.value = true
-  try {
-    const list = await loadSessions({ gameId: id, limit: 500 })
-    sessions.value = Array.isArray(list) ? list : []
-  } catch {
-    // 取数失败不弹窗：曲线退化为 act_empty 空态，小统计显示「—」
-    sessions.value = []
-  } finally {
-    sessionsLoading.value = false
-  }
-}
-
-// 选中游戏变化 → 重拉该游戏的会话（immediate：首次进入也要拉）
-watch(
-  g,
-  (ng, old) => {
-    if (ng && ng.id !== old?.id) void loadFor(ng.id)
-    else if (!ng) sessions.value = []
-  },
-  { immediate: true },
-)
-
-type RangeKey = 'play_7d' | 'play_30d' | 'play_1y' | 'play_all'
-const range = ref<RangeKey>('play_30d')
-/** 区间切换（基准 Game Stats 右上角 7D/30D/M/1Y/ALL，我们用 7D/30D/1Y/ALL 键） */
-const ranges: { key: RangeKey; label: I18nKey; days: number }[] = [
-  { key: 'play_7d', label: 'play_7d', days: 7 },
-  { key: 'play_30d', label: 'play_30d', days: 30 },
-  { key: 'play_1y', label: 'play_1y', days: 365 },
-  { key: 'play_all', label: 'play_all', days: 0 },
-]
-
-const rangeDays = computed(() => ranges.find((r) => r.key === range.value)?.days ?? 30)
-const rangeFromTs = computed(() =>
-  rangeDays.value > 0 ? Date.now() - rangeDays.value * ONE_DAY_MS : 0,
-)
-
-/**
- * 每游戏时长曲线序列：缺日补零、升序（dailyFromSessions 的契约）。
- * 空区间也给一条：PlayChart 全零序列仍画出日历轴，不会跳日期（基准在这里犯错）。
- */
-const series = computed<DayStat[]>(() => {
-  const game = g.value
-  if (!game) return []
-  return dailyFromSessions(sessions.value, { fromTs: rangeFromTs.value, gameId: game.id })
-})
-
-/** 区间两端日期（图表副行 play_range） */
-const rangeFromText = computed(() => series.value[0]?.date?.replace(/-/g, '/') ?? '—')
-const rangeToText = computed(() => series.value[series.value.length - 1]?.date?.replace(/-/g, '/') ?? '—')
-
-/** 本周一 00:00（epoch ms）：小统计「本周」的口径 */
-const weekStartTs = computed(() => {
-  const d = new Date()
-  d.setHours(0, 0, 0, 0)
-  const dow = (d.getDay() + 6) % 7
-  return d.getTime() - dow * ONE_DAY_MS
-})
-
-const gameSessions = computed(() => {
-  const id = g.value?.id
-  return id ? sessions.value.filter((s) => s.gameId === id) : []
-})
-
-const sessionCount = computed(() => gameSessions.value.length)
-const weekMs = computed(() =>
-  gameSessions.value.reduce((acc, s) => (s.end >= weekStartTs.value ? acc + (s.ms || 0) : acc), 0),
-)
-
-// ---------------------------------------------------------------- 元数据行（一行摊开）
-
-/** 数据来源：sources 第一个 provider 名（vndb/bangumi/ymgal…），无则「—」 */
-const sourceText = computed(() => g.value?.sources?.[0]?.provider ?? '')
-const releaseText = computed(() => g.value?.releaseDate ?? '')
-const addedText = computed(() => (g.value?.addedAt ? fmtDate(g.value.addedAt) : ''))
-const ratingText = computed(() => (g.value?.rating ? g.value.rating.toFixed(1) : ''))
-
-// ---------------------------------------------------------------- 相似游戏（详情页的下一站）
-
-/**
- * 相似推荐：共享标签 ×2 + 同开发商 ×3 + 同系列 ×2 + 时长权重，按分排序取前 8。
- *
- * 为什么是这几项：库内数据只有标签/开发商/系列能表达「为什么像」——
- * 时长排序会让推荐退化成「大家玩得多的」（本来就见过），
- * 而 galgame 的用户决策链是「同一系列 → 同一会社 → 同类标签」。
- * 时长权重（playWeight）是调味：真玩过的同类更能代表口味，但封顶 3 分。
- * 纯内存计算（library.games 已在内存里），不做主进程查询。
- */
-const similarGames = computed<Game[]>(() => {
-  const game = g.value
-  if (!game) return []
-  const tags = new Set(game.tags)
-  const series = new Set(game.series ?? [])
-  const dev = game.developer ?? ''
-  const scored: { game: Game; score: number }[] = []
-  for (const other of library.games) {
-    if (other.id === game.id) continue
-    let score = 0
-    for (const tg of other.tags) if (tags.has(tg)) score += 2
-    if (dev && other.developer === dev) score += 3
-    for (const s of other.series ?? []) if (series.has(s)) score += 2
-    if (score > 0) scored.push({ game: other, score: score + playWeight(other.playMs ?? 0) })
-  }
-  // 同分时按游玩时长降序：同分里先给用户可能更熟的那部
-  scored.sort((a, b) => b.score - a.score || (b.game.playMs ?? 0) - (a.game.playMs ?? 0))
-  return scored.slice(0, 8).map((s) => s.game)
-})
-
-/** 游玩时长权重：log10(1+小时) 封顶 3 分——1h 约 0.9、10h 约 2、100h 约 3。
- *  对数压缩让「打了几百小时的神作」只比「玩了十小时」多 1 分，不会霸榜；
- *  它只是给「真玩过」的同类作品一点点优先，主排序仍是标签/会社/系列。 */
-function playWeight(ms: number): number {
-  if (!ms || ms <= 0) return 0
-  return Math.min(3, Math.log10(1 + ms / 3600000))
-}
-
-/** 相似项封面加载失败：隐掉 img，露出底下首字兜底（不卸载，避免布局跳动） */
-function hideImg(e: Event): void {
-  const el = e.target as HTMLImageElement
-  el.style.opacity = '0'
 }
 
 // ---------------------------------------------------------------- 上一部 / 下一部
@@ -510,13 +196,17 @@ function onKey(e: KeyboardEvent): void {
 }
 onMounted(() => document.addEventListener('keydown', onKey))
 onUnmounted(() => document.removeEventListener('keydown', onKey))
+
+/** 元数据行的开发商/系列点选：沿用拆分前口径，直接调同一个 store 筛选。 */
+function onFilterMeta(key: 'series' | 'developer', value: string): void {
+  filterByMeta(key, value)
+}
 </script>
 
 <template>
   <aside class="detail-panel glass" :class="{ 'is-expanded': expanded }">
-    <!-- 头部动作：整页展开 ⇄ 收回，以及把右栏整条收成 28px 窄条。
-         sticky + margin-bottom:-40px 的写法沿用原折叠钮——它要浮在 banner
-         右上角，但滚动时不跟着 content 走。 -->
+    <!-- 头部动作：整页展开 ⇄ 收回，以及把右栏整条收成窄条。
+         sticky + margin-bottom:-40px 让它浮在 banner 右上角，滚动时不跟着 content 走。 -->
     <div class="dp-head-actions">
       <template v-if="expanded">
         <button
@@ -568,44 +258,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
     </div>
 
     <template v-else>
-      <!-- 横幅 180px hero（紧凑化：曲线要在首屏可见，见 CSS 注释） -->
-      <div class="banner" :style="bannerImg() ? {} : { background: bannerFallback() }">
-        <div v-if="bannerImg()" class="banner-blur" :style="{ backgroundImage: `url(${bannerImg()})` }"></div>
-        <div v-if="bannerImg()" class="banner-tint" :style="{ background: bannerFallback() }"></div>
-        <div class="banner-noise"></div>
-        <div class="banner-scrim"></div>
-
-        <div class="banner-cover">
-          <!-- 加载失败即卸载（bannerFailed 置位），切游戏复位后自动重挂载——
-               不直接改 style.display，避免「display 按元素记、bannerFailed 按 ref 记」
-               的错位（切到有图游戏封面仍隐藏的 bug 根源）。 -->
-          <img v-if="bannerImg() && !bannerFailed" :src="bannerImg()" class="banner-img" @error="imgErr" />
-          <div v-show="!bannerImg() || bannerFailed" class="banner-letter">{{ g.title.slice(0, 1) }}</div>
-        </div>
-
-        <div class="banner-meta">
-          <div class="banner-title">{{ g.title }}</div>
-          <div v-if="g.titleNative && g.titleNative !== g.title" class="banner-native">{{ g.titleNative }}</div>
-          <div class="banner-chips">
-            <span v-if="g.releaseDate" class="chip">{{ g.releaseDate }}</span>
-            <span v-if="g.rating" class="chip chip-rating">
-              <Star :size="11" :fill="starColor" :stroke-width="0" /> {{ g.rating.toFixed(1) }}
-            </span>
-            <!-- 收藏并入 chip 行：单独一条全宽收藏行白占 56px，
-                 把右栏最值钱的东西（曲线）挤出视口。类名保持 .fav-btn，
-                 verify 的收藏断言不换靶。 -->
-            <button
-              class="fav-btn chip chip-fav"
-              :class="{ on: g.favorite }"
-              :aria-pressed="g.favorite"
-              @click="toggleFavorite(g.id)"
-            >
-              <Heart :size="12" :fill="g.favorite ? 'currentColor' : 'none'" />
-              {{ g.favorite ? t('detail_faved') : t('detail_fav') }}
-            </button>
-          </div>
-        </div>
-      </div>
+      <DetailBanner :game="g" />
 
       <!-- 动作栏：主按钮满宽 + 双 ghost 次行 -->
       <div class="actions">
@@ -631,288 +284,19 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
             （各自的孩子直接成为面板 flex item，视觉零变化） ============ -->
       <div class="dp-cols">
         <div class="dp-col dp-col-main">
-
-      <!-- 元数据行：数据来源 / 开发商 / 发售日 / 加入时间 / 预计时长 / 评分（基准一行摊开） -->
-      <div class="dp-meta" :aria-label="t('dp_source')">
-        <div class="dp-meta-cell">
-          <span class="dp-meta-key">{{ t('dp_source') }}</span>
-          <span class="dp-meta-val" :title="sourceText || '—'">{{ sourceText || '—' }}</span>
-        </div>
-        <div class="dp-meta-cell">
-          <span class="dp-meta-key">{{ t('dp_developer') }}</span>
-          <a
-            v-if="g.developer"
-            class="dp-meta-val link"
-            :title="t('dp_same_dev')"
-            @click="filterByMeta('developer', g.developer)"
-            >{{ g.developer }}</a
-          >
-          <span v-else class="dp-meta-val">—</span>
-        </div>
-        <div class="dp-meta-cell">
-          <span class="dp-meta-key">{{ t('dp_release') }}</span>
-          <span class="dp-meta-val" :title="releaseText || '—'">{{ releaseText || '—' }}</span>
-        </div>
-        <div class="dp-meta-cell">
-          <span class="dp-meta-key">{{ t('dp_added') }}</span>
-          <span class="dp-meta-val" :title="addedText || '—'">{{ addedText || '—' }}</span>
-        </div>
-        <div class="dp-meta-cell">
-          <span class="dp-meta-key">{{ t('dp_length') }}</span>
-          <span class="dp-meta-val" :title="lengthText || '—'">{{ lengthText || '—' }}</span>
-        </div>
-        <div class="dp-meta-cell">
-          <span class="dp-meta-key">{{ t('dp_rating') }}</span>
-          <span class="dp-meta-val dp-meta-num" :title="ratingText || '—'">
-            <Star v-if="ratingText" :size="11" :fill="starColor" :stroke-width="0" class="dp-meta-star" />
-            {{ ratingText || '—' }}
-          </span>
-        </div>
-      </div>
-
-      <!-- 标签区：标题/计数/搜索/展开合成一行 + chip 一行。
-           旧版是三行（head、search、chips）+ 独立 toggle 行：右栏每一行
-           都是从曲线头上扣的预算，合并后标签区 ~150px → ~74px。 -->
-      <div class="dp-tags">
-        <div class="dp-tags-head">
-          <span class="dp-tags-title">{{ t('dp_tags') }}</span>
-          <span class="dp-tags-count">{{ filteredTags.length }} / {{ g.tags.length }}</span>
-          <div class="dp-tags-search">
-            <Search :size="13" class="dp-tags-search-icon" />
-            <input
-              v-model="tagQuery"
-              class="dp-tags-input"
-              type="text"
-              :placeholder="t('dp_tags_search_ph')"
-              :aria-label="t('dp_tags_search_ph')"
-            />
-            <button
-              v-if="tagQuery"
-              class="dp-tags-clear"
-              type="button"
-              :title="t('dp_tags_clear')"
-              :aria-label="t('dp_tags_clear')"
-              @click="tagQuery = ''"
-            >
-              <X :size="12" />
-            </button>
-          </div>
-          <button v-if="tagsOverflow" class="dp-tags-toggle" type="button" @click="tagsExpanded = !tagsExpanded">
-            {{ tagsExpanded ? t('dp_tags_collapse') : t('dp_tags_expand') }}
-          </button>
-        </div>
-        <div class="dp-tags-chips">
-          <span v-for="tag in visibleTags" :key="tag" class="tag-chip" :title="tag">{{ tag }}</span>
-          <span v-if="tagsEmpty" class="dp-tags-none">{{ t('dp_tags_none') }}</span>
-        </div>
-      </div>
-
-      <!-- 分页：游玩数据 / 简介 / 编辑 / 存档（手写 segmented，不用 Modal 壳） -->
-      <div class="dp-tabs" role="tablist" :aria-label="t('dp_tab_stats')">
-        <button
-          v-for="tb in dpTabs"
-          :key="tb.key"
-          class="dp-tab"
-          :class="{ active: dpTab === tb.key }"
-          role="tab"
-          :aria-selected="dpTab === tb.key"
-          :aria-controls="'dp-pane-' + tb.key"
-          type="button"
-          @click="dpTab = tb.key"
-        >
-          {{ t(tb.label) }}
-        </button>
-      </div>
-
-      <!-- 分页内容切换：out-in 让旧页 83ms 淡出后新页 4px 上浮入场。
-           右栏四页高度差很大（曲线 vs 存档按钮组），不 out-in 会看到两页
-           叠一帧、内容跳一下。 -->
-      <Transition name="pane" mode="out-in">
-      <!-- ============ 游玩数据 ============ -->
-      <div v-if="dpTab === 'stats'" id="dp-pane-stats" key="stats" class="dp-pane" role="tabpanel">
-        <div class="pc-range">
-          <button
-            v-for="r in ranges"
-            :key="r.key"
-            class="range-chip"
-            :class="{ on: range === r.key }"
-            type="button"
-            :aria-pressed="range === r.key"
-            @click="range = r.key"
-          >
-            {{ t(r.label) }}
-          </button>
-          <!-- 区间两端日期并入 chip 行右侧：单独占一行（18px+间距）
-               在右栏预算里就是曲线的头 -->
-          <span class="pc-range-sub">{{ tf('play_range', { from: rangeFromText, to: rangeToText }) }}</span>
-        </div>
-        <PlayChart :series="series" :height="150" />
-        <div class="dp-mini-stats">
-          <div class="dp-mini">
-            <span class="dp-mini-label">{{ t('dp_playtime') }}</span>
-            <span class="dp-mini-val">{{ fmtPlay(g.playMs) }}</span>
-          </div>
-          <div class="dp-mini">
-            <span class="dp-mini-label">{{ t('kpi_sessions') }}</span>
-            <span class="dp-mini-val">{{ sessionCount || '—' }}</span>
-          </div>
-          <div class="dp-mini">
-            <span class="dp-mini-label">{{ t('kpi_week') }}</span>
-            <span class="dp-mini-val">{{ fmtPlay(weekMs) }}</span>
-          </div>
-        </div>
-        <div v-if="sessionsLoading" class="dp-mini-note">{{ t('cg_loading') }}</div>
-        <div v-if="g.lastPlayed" class="dp-mini-note">
-          {{ t('dp_last_played') }}：{{ fmtDate(g.lastPlayed) }}
-        </div>
-
-        <!-- 工具与开关：基准藏在 More 菜单里，我们做成常驻小分组（不折叠，比基准更直接） -->
-        <div class="dp-tools">
-          <div class="dp-tools-title">{{ t('dp_more_tools') }}</div>
-          <label class="dp-switch">
-            <input :checked="!!g.useLE" type="checkbox" @change="toggleFlag('useLE')" />
-            <span class="dp-switch-box" aria-hidden="true"></span>
-            <span class="dp-switch-label">{{ t('dp_switch_le') }}</span>
-          </label>
-          <label class="dp-switch">
-            <input :checked="!!g.useMagpie" type="checkbox" @change="toggleFlag('useMagpie')" />
-            <span class="dp-switch-box" aria-hidden="true"></span>
-            <span class="dp-switch-label">{{ t('dp_switch_magpie') }}</span>
-          </label>
-        </div>
-      </div>
-
-      <!-- ============ 简介（BBCode 已剥干净） ============ -->
-      <div v-else-if="dpTab === 'intro'" id="dp-pane-intro" key="intro" class="dp-pane" role="tabpanel">
-        <!-- 系列 chips（series 关联：前作/续作/外传，点击聚合筛选同系列） -->
-        <div v-if="g.series?.length" class="series">
-          <span class="meta-key series-key">{{ t('dp_series') }}</span>
-          <div class="series-chips">
-            <button
-              v-for="s in g.series.slice(0, 6)"
-              :key="s"
-              class="series-chip"
-              :class="{ on: library.metaKey === 'series' && library.metaValue === s }"
-              :title="t('dp_same_series')"
-              @click="filterByMeta('series', s)"
-            >
-              {{ s }}
-            </button>
-          </div>
-        </div>
-        <!-- 别名行 -->
-        <div v-if="g.aliases?.length" class="aliases">
-          <span class="meta-key">{{ t('dp_aliases') }}</span
-          ><span class="aliases-text" :title="g.aliases.join('，')">{{ g.aliases.slice(0, 6).join('，') }}</span>
-        </div>
-        <div v-if="cleanDesc" class="desc-wrap">
-          <p class="desc" :class="{ clamped: !descExpanded }">{{ cleanDesc }}</p>
-          <button v-if="descTruncated" class="desc-toggle" @click="descExpanded = !descExpanded">
-            {{ descExpanded ? t('dp_collapse') : t('dp_expand') }}
-          </button>
-        </div>
-        <p v-else class="dp-pane-empty">{{ t('act_empty') }}</p>
-      </div>
-
-      <!-- ============ 编辑（原文字段编辑：复用 EditDialog 触发） ============ -->
-      <div v-else-if="dpTab === 'edit'" id="dp-pane-edit" key="edit" class="dp-pane" role="tabpanel">
-        <button class="dp-pane-btn" type="button" @click="openEdit(g.id)">
-          <Pencil :size="14" /> {{ t('detail_edit') }}
-        </button>
-        <button class="dp-pane-btn" type="button" @click="openScrape(g.id, g.rawTitle || g.title)">
-          <Wand2 :size="14" /> {{ t('detail_scrape') }}
-        </button>
-        <button class="dp-pane-btn" type="button" :title="t('dp_copy_title')" @click="copyGameInfo">
-          <ClipboardCopy :size="14" /> {{ copyDone ? t('dp_copied') : t('dp_copy') }}
-        </button>
-        <button class="dp-pane-btn" type="button" @click="openDir">
-          <FolderOpen :size="14" /> {{ t('dp_dir') }}
-        </button>
-        <!-- 已通关分类 toggle（原 cats 区的功能，随编辑能力一起收进本页） -->
-        <button class="dp-pane-btn" type="button" :aria-pressed="g.categories.includes('已通关')" @click="toggleCategory">
-          <Check :size="14" /> {{ t('batch_cleared') }}
-        </button>
-        <!-- G13+G17 版本/语言包切换：默认 exePath + 每个变体一个 chip -->
-        <div v-if="g.variants?.length" class="variants">
-          <span class="meta-key variants-key">{{ t('dp_version') }}</span>
-          <div class="variants-chips">
-            <button
-              class="variant-chip"
-              :class="{ on: (g.activeVariant ?? 0) === 0 }"
-              :title="g.exePath"
-              type="button"
-              @click="setVariant(0)"
-            >
-              {{ t('dp_default') }}
-            </button>
-            <button
-              v-for="(v, i) in g.variants"
-              :key="i"
-              class="variant-chip"
-              :class="{ on: (g.activeVariant ?? 0) === i + 1 }"
-              :title="v.exePath"
-              type="button"
-              @click="setVariant(i + 1)"
-            >
-              {{ v.label }}
-            </button>
-          </div>
-        </div>
-        <div class="dp-pane-note">
-          {{ t('dp_launch_target') }}：{{ variantName }}
-        </div>
-      </div>
-
-      <!-- ============ 存档（备份开关 + 备份记录入口） ============ -->
-      <div v-else id="dp-pane-saves" key="saves" class="dp-pane" role="tabpanel">
-        <label class="dp-switch">
-          <input :checked="!!g.backupEnabled" type="checkbox" @change="toggleBackup" />
-          <span class="dp-switch-box" aria-hidden="true"></span>
-          <span class="dp-switch-label">
-            {{ g.backupEnabled ? t('detail_backup_on') : t('detail_backup') }}
-          </span>
-        </label>
-        <button class="dp-pane-btn" type="button" :aria-pressed="!!library.backupOpen" @click="openBackups">
-          <DatabaseBackup :size="14" /> {{ t('detail_backup_records') }}
-        </button>
-      </div>
-      </Transition>
+          <DetailMetaRow :game="g" @filter="onFilterMeta" />
+          <DetailTags :game="g" />
+          <DetailTabs
+            :game="g"
+            :open-dir="openDir"
+            :copy-game-info="copyGameInfo"
+            :copy-done="copyDone"
+          />
         </div>
 
         <!-- 右列（只给整页态：抽屉里它接在分页内容之后，滚到底才看到） -->
         <aside class="dp-col dp-col-side">
-          <!-- 相似游戏：标签/开发商/系列三项加权，点一下就在本面板里换游戏
-               （不跳页、不关面板——详情最常用的动作就是「顺着看下一部」） -->
-          <section class="dp-similar" :aria-label="t('dp_similar')">
-            <div class="dp-similar-head">
-              <span class="dp-similar-title">{{ t('dp_similar') }}</span>
-              <span class="dp-similar-count">{{ similarGames.length }}</span>
-            </div>
-            <div v-if="similarGames.length" class="dp-similar-grid">
-              <button
-                v-for="sg in similarGames"
-                :key="sg.id"
-                class="dp-sim-item"
-                type="button"
-                :title="sg.title"
-                @click="library.selectedId = sg.id"
-              >
-                <span class="dp-sim-cover">
-                  <img
-                    v-if="thumbUrl(sg)"
-                    :src="thumbUrl(sg)"
-                    :alt="sg.title"
-                    class="dp-sim-img"
-                    loading="lazy"
-                    @error="hideImg"
-                  />
-                  <span class="dp-sim-letter">{{ sg.title.slice(0, 1) }}</span>
-                </span>
-                <span class="dp-sim-name">{{ sg.title }}</span>
-              </button>
-            </div>
-            <p v-else class="dp-similar-empty">{{ t('dp_similar_empty') }}</p>
-          </section>
+          <DetailSimilar :game="g" />
         </aside>
       </div>
     </template>
@@ -927,7 +311,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   padding: 12px;
   display: flex;
   flex-direction: column;
-  /* 8px 列距：右栏 8 个区块的间距合计省 28px，全部记在曲线的头上 */
+  /* 8px 列距：右栏各区块的间距 */
   gap: var(--hh-space-x2);
 }
 /* 头部动作组（展开整页 / 收成窄条）：sticky 让它浮在 banner 右上角，
@@ -992,119 +376,6 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   font-size: var(--hh-font-body-size);
 }
 
-/* ============ 横幅 180px hero ============ */
-.banner {
-  border-radius: var(--hh-radius-panel);
-  overflow: hidden;
-  position: relative;
-  height: 180px;
-  /* 固定高度的 hero 不许被 flex 列压缩：面板内容（元数据/标签/分页/曲线）
-     远超视口高度时，默认 flex-shrink:1 会把它压成一条（实测 32px），
-     封面就没了。flex:none = 保持声明高度，溢出交给 .detail-panel 滚动。
-     224→180：右栏总高预算 ≈780px，旧值把「游玩数据」tab 的曲线整个推出
-     视口（截图实测曲线 top=826 > 782）——180 让曲线+区间 chip 默认在屏内。 */
-  flex: none;
-  display: flex;
-  align-items: flex-end;
-  gap: 14px;
-  padding: 16px;
-}
-.banner-blur {
-  position: absolute;
-  inset: 0;
-  background-size: cover;
-  background-position: center;
-  filter: blur(32px) saturate(1.2);
-  transform: scale(1.2);
-  opacity: 0.55;
-}
-.banner-tint {
-  position: absolute;
-  inset: 0;
-  opacity: 0.35;
-}
-/* 无图兜底时仍有一点质感：胶片噪点，避免纯渐变显得发虚 */
-.banner-noise {
-  position: absolute;
-  inset: 0;
-  opacity: 0.5;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)' opacity='0.35'/%3E%3C/svg%3E");
-  mix-blend-mode: overlay;
-}
-.banner-scrim {
-  position: absolute;
-  inset: 0;
-  background: var(--hh-color-banner-scrim);
-}
-.banner-cover {
-  position: relative;
-  width: 88px;
-  height: 132px;
-  border-radius: var(--hh-radius-md);
-  overflow: hidden;
-  flex-shrink: 0;
-  box-shadow: 0 6px 20px var(--hh-color-shade-banner);
-  z-index: 1;
-}
-.banner-img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.banner-letter {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 48px;
-  font-weight: 700;
-  color: var(--hh-color-text-mid);
-}
-.banner-meta {
-  position: relative;
-  z-index: 1;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-bottom: 2px;
-}
-.banner-title {
-  font-size: var(--hh-font-title-size);
-  line-height: 28px;
-  font-weight: 700;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  text-shadow: 0 1px 6px var(--hh-color-shade-text);
-}
-.banner-native {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-bright);
-  text-shadow: 0 1px 4px var(--hh-color-shade-text);
-}
-.banner-chips {
-  display: flex;
-  gap: 6px;
-  margin-top: 2px;
-}
-.chip {
-  font-size: 11px;
-  background: var(--hh-color-surface-strong);
-  padding: 2px 8px;
-  border-radius: var(--hh-radius-sm);
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.chip-rating {
-  color: var(--hh-color-star);
-  font-weight: 600;
-}
-
 /* ============ 动作栏 ============ */
 .actions {
   display: flex;
@@ -1148,8 +419,7 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   align-items: center;
   justify-content: center;
   gap: 6px;
-  /* 不换行：旧版「复制信息」被挤成两行按钮高出一截。四个标签里最长的
-     4 汉字（56px）+ 图标（20px）在 352px 内容宽的四等分按钮里放得下。 */
+  /* 不换行：四个标签里最长的 4 汉字 + 图标在四等分按钮里放得下。 */
   white-space: nowrap;
   transition: background var(--hh-motion-med);
 }
@@ -1157,678 +427,9 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   background: var(--hh-color-surface-hover-soft);
 }
 
-/* ============ 元数据行（数据来源/开发商/发售日/加入时间/时长/评分） ============ */
-.dp-meta {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--hh-space-x2) var(--hh-space-x3);
-  padding: var(--hh-space-x2) var(--hh-space-x3);
-  background: var(--hh-color-card);
-  border: 1px solid var(--hh-color-card-border);
-  border-radius: var(--hh-radius-panel);
-}
-.dp-meta-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 1px;
-  min-width: 0;
-}
-.dp-meta-key {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim-strong);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dp-meta-val {
-  font-size: var(--hh-font-body-size);
-  color: var(--hh-color-text-strong);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-/* 数字要醒目（评分/时长）上一档字号，仍走 token 不硬写 */
-.dp-meta-num {
-  font-size: var(--hh-font-bodyLg-size);
-  font-weight: 600;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--hh-color-text-glow);
-}
-.dp-meta-star {
-  color: var(--hh-color-star);
-  flex: none;
-}
-
-/* ============ 标签区（全集 + 搜索 + 展开） ============ */
-.dp-tags {
-  display: flex;
-  flex-direction: column;
-  gap: var(--hh-space-x2);
-}
-/* head 一行装下：标题 + 计数 + 搜索框（flex 吃掉剩余） + 展开按钮 */
-.dp-tags-head {
-  display: flex;
-  align-items: center;
-  gap: var(--hh-space-x2);
-}
-.dp-tags-title {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim-strong);
-}
-.dp-tags-count {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-  font-variant-numeric: tabular-nums;
-}
-/* 行内嵌搜索框：并入 head 行，flex 吃掉标题/计数/展开之外的剩余宽度 */
-.dp-tags-search {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: var(--hh-space-x2);
-  height: 28px;
-  padding: 0 var(--hh-space-x2);
-  border: 1px solid var(--hh-color-border-ghost-soft);
-  border-radius: var(--hh-radius-sm);
-  background: var(--hh-color-surface-soft);
-  color: var(--hh-color-text-mid);
-}
-.dp-tags-search:focus-within {
-  border-color: var(--hh-color-accent-selected-border);
-  background: var(--hh-color-surface-hover-soft);
-}
-.dp-tags-search-icon {
-  flex: none;
-}
-.dp-tags-input {
-  flex: 1;
-  min-width: 0;
-  border: none;
-  outline: none;
-  background: transparent;
-  color: var(--hh-color-text-glow);
-  font-size: var(--hh-font-caption-size);
-  font-family: inherit;
-}
-.dp-tags-input::placeholder {
-  color: var(--hh-color-text-dim);
-}
-.dp-tags-clear {
-  flex: none;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 18px;
-  height: 18px;
-  border: none;
-  border-radius: var(--hh-radius-xs);
-  background: var(--hh-color-surface-hover);
-  color: var(--hh-color-text-mid);
-  cursor: pointer;
-  padding: 0;
-}
-.dp-tags-clear:hover {
-  background: var(--hh-color-surface-strong);
-  color: var(--hh-color-text-glow);
-}
-.dp-tags-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.tag-chip {
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: var(--hh-radius-xs);
-  background: var(--hh-color-accent-bg);
-  color: var(--hh-color-accent-text);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.dp-tags-none {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-}
-.dp-tags-toggle {
-  flex: none;
-  border: none;
-  background: none;
-  color: var(--hh-color-accent);
-  font-size: var(--hh-font-caption-size);
-  cursor: pointer;
-  padding: 0;
-  white-space: nowrap;
-}
-.dp-tags-toggle:hover {
-  color: var(--hh-color-accent-hover);
-}
-
-/* ============ 收藏（banner chip 行内的 chip 按钮） ============ */
-/* 旧版是 banner 下面一条全宽 44px 收藏行——右栏高度预算里没有它的位置，
-   曲线被推出视口。现在它和 发行日期/评分 同排（对标 detail.png 的
-   Score chip 位置），类名 .fav-btn 不变，verify 断言不换靶。 */
-.fav-btn {
-  border: none;
-  background: var(--hh-color-surface-strong);
-  color: var(--hh-color-text-bright);
-  font-family: inherit;
-  cursor: pointer;
-  transition: all var(--hh-motion-med);
-}
-.fav-btn:hover {
-  background: var(--hh-color-surface-hover);
-}
-.fav-btn.on {
-  background: var(--hh-color-warning-soft-bg);
-  color: var(--hh-color-star);
-  font-weight: 600;
-}
-
-/* ============ 分页（手写 segmented） ============ */
-.dp-tabs {
-  display: flex;
-  gap: var(--hh-space-x1);
-  padding: 3px;
-  background: var(--hh-color-surface-soft);
-  border: 1px solid var(--hh-color-border-faint);
-  border-radius: var(--hh-radius-md);
-  flex: none;
-}
-.dp-tab {
-  flex: 1;
-  min-width: 0;
-  height: 30px;
-  /* 边框常驻（透明）：激活态换色不改盒尺寸，四个 tab 不跳 */
-  border: 1px solid transparent;
-  border-radius: var(--hh-radius-sm);
-  background: transparent;
-  color: var(--hh-color-text-mid);
-  font-size: var(--hh-font-caption-size);
-  font-family: inherit;
-  cursor: pointer;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  transition:
-    background var(--hh-motion-med),
-    color var(--hh-motion-med);
-}
-.dp-tab:hover {
-  color: var(--hh-color-text-glow);
-  background: var(--hh-color-surface-hover-soft);
-}
-.dp-tab.active {
-  background: var(--hh-color-select-bg);
-  border-color: var(--hh-color-accent-selected-border);
-  color: var(--hh-color-select-text);
-  font-weight: 600;
-}
-
-/* ============ 分页内容 ============ */
-.dp-pane {
-  display: flex;
-  flex-direction: column;
-  gap: var(--hh-space-x3);
-}
-
-/* 区间切换（7D/30D/1Y/ALL） */
-.pc-range {
-  display: flex;
-  align-items: center;
-  gap: var(--hh-space-x1);
-  flex-wrap: wrap;
-}
-.range-chip {
-  height: 26px;
-  padding: 0 var(--hh-space-x2);
-  border: 1px solid var(--hh-color-border-ghost-soft);
-  border-radius: var(--hh-radius-xs);
-  background: transparent;
-  color: var(--hh-color-text-mid);
-  font-size: var(--hh-font-caption-size);
-  cursor: pointer;
-  transition:
-    background var(--hh-motion-med),
-    color var(--hh-motion-med);
-}
-.range-chip:hover {
-  background: var(--hh-color-surface-mid);
-  color: var(--hh-color-text-glow);
-}
-.range-chip.on {
-  background: var(--hh-color-select-bg);
-  border-color: var(--hh-color-accent-selected-border);
-  color: var(--hh-color-select-text);
-  font-weight: 600;
-}
-.pc-range-sub {
-  margin-left: auto;
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/* 小统计（总时长 / 场次 / 本周） */
-.dp-mini-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--hh-space-x2);
-}
-.dp-mini {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-  padding: var(--hh-space-x2);
-  background: var(--hh-color-card);
-  border: 1px solid var(--hh-color-card-border);
-  border-radius: var(--hh-radius-sm);
-}
-.dp-mini-label {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim-strong);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dp-mini-val {
-  font-size: var(--hh-font-bodyLg-size);
-  font-weight: 600;
-  color: var(--hh-color-text-glow);
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.dp-mini-note {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-}
-
-/* 工具与开关（基准的 More 菜单 → 常驻小分组） */
-.dp-tools {
-  display: flex;
-  flex-direction: column;
-  gap: var(--hh-space-x2);
-  padding: var(--hh-space-x2) var(--hh-space-x3);
-  background: var(--hh-color-card);
-  border: 1px solid var(--hh-color-card-border);
-  border-radius: var(--hh-radius-panel);
-}
-.dp-tools-title {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim-strong);
-}
-.dp-switch {
-  display: flex;
-  align-items: center;
-  gap: var(--hh-space-x2);
-  cursor: pointer;
-  font-size: var(--hh-font-body-size);
-  color: var(--hh-color-text-strong);
-  user-select: none;
-}
-/* 原生 checkbox：视觉隐藏但保留可聚焦与语义（读屏/键盘都能用） */
-.dp-switch input {
-  position: absolute;
-  opacity: 0;
-  width: 0;
-  height: 0;
-}
-.dp-switch-box {
-  flex: none;
-  position: relative;
-  width: 32px;
-  height: 18px;
-  border-radius: var(--hh-radius-pill);
-  border: 1px solid var(--hh-color-border-ghost-soft);
-  background: var(--hh-color-surface-soft);
-  transition:
-    background var(--hh-motion-med),
-    border-color var(--hh-motion-med);
-}
-.dp-switch-box::after {
-  content: '';
-  position: absolute;
-  top: 2px;
-  left: 2px;
-  width: 12px;
-  height: 12px;
-  border-radius: var(--hh-radius-pill);
-  background: var(--hh-color-text-mid);
-  transition:
-    transform var(--hh-motion-med),
-    background var(--hh-motion-med);
-}
-.dp-switch input:checked + .dp-switch-box {
-  background: var(--hh-color-select-bg);
-  border-color: var(--hh-color-accent-selected-border);
-}
-.dp-switch input:checked + .dp-switch-box::after {
-  transform: translateX(14px);
-  background: var(--hh-color-accent);
-}
-.dp-switch input:focus-visible + .dp-switch-box {
-  outline: 2px solid var(--hh-color-accent-ring);
-  outline-offset: 2px;
-}
-.dp-switch-label {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-/* ============ 元数据（简介页） ============ */
-.meta-key {
-  color: var(--hh-color-text-dim-strong);
-  flex-shrink: 0;
-}
-.link {
-  color: var(--hh-color-link);
-  cursor: pointer;
-  text-decoration: none;
-}
-.link:hover {
-  text-decoration: underline;
-}
-
-/* ============ 版本/语言包切换（G13+G17） ============ */
-.variants {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.variants-key {
-  flex-shrink: 0;
-  font-size: var(--hh-font-caption-size);
-}
-.variants-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.variant-chip {
-  font-size: 11.5px;
-  padding: 4px 10px;
-  border-radius: var(--hh-radius-sm);
-  border: 1px solid var(--hh-color-surface-hover);
-  background: transparent;
-  color: var(--hh-color-text-mid-high);
-  cursor: pointer;
-  transition: all var(--hh-motion-med);
-  max-width: 120px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.variant-chip:hover {
-  background: var(--hh-color-surface-mid);
-}
-.variant-chip.on {
-  background: var(--hh-color-select-bg);
-  border-color: var(--hh-color-accent-selected-border);
-  color: var(--hh-color-select-text);
-  font-weight: 600;
-}
-
-/* ============ 标签 ============ */
-.tags {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-/* ============ 系列（G12） ============ */
-.series {
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-}
-.series-key {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim-strong);
-}
-.series-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.series-chip {
-  font-size: 11px;
-  padding: 3px 9px;
-  border-radius: var(--hh-radius-xs);
-  background: var(--hh-color-accent-bg);
-  color: var(--hh-color-accent-text);
-  opacity: 0.85;
-  border: 1px solid transparent;
-  cursor: pointer;
-  transition: all var(--hh-motion-med);
-}
-.series-chip:hover {
-  opacity: 1;
-  background: var(--hh-color-accent-chip-bg);
-}
-.series-chip.on {
-  opacity: 1;
-  border-color: var(--hh-color-accent-ring);
-  color: var(--hh-color-accent);
-  font-weight: 600;
-}
-.aliases {
-  font-size: 11.5px;
-  color: var(--hh-color-text-dim);
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-}
-.aliases .meta-key {
-  font-size: inherit;
-}
-.aliases-text {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 100%;
-}
-
-/* ============ 编辑/存档页按钮 ============ */
-.dp-pane-btn {
-  display: flex;
-  align-items: center;
-  gap: var(--hh-space-x2);
-  height: 36px;
-  padding: 0 var(--hh-space-x3);
-  border: 1px solid var(--hh-color-border-ghost-soft);
-  border-radius: var(--hh-radius-md);
-  background: var(--hh-color-surface-soft);
-  color: var(--hh-color-text-strong);
-  font-size: var(--hh-font-body-size);
-  font-family: inherit;
-  cursor: pointer;
-  transition: background var(--hh-motion-med);
-}
-.dp-pane-btn:hover {
-  background: var(--hh-color-surface-hover-soft);
-  color: var(--hh-color-text-glow);
-}
-/* 激活态（已通关 toggle / 备份记录入口）：成功色描边，不用 accent 实色铺满 */
-.dp-pane-btn[aria-pressed='true'] {
-  border-color: var(--hh-color-success-border);
-  color: var(--hh-color-success-text);
-  font-weight: 600;
-}
-.dp-pane-note,
-.dp-pane-empty {
-  margin: 0;
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-}
-
-/* ============ 简介 ============ */
-.desc-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  flex-shrink: 0;
-}
-.desc {
-  font-size: var(--hh-font-body-size);
-  line-height: 20px;
-  color: var(--hh-color-text-mid-high);
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: break-word;
-}
-
-/* 详情卡片在形态切换时由 View Transitions 接管（banner 单独命名 → 它会长大，
-   其它内容淡入淡出）。旧浏览器/减少动效下直接切，不报错。 */
-.banner {
-  view-transition-name: dp-banner;
-}
-
-/* ============ 分页切换动效 ============ */
-/* out-in：旧页 83ms 淡出后再入场，两页不叠帧。宽度不变所以不做位移横滑 */
-.pane-enter-from {
-  opacity: 0;
-  transform: translateY(4px);
-}
-.pane-enter-active {
-  transition:
-    opacity var(--hh-motion-med) var(--hh-motion-ease-out),
-    transform var(--hh-motion-slow) var(--hh-motion-ease-out);
-}
-.pane-leave-active {
-  transition: opacity var(--hh-motion-fast) var(--hh-motion-ease-in);
-}
-.pane-leave-to {
-  opacity: 0;
-}
-
-/* ============ 相似游戏 ============ */
-.dp-similar {
-  display: flex;
-  flex-direction: column;
-  gap: var(--hh-space-x2);
-}
-.dp-similar-head {
-  display: flex;
-  align-items: baseline;
-  gap: var(--hh-space-x2);
-}
-.dp-similar-title {
-  font-size: var(--hh-font-caption-size);
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--hh-color-text-bright);
-}
-.dp-similar-count {
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-}
-.dp-similar-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: var(--hh-space-x2);
-}
-.detail-panel.is-expanded .dp-similar-grid {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-}
-.dp-sim-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding: 0;
-  border: none;
-  background: none;
-  font-family: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-.dp-sim-cover {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  aspect-ratio: var(--hh-layout-cover-ratio);
-  border-radius: var(--hh-radius-sm);
-  overflow: hidden;
-  background: var(--hh-color-surface-soft);
-  transition:
-    transform var(--hh-motion-slow) var(--hh-motion-ease-out),
-    box-shadow var(--hh-motion-slow) var(--hh-motion-ease-out);
-}
-.dp-sim-item:hover .dp-sim-cover {
-  transform: translateY(-2px) scale(1.02);
-}
-.dp-sim-item:active .dp-sim-cover {
-  transform: scale(0.985);
-  transition-duration: var(--hh-motion-fast);
-}
-.dp-sim-img {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: opacity var(--hh-motion-fast) var(--hh-motion-ease-fade);
-}
-.dp-sim-letter {
-  font-size: 18px;
-  font-weight: 600;
-  color: var(--hh-color-text-dim);
-}
-.dp-sim-name {
-  font-size: 11px;
-  line-height: 14px;
-  color: var(--hh-color-text-mid);
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-.dp-sim-item:hover .dp-sim-name {
-  color: var(--hh-color-text-glow);
-}
-.dp-similar-empty {
-  margin: 0;
-  font-size: var(--hh-font-caption-size);
-  color: var(--hh-color-text-dim);
-}
-
-.desc.clamped {
-  display: -webkit-box;
-  -webkit-line-clamp: 6;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-}
-/* 整页态简介多给行数：抽屉 400px 宽时 6 行够用，整页态有纵向空间，
-   12 行能装完长篇简介，不必先点「展开」 */
-.detail-panel.is-expanded .desc.clamped {
-  -webkit-line-clamp: 12;
-}
-.desc-toggle {
-  align-self: flex-start;
-  border: none;
-  background: none;
-  color: var(--hh-color-accent);
-  font-size: var(--hh-font-caption-size);
-  cursor: pointer;
-  padding: 0;
-}
-.desc-toggle:hover {
-  color: var(--hh-color-accent-hover);
-}
-
 /* ============ 分栏容器 ============ */
 /* 抽屉态：两层容器都不参与布局（display:contents），孩子直接落到面板的
-   flex 列里——与改造前逐像素一致，整页态再切成两栏。 */
+   flex 列里——与拆分前逐像素一致，整页态再切成两栏。 */
 .dp-cols {
   display: contents;
 }
@@ -1870,16 +471,26 @@ onUnmounted(() => document.removeEventListener('keydown', onKey))
   background: var(--hh-color-card);
   border: 1px solid var(--hh-color-panel-glass-border);
 }
+/* 整页态穿透子组件：拆分前这些规则的前段选择器是 .detail-panel.is-expanded，
+   目标类写在各子组件内部；scoped 下父选择器不再穿透子组件，改用 :deep() 保持原语义。 */
 /* 整页态的 banner 长高：hero 是「这一部游戏」的门面，全屏时给它 260px */
-.detail-panel.is-expanded .banner {
+.detail-panel.is-expanded :deep(.banner) {
   height: 260px;
   flex: none;
 }
-.detail-panel.is-expanded .banner-cover {
+.detail-panel.is-expanded :deep(.banner-cover) {
   width: 132px;
   height: 198px;
 }
-.detail-panel.is-expanded .dp-meta {
+.detail-panel.is-expanded :deep(.dp-meta) {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.detail-panel.is-expanded :deep(.dp-similar-grid) {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+/* 整页态简介多给行数：抽屉 400px 宽时 6 行够用，整页态有纵向空间，
+   12 行能装完长篇简介，不必先点「展开」 */
+.detail-panel.is-expanded :deep(.desc.clamped) {
+  -webkit-line-clamp: 12;
 }
 </style>

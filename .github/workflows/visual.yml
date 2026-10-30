@@ -1,0 +1,106 @@
+# 视觉/交互回归闸：CDP 起真实 Electron 窗口，跑各 verify_* / ui_walkthrough_*。
+# 为什么不在 PR 主链路：每条闸都要 build + 起一次真实窗口（分钟级、吃 CPU），
+# 且 runner 上偶发抖动（前台窗口被抢、端口占用、字体度量差异）会误伤合入。
+# 定位：nightly + 手动兜底。红 = 视觉/交互回归，人工判读，不阻断合入。
+name: Visual Regression
+
+on:
+  schedule:
+    # 每天 UTC 18:00（北京时间 02:00）跑全套，赶在白天开工前出结果
+    - cron: '0 18 * * *'
+  workflow_dispatch:
+
+jobs:
+  visual:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci
+
+      # Electron 44 起 npm 不再 postinstall 下载二进制：verify_* 直接 spawn
+      # node_modules/electron/dist/electron.exe，不显式装一次就是 ENOENT。
+      - name: install electron binary
+        working-directory: app
+        run: npx install-electron
+
+      - name: build
+        working-directory: app
+        run: npm run build
+        env:
+          PYTHONIOENCODING: utf-8
+
+      # Windows runner 中文输出编码崩溃的既有坑：强制 UTF-8
+      - name: CDP visual gates
+        working-directory: app
+        run: |
+          npm run regression:reina
+          npm run regression:hero
+          npm run regression:accent
+          npm run regression:process
+          npm run regression:detailpanel
+          npm run regression:stats
+          npm run regression:gamesites
+          npm run regression:settings
+          npm run regression:dlview
+          npm run regression:recentstrip
+          npm run regression:scancover
+          npm run regression:coverrender
+          npm run regression:coveraspect
+          npm run regression:batchscrape
+          npm run regression:batchedit
+          npm run regression:fsstage
+          npm run regression:nsfw
+          npm run regression:track
+          npm run regression:ui
+          npm run regression:dupe
+        env:
+          PYTHONIOENCODING: utf-8
+
+  # 真实引擎下载链路：reg_all 里的第三件套，PR CI 没覆盖，夜里补上。
+  download:
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: npm ci
+        working-directory: app
+        run: npm ci
+
+      - name: install electron binary
+        working-directory: app
+        run: npx install-electron
+
+      - name: build
+        working-directory: app
+        run: npm run build
+        env:
+          PYTHONIOENCODING: utf-8
+
+      # enginePath() 用 dirname(cwd) 定位 engine-rs：cwd=app 时正好落在仓库根。
+      # 不先 cargo build，e2e_download 会拿不到 fastdrop-engine.exe。
+      - name: cargo build release (引擎)
+        working-directory: engine-rs
+        run: cargo build --release --locked
+
+      - name: real engine download chain
+        working-directory: app
+        run: npm run regression:download
+        env:
+          PYTHONIOENCODING: utf-8

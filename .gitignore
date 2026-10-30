@@ -49,5 +49,12 @@ app/hh_sites2.png
 # electron-vite 热更新时落盘的临时配置副本
 app/electron.vite.config.*.mjs
 
+# 本地会话/编辑器状态（宿主落盘，非工程内容）
+.local/
+
+# 审计/排查中间产物：探针扫描的 JSON 落盘（可随时重生，不属于源码）
+app/.audit*.json
+app/.prog*.json
+
 # 用户指定的「不上传」夹：临时脚本 / 基准图 / 取证产物，一律不入库
 不要上传*/
