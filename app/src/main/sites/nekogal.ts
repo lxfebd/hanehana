@@ -84,13 +84,39 @@ export async function mirrors(detailUrl: string): Promise<SiteMirrorOutcome> {
       .replace(/-NekoGAL\s*-\s*Galgame传递者\s*$/, '')
       .trim()
 
-    // .file-download-btn 的 href 是 ?golink=<base64>&nonce=... ，可以直接取绝对地址
-    const btn = /class="[^"]*file-download-btn[^"]*"[^>]*href="([^"]+)"/i.exec(html)
-    if (!btn) {
+    // .file-download-btn 的 href 是 ?golink=<base64>&nonce=... ，可以直接取绝对地址。
+    // 一个帖子常有多个下载按钮（分卷 part1/part2… 或多个网盘），必须全部收集——
+    // 以前只取第一个，分卷游戏就只能下到 part1，等于「下不完整」。
+    // class/href 属性顺序两种都吃，站点改版把 href 提前也不会漏。
+    const seenBtn = new Set<string>()
+    const btnHrefs: string[] = []
+    const btnRes = [
+      /class="[^"]*file-download-btn[^"]*"[^>]*href="([^"]+)"/gi,
+      /href="([^"]+)"[^>]*class="[^"]*file-download-btn[^"]*"/gi,
+    ]
+    for (const re of btnRes) {
+      let bm: RegExpExecArray | null
+      while ((bm = re.exec(html))) {
+        if (!seenBtn.has(bm[1])) {
+          seenBtn.add(bm[1])
+          btnHrefs.push(bm[1])
+        }
+      }
+    }
+    if (!btnHrefs.length) {
       return { ok: false, siteId: SITE_ID, title, message: '详情页里没找到下载按钮（.file-download-btn）。' }
     }
-    const fullUrl = new URL(btn[1], detailUrl).toString()
-    const mirrors = decodeGolink(fullUrl, title)
+    const mirrors: Mirror[] = []
+    const seenLink = new Set<string>()
+    for (const href of btnHrefs) {
+      const fullUrl = new URL(href, detailUrl).toString()
+      for (const m of decodeGolink(fullUrl, title)) {
+        if (!seenLink.has(m.url)) {
+          seenLink.add(m.url)
+          mirrors.push(m)
+        }
+      }
+    }
     if (!mirrors.length) {
       return { ok: false, siteId: SITE_ID, title, message: '下载按钮解码失败，请在浏览器里打开详情页。' }
     }
