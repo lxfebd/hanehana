@@ -568,17 +568,19 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   border: none;
   border-radius: var(--hh-radius-md);
   overflow: hidden;
-  background: var(--hh-color-surface-strong);
+  /* 封面不垫底色、不投阴影：img 左缘 mask 渐隐，直接融进后面的 */
+  /* .hero-bg 模糊底，去掉「贴了一张硬矩形」的观感 */
+  background: transparent;
   cursor: pointer;
-  box-shadow:
-    0 10px 28px var(--hh-color-shade-thumb),
-    inset 0 0 0 1px var(--hh-color-border-ghost-soft);
 }
 .hero-cover img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+  /* 左缘 24% 渐隐到透明，与卡片背景自然过渡 */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24%);
+  mask-image: linear-gradient(to right, transparent 0, #000 24%);
 }
 /* NSFW：与封面墙同口径——模糊压住，点击临时揭示（chip 缩略图同理） */
 .hero-cover img.nsfw-blur,
@@ -593,6 +595,9 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
 .hero-cover-letter {
   position: absolute;
   inset: 0;
+  /* 无封面时的大字占位仍保留一块面板底色 + 细描边 */
+  background: var(--hh-color-surface-strong);
+  box-shadow: inset 0 0 0 1px var(--hh-color-border-ghost-soft);
   padding: var(--hh-space-x4);
   display: -webkit-box;
   -webkit-box-orient: vertical;

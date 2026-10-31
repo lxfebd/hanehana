@@ -208,6 +208,9 @@ onMounted(() => {
   /* 22px（title 档）不是 kpi 的 26px：窄窗里每格内容宽只有 ~117px，26px 的长
      时长会被裁。基准的 30px 大数是在 1806 宽的窗里，比例换过来就是这个档。
      宽窗（>1600）升回 kpi；窄窗的时长由 fmtDurMsKpi 收短，两者共同保证不截断。 */
+  /* 值沉底：末格 .hk-top 比其余 .hk-label 高一截，margin-top:auto 把 */
+  /* 四个 .hk-val 都压到等高 cell 底部，数字基线对齐 */
+  margin-top: auto;
   font-size: var(--hh-font-title-size);
   line-height: var(--hh-font-title-lh);
   font-weight: 700;

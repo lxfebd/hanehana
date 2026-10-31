@@ -221,8 +221,6 @@ function moreAction(fn: () => void): void {
       </div>
     </div>
 
-    <!-- 基准 home.png 左下角的作者署名（© huoshen80）。位置在侧栏最底部。 -->
-    <p class="nav-copy">© huoshen80</p>
   </nav>
 </template>
 
@@ -338,16 +336,6 @@ function moreAction(fn: () => void): void {
 }
 .nav-spacer {
   flex: 1;
-}
-
-/* 侧栏底部署名（基准 left-bottom © huoshen80） */
-.nav-copy {
-  margin: var(--hh-space-x2) 0 0;
-  text-align: center;
-  font-size: 10px;
-  color: var(--hh-color-text-dim);
-  user-select: none;
-  flex: none;
 }
 
 /* P1-4 「更多」收纳菜单：侧栏底部浮层，条目与 nav-item 同观感 */
