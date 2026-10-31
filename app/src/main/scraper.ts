@@ -23,6 +23,7 @@ import { ensureThumb } from './thumbs'
 import { rememberCoverHost, sanitizeScrapeResult } from './scrapeRules'
 import { queryLadder } from './scrapeQuery'
 import type { Game, ScrapeCandidate } from '../shared/types'
+import { normTitle, pickProducerId } from '../shared/scrapeScore'
 
 const UA = 'HaneHana/0.1 (galgame manager; contact: lxfebd)'
 const TIMEOUT = 12000
@@ -140,12 +141,19 @@ function breakerMessage(key: string): string {
 export async function searchSource(
   source: 'vndb' | 'bangumi' | 'ymgal',
   title: string,
+  developer?: string,
 ): Promise<{ results: ScrapeCandidate[]; warnings: string[] }> {
   if (isBreakerOpen(source)) {
     // 熔断中：直接短路，UI 立即看到原因，不发起请求
     return { results: [], warnings: [breakerMessage(source)] }
   }
-  const search = source === 'vndb' ? searchVndb : source === 'ymgal' ? searchYmgal : searchBangumi
+  // developer 过滤只对 VNDB 有意义（Bangumi/YMGal 没这个过滤器），只传给 vndb
+  const search =
+    source === 'vndb'
+      ? (q: string) => searchVndb(q, developer)
+      : source === 'ymgal'
+        ? searchYmgal
+        : searchBangumi
   const ladder = queryLadder(title)
   for (let step = 0; step < ladder.length; step++) {
     const q = ladder[step] as string;
@@ -199,7 +207,7 @@ interface VndbVN {
   released?: string
   rating?: number
   description?: string
-  image?: { url: string }
+  image?: { url: string; dims?: [number, number]; sexual?: number; violence?: number; votecount?: number }
   tags?: { id: string; name: string }[]
   /** developers 展开字段 developers.name 返回扁平 [{id,name}]（2026-10-11 实测） */
   developers?: { id?: string; name?: string }[]
@@ -211,21 +219,52 @@ interface VndbVN {
   length_minutes?: number
 }
 
-async function searchVndb(title: string): Promise<ScrapeCandidate[]> {
+/** VNDB producer 名→id 进程内缓存（producer id 永久稳定，进程重启才清）。null = 已查过没命中。 */
+const producerIdCache = new Map<string, string | null>()
+
+/** 按开发商名查 VNDB producer id：POST /kana/producer 搜前 5，pickProducerId 取归一精确匹配（实测搜 Key 前 5 是 p24 Key / p720 Key Fans Club…，必须精确挑）。查不到返回 undefined，调用方回退无过滤。 */
+async function lookupProducerId(name: string): Promise<string | undefined> {
+  const key = normTitle(name)
+  if (!key) return undefined
+  if (producerIdCache.has(key)) return producerIdCache.get(key) ?? undefined
+  try {
+    const j = (await fetchJson('https://api.vndb.org/kana/producer', {
+      method: 'POST',
+      body: JSON.stringify({ filters: ['search', '=', name], fields: 'id,name', results: 5 }),
+    })) as { results?: { id: string; name: string }[] }
+    const pid = pickProducerId(name, j.results ?? [])
+    producerIdCache.set(key, pid ?? null)
+    return pid
+  } catch {
+    producerIdCache.set(key, null)
+    return undefined
+  }
+}
+
+async function searchVndb(title: string, developer?: string): Promise<ScrapeCandidate[]> {
   // fields 串里每个字段名都必须是 VNDB 认识的：错一个整条查询就 400，而且
-  // VNDB 的 400 响应体经常是空的，症状只剩 warnings 里一句「HTTP 400」——
-  // 旧串三个坏字段（developers.developer.name / relations.vn.title /
-  // aliases.alias）+ 非法 sort:'id'，等于 VNDB 源从未工作过。
-  // 2026-10-11 逐字段二分实测：developers.name / relations.title /
-  // aliases / 无 sort 全部 200 且带封面。sort 默认即按 id 排，不传。
+  // VNDB 的 400 响应体经常是空的，症状只剩 warnings 里一句「HTTP 400」。
+  // 2026-10-31 逐字段实测：image.dims / image.sexual / image.violence /
+  // image.votecount 全部合法（eden* 返回 dims [411,560]、sexual 0、votecount 14）；
+  // sort:'searchrank' 合法且让本体排第 1（默认 id 升序本体常排第 6+，实测 eden* v1286）。
+  const fields =
+    'id,title,alttitle,released,rating,image.url,image.dims,image.sexual,image.violence,image.votecount,description,tags.name,developers.name,relations.relation,relations.title,aliases,length_minutes'
+  // developer 过滤器是 m 型嵌套过滤器：裸 id 一律 400（实测
+  // ['developer','=','p24'] / ['in',['p24']] / and 里裸 id 全 400），唯一跑通的形态是
+  // ['developer','=',['id','=','p24']]，所以先把名字精确换成 producer id
+  // （lookupProducerId）；查不到回退无过滤，宁可多几条结果也别 400。
+  let filters: unknown[] = ['search', '=', title]
+  if (developer) {
+    const pid = await lookupProducerId(developer)
+    if (pid) filters = ['and', ['search', '=', title], ['developer', '=', ['id', '=', pid]]]
+  }
   const body = {
-    filters: ['search', '=', title],
-    fields:
-      'id,title,alttitle,released,rating,image.url,description,tags.name,developers.name,relations.relation,relations.title,aliases,length_minutes',
+    filters,
+    fields,
     page: 1,
-    // 8 条太少：默认按 id 升序，本体常排第 6+（实测搜 eden 本体 v1286 排第 6）。
-    // 扩到 20 条给渲染层做矛盾淘汰 + 跨源互验。
+    // 20 条给渲染层做矛盾淘汰 + 跨源互验。
     results: 20,
+    sort: 'searchrank',
   }
   const j = (await fetchJson('https://api.vndb.org/kana/vn', {
     method: 'POST',
@@ -240,6 +279,10 @@ async function searchVndb(title: string): Promise<ScrapeCandidate[]> {
     releaseDate: v.released,
     rating: v.rating ? v.rating / 10 : undefined,
     coverUrl: v.image?.url,
+    coverDims: v.image?.dims,
+    coverSexual: v.image?.sexual,
+    coverViolence: v.image?.violence,
+    coverVotecount: v.image?.votecount,
     tags: (v.tags ?? []).slice(0, 12).map((t) => t.name),
     developer: (v.developers ?? []).find((d) => !!d.name)?.name,
     // 关系码实测（2026-10-11 打 Muv-Luv/Fate 逐条核对）：seq 同系列续作、
@@ -405,14 +448,14 @@ function scrapeMock(title: string): { results: ScrapeCandidate[]; warnings: stri
  * 用 SEARCH_SOURCE_TIMEOUT 包一层——快源先回、慢源裁掉，不让 Bangumi 的
  * 12s 超时拖住整个搜索 UI（体感从"卡 12 秒"变"秒出"）。
  */
-export async function searchScrape(title: string): Promise<{ results: ScrapeCandidate[]; warnings: string[] }> {
+export async function searchScrape(title: string, developer?: string): Promise<{ results: ScrapeCandidate[]; warnings: string[] }> {
   const mock = scrapeMock(title)
   if (mock) {
     for (const c of mock.results) rememberCoverHost(c.coverUrl)
     return mock
   }
   const [vndb, bgm, ymgal] = await Promise.allSettled([
-    searchSource('vndb', title),
+    searchSource('vndb', title, developer),
     searchSource('bangumi', title),
     searchSource('ymgal', title),
   ])

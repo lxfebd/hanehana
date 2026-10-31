@@ -12,6 +12,7 @@ import { shell } from 'electron'
 import { addGames, findGameByExe, getGame, getGames, removeGame, updateGame } from './gameStore'
 import { dupKeyOf as dupKeyRaw } from './dupKey'
 import { backfillLocalCovers, adoptLocalCover } from './localCover'
+import { backfillLocalIcons, adoptLocalIcon } from './localIcon'
 import { scanDir, isValidDir } from './scanner'
 import type { Game, GameVariant, GameProcessState, PlaySession, SteamImportResult } from '../shared/types'
 
@@ -132,6 +133,7 @@ export async function handleScan(root: string): Promise<ScanResult> {
   )
   // 本地封面：目录里有 cover/folder 等图就直接挂上并生成缩略图（不联网）
   backfillLocalCovers(added)
+  backfillLocalIcons(added)
   return { added, hits, skipped: hits.length - fresh.length, dupes }
 }
 
@@ -147,6 +149,7 @@ export function handleAddOne(exePath: string): { ok: true; game: Game } | { ok: 
     return { ok: false, error: `该 exe 已在库中：${ex?.title ?? exePath}` }
   }
   adoptLocalCover(added[0]!)
+  void adoptLocalIcon(added[0]!)
   return { ok: true, game: added[0]! }
 }
 

@@ -22,7 +22,7 @@ export function registerThumbProtocol(): void {
   ])
 }
 
-/** protocol.handle 处理器：只认 hh://thumb/{id} / hh://cover/{id}，id 必须命中真实游戏。 */
+/** protocol.handle 处理器：只认 hh://thumb/{id} / hh://cover/{id} / hh://icon/{id}，id 必须命中真实游戏。 */
 async function fetchLocal(p: string): Promise<Response> {
   return net.fetch(pathToFileURL(p).toString())
 }
@@ -31,13 +31,13 @@ export async function handleHhProtocol(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url)
     const host = url.host
-    if (host !== 'thumb' && host !== 'cover') {
+    if (host !== 'thumb' && host !== 'cover' && host !== 'icon') {
       return new Response('not found', { status: 404 })
     }
     const id = decodeURIComponent(url.pathname.replace(/^\//, ''))
     const g = getGame(id)
     if (!g) return new Response('not found', { status: 404 })
-    const p = host === 'thumb' ? (g.thumbPath ?? g.coverPath) : g.coverPath
+    const p = host === 'thumb' ? (g.thumbPath ?? g.coverPath) : host === 'cover' ? g.coverPath : g.iconPath
     if (!p || !existsSync(p)) return new Response('not found', { status: 404 })
     // 只服务图片缓存目录里的文件。games.json 是磁盘上的明文，改一个 coverPath
     // 就能让这个协议去读任意本地文件（再把内容回给渲染层）——这里堵住这条路。

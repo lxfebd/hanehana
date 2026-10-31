@@ -182,6 +182,7 @@ const PATCHABLE: readonly (keyof Game)[] = [
   'coverPath',
   'thumbPath',
   'thumbSrc',
+  'iconPath',
   'favorite',
   'manualEdit',
   'backupEnabled',
@@ -284,6 +285,7 @@ export function sanitizeGamePatch(raw: unknown): Partial<Game> {
       case 'coverPath':
       case 'thumbPath':
       case 'thumbSrc':
+      case 'iconPath':
         // 空串 = 清除封面，是合法操作；非空则必须在缓存目录内
         if (v === '') out[key] = ''
         else if (isImageCachePath(v)) out[key] = resolve(v)
@@ -305,7 +307,7 @@ export function removeGame(id: string): void {
 
 /** 删游戏时把它的封面/缩略图缓存文件一并清掉，不留孤儿（与 heal 同口径）。 */
 function dropGameCache(g: Game): void {
-  for (const p of [g.coverPath, g.thumbPath]) {
+  for (const p of [g.coverPath, g.thumbPath, g.iconPath]) {
     if (!p || !isImageCachePath(p)) continue
     try {
       if (existsSync(p)) unlinkSync(p)

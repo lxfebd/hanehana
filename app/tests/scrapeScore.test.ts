@@ -4,7 +4,7 @@
  */
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { normTitle, scoreCandidate, pickAuto, crossKey, contradicts } from '../src/shared/scrapeScore.js'
+import { normTitle, scoreCandidate, pickAuto, crossKey, contradicts, pickProducerId } from '../src/shared/scrapeScore.js'
 import type { Game, ScrapeCandidate } from '../src/shared/types.js'
 
 function makeGame(over: Partial<Game>): Game {
@@ -129,4 +129,30 @@ test('pickAuto：同名不同社，单源各自 100 但 key 不同 → 仍不自
   const rs = [makeCand({ id: 'v1', title: 'AIR', developer: 'Key' })]
   assert.equal(scoreCandidate(g, rs[0]), 100)
   assert.equal(pickAuto(g, rs), null)
+})
+
+test('pickProducerId：归一精确匹配优先于前缀命中（Key vs Key Fans Club，实测 VNDB 搜 Key 前 5 条）', () => {
+  const list = [
+    { id: 'p720', name: 'Key Fans Club' },
+    { id: 'p24', name: 'Key' },
+  ]
+  assert.equal(pickProducerId('Key', list), 'p24')
+  assert.equal(pickProducerId('key', [{ id: 'p1', name: 'KEY STAFF' }]), 'p1')
+  assert.equal(pickProducerId('Key', []), undefined)
+  assert.equal(pickProducerId('', list), undefined)
+})
+
+test('封面软信号：sexual/violence >=2 降权 15，阈值以下不罚', () => {
+  const g = makeGame({ rawTitle: 'Clannad' })
+  // 包含关系基础分 75
+  assert.equal(scoreCandidate(g, makeCand({ title: 'Clannad HD' })), 75)
+  assert.equal(scoreCandidate(g, makeCand({ title: 'Clannad HD', coverSexual: 2 })), 60)
+  assert.equal(scoreCandidate(g, makeCand({ title: 'Clannad HD', coverViolence: 3 })), 60)
+  assert.equal(scoreCandidate(g, makeCand({ title: 'Clannad HD', coverSexual: 1 })), 75)
+})
+
+test('封面软信号：votecount 加 min(6, floor(log10(v+1)))，与降权叠加后夹 0..100', () => {
+  const g = makeGame({ rawTitle: 'Clannad' })
+  assert.equal(scoreCandidate(g, makeCand({ title: 'Clannad HD', coverVotecount: 100 })), 77)
+  assert.equal(scoreCandidate(g, makeCand({ title: 'Clannad HD', coverSexual: 2, coverVotecount: 10 })), 61)
 })

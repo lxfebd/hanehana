@@ -145,6 +145,8 @@ export interface Game {
   thumbPath?: string
   /** 生成缩略图时对应的封面路径；封面换了要重新生成 */
   thumbSrc?: string
+  /** 从游戏本体 exe 提取的图标本地缓存路径（PNG，列表小图标/无封面兜底用） */
+  iconPath?: string
   /** 封面主色（#rrggbb），占位背景/详情光晕用 */
   color?: string
   /** 简介 */
@@ -247,6 +249,14 @@ export interface ScrapeCandidate {
   lengthMinutes?: number
   /** 命中清洗梯的序号：0 = 原词命中，>0 = 放宽词命中（分数封顶 75，见 scrapeScore） */
   queryStep?: number
+  /** VNDB image.dims [宽,高]（封面软信号） */
+  coverDims?: [number, number]
+  /** VNDB image.sexual 0-2，>=2 露骨封面打分降权 */
+  coverSexual?: number
+  /** VNDB image.violence 0-2，>=2 暴力封面打分降权 */
+  coverViolence?: number
+  /** VNDB image.votecount，高票封面打分加权 */
+  coverVotecount?: number
 }
 
 /**

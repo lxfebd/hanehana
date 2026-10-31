@@ -65,6 +65,14 @@ export function scoreCandidate(g: Game, c: ScrapeCandidate): number {
   const gy = yearOf(g.releaseDate)
   const cy = yearOf(c.releaseDate)
   if (gy != null && cy != null && gy === cy) s = Math.min(100, s + 3)
+  // VNDB 封面软信号（字段缺省=无影响，老数据/其他源不受影响）：
+  // 露骨/暴力封面（sexual/violence >= 2）降权 15；高评票封面加 min(6, floor(log10(v+1)))
+  const sx = c.coverSexual ?? 0
+  const vi = c.coverViolence ?? 0
+  if (sx >= 2 || vi >= 2) s -= 15
+  const vc = c.coverVotecount ?? 0
+  if (vc > 0) s += Math.min(6, Math.floor(Math.log10(vc + 1)))
+  s = Math.max(0, Math.min(100, s))
   // 清洗梯放宽词命中的候选封顶 75：裁词撞同名作风险高，不给自动档
   if ((c.queryStep ?? 0) > 0) s = Math.min(s, 75)
   return s
@@ -109,4 +117,15 @@ export function bestCandidateKey(g: Game, results: ScrapeCandidate[]): string {
   }
   if (!best || tie || bs < 55) return ''
   return best.provider + '::' + best.id
+}
+
+/** VNDB producer 名查 id：先归一后精确相等，再前缀/包含命中，最后取第一条；查不到返回 undefined。纯函数，可单测。 */
+export function pickProducerId(name: string, list: { id: string; name: string }[]): string | undefined {
+  if (!list.length) return undefined
+  const n = normTitle(name)
+  if (!n) return undefined
+  const exact = list.find((p) => normTitle(p.name) === n)
+  if (exact) return exact.id
+  const hit = list.find((p) => { const pn = normTitle(p.name); return pn.includes(n) || n.includes(pn) })
+  return (hit ?? list[0]).id
 }

@@ -27,7 +27,7 @@ import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Check, EyeOff, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
 import type { Game } from '../../shared/types'
 import { isNsfwGame } from '../../shared/nsfw'
-import { library, selectGame, thumbUrl, toggleSelect, debouncedKeyword, runningGames, ratingRanks } from '../stores/library'
+import { library, selectGame, thumbUrl, iconUrl, toggleSelect, debouncedKeyword, runningGames, ratingRanks } from '../stores/library'
 import { t } from '../i18n'
 import { tokens } from '../design/tokens'
 
@@ -301,7 +301,8 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <!-- 无封面：主色底 + 渐变层 + 大字标题占位（海报占位，不是糊图） -->
               <template v-else>
                 <div class="cover-poster-grad" aria-hidden="true"></div>
-                <span class="cover-letter" :style="{ fontSize: posterFont(it.g.title) + 'px' }" :title="it.g.title">{{ it.g.title }}</span>
+                <img v-if="iconUrl(it.g)" class="cover-icon" :src="iconUrl(it.g)" loading="lazy" :alt="it.g.title" @error="imgErr" />
+                <span v-else class="cover-letter" :style="{ fontSize: posterFont(it.g.title) + 'px' }" :title="it.g.title">{{ it.g.title }}</span>
               </template>
 
               <div v-if="runningGames.has(it.g.id)" class="cover-running">
@@ -389,6 +390,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
         >
           <div class="list-thumb" :style="{ background: placeholderBg(item) }">
             <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
+            <img v-else-if="iconUrl(item)" class="list-icon" :src="iconUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
             <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
             <div v-if="runningGames.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
@@ -678,6 +680,15 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   overflow-wrap: break-word;
 }
 
+/* 无封面但有 exe 图标：图标 contain 居中，透明底露出主色占位底。
+   特异性必须压过 .cover-thumb img 的 object-fit: cover（0,2,1 > 0,1,1）。 */
+.cover-thumb img.cover-icon {
+  object-fit: contain;
+  padding: 26px;
+  box-sizing: border-box;
+  filter: drop-shadow(0 4px 12px rgba(0, 0, 0, 0.35));
+}
+
 /* 运行中徽章（评分不上卡） */
 .cover-running {
   position: absolute;
@@ -935,6 +946,13 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   font-size: 22px;
   font-weight: 700;
   color: var(--hh-color-text-dim);
+}
+
+/* 无封面但有 exe 图标：44x66 小窗里 contain 展示（同样压过 .list-thumb img 的 cover）。 */
+.list-thumb img.list-icon {
+  object-fit: contain;
+  padding: 6px;
+  box-sizing: border-box;
 }
 .list-running {
   position: absolute;

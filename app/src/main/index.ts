@@ -39,6 +39,7 @@ import { createSnapshot, rotateSnapshots } from './saves'
 import { engineStatus } from './engine'
 import { backfillThumbs, handleHhProtocol, registerThumbProtocol } from './thumbs'
 import { backfillLocalCovers } from './localCover'
+import { backfillLocalIcons } from './localIcon'
 import { healBadCovers } from './coverHeal'
 import { Manager } from './manager'
 import { Store, dataDir } from './store'
@@ -484,6 +485,7 @@ if (gotSingleInstanceLock) {
       backfillThumbs(getGames())
       // 库里还没有封面的条目：先探测游戏目录本地图，再让 thumb 管线接上
       backfillLocalCovers(getGames())
+      backfillLocalIcons(getGames())
     })
     store = new Store()
     // 引擎自检：缺失只记日志 + 设置页提示，不拦启动。游戏库、刮削、启动游戏

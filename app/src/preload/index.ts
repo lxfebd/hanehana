@@ -71,10 +71,10 @@ const bridge = {
     ipcRenderer.invoke(Ipc.GameAddOne, exePath),
 
   // 元数据刮削
-  scrapeSearch: (title: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title),
-  /** 按源搜索（G20）：{ results, warnings }，单源失败不拖累另一源 */
-  scrapeSearchSource: (source: 'vndb' | 'bangumi' | 'ymgal', title: string) =>
-    ipcRenderer.invoke(Ipc.ScrapeSearchSource, source, title),
+  scrapeSearch: (title: string, developer?: string) => ipcRenderer.invoke(Ipc.ScrapeSearch, title, developer),
+  /** 按源搜索（G20）：{ results, warnings }，单源失败不拖累另一源；developer 只对 vndb 生效 */
+  scrapeSearchSource: (source: 'vndb' | 'bangumi' | 'ymgal', title: string, developer?: string) =>
+    ipcRenderer.invoke(Ipc.ScrapeSearchSource, source, title, developer),
   scrapeApply: (gameId: string, result: ScrapeResult) => ipcRenderer.invoke(Ipc.ScrapeApply, gameId, result),
 
   // G14 游戏库导出（弹保存对话框写 CSV/JSON，返回落盘路径）

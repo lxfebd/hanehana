@@ -544,8 +544,10 @@ export async function runSearch(query: string): Promise<void> {
     // 单源失败只进 warnings，不拖累已回来的另一源。
     library.scrapeResults = []
     library.scrapeWarnings = []
+    // VNDB 侧带上目标游戏的开发商做过滤（嵌套 producer id 过滤器，见 scraper.lookupProducerId）
+    const devTarget = library.games.find((g) => g.id === library.scrapeTargetId)
     const vndbP = window.hh
-      .scrapeSearchSource('vndb', query)
+      .scrapeSearchSource('vndb', query, devTarget?.developer)
       .then((v) => {
         library.scrapeResults.push(...v.results)
         library.scrapeWarnings.push(...v.warnings)
@@ -619,6 +621,11 @@ export function thumbUrl(g: Game): string {
   return g.thumbPath ? `hh://thumb/${g.id}` : ''
 }
 
+/** 渲染层图标 URL：有 iconPath（本地从 exe 提取）才走 hh://icon 协议，否则空。 */
+export function iconUrl(g: Game): string {
+  return g.iconPath ? `hh://icon/${g.id}` : ''
+}
+
 // ---------------------------------------------------------------- 批量刮削（P1-1）
 
 /**
@@ -677,11 +684,11 @@ export async function startBatchScrape(
       batchScrape.current = query
       let results: ScrapeCandidate[] = []
       try {
-        results = (await window.hh.scrapeSearch(query)).results
+        results = (await window.hh.scrapeSearch(query, g.developer)).results
         // 精简标题搜不到时回退原名再搜一次：VNDB 常收录原始/完整版名
         if (!results.length && g.rawTitle && g.rawTitle !== g.title) {
           batchScrape.current = g.rawTitle
-          results = (await window.hh.scrapeSearch(g.rawTitle)).results
+          results = (await window.hh.scrapeSearch(g.rawTitle, g.developer)).results
         }
       } catch {
         batchScrape.failed += 1
