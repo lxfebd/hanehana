@@ -8,6 +8,7 @@ import { reactive, computed, ref, shallowRef, watch } from 'vue'
 import type { Game, GameProcessState, OverviewStats, ScrapeCandidate } from '../../shared/types'
 // ESM 之谜：带 .js 的 specifier，TS 映射回 .ts（与 tests 同一约定）
 import { isLaunching, isRunning } from '../../shared/processState.js'
+import { pickAuto, scoreCandidate } from '../../shared/scrapeScore.js'
 
 export const library = reactive({
   games: [] as Game[],
@@ -574,6 +575,12 @@ export async function runSearch(query: string): Promise<void> {
       })
     // 等三源都结束才收起 loading：期间快源结果已上屏，慢源超时只补充警告
     await Promise.all([vndbP, bgmP, ymgalP])
+    // 三源结果按目标游戏打分降序：站内顺序（VNDB 默认 id 升序）不可信，
+    // 实测搜 eden 本体排第 6、YMGal 外传 chineseName 撞本体排第一（2026-10-31）。
+    const target = library.games.find((g) => g.id === library.scrapeTargetId)
+    if (target) {
+      library.scrapeResults.sort((a, b) => scoreCandidate(target, b) - scoreCandidate(target, a))
+    }
   } catch (e) {
     library.scrapeWarnings = [e instanceof Error ? e.message : String(e)]
   } finally {
@@ -634,40 +641,6 @@ export const batchScrape = reactive({
   current: '',
 })
 
-/**
- * 标题归一：小写 + 去空白/标点，保留 Unicode 字母数字。
- * 不能用 `\W`：JS 默认 `\W`=`[^A-Za-z0-9_]`，会把中文/日文标题整个剥成空串。
- */
-function normTitle(s: string): string {
-  return s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '')
-}
-
-/** 单候选对游戏标题的置信分（0–100）。≥80 视为可后台自动应用。 */
-function scoreCandidate(g: Game, c: ScrapeCandidate): number {
-  const gt = normTitle(g.rawTitle || g.title)
-  if (!gt) return 0
-  const forms = [c.title, c.titleNative, ...(c.aliases ?? [])].filter((x): x is string => !!x).map(normTitle)
-  if (!forms.length) return 10
-  if (forms.some((f) => f === gt)) return 100
-  if (forms.some((f) => f.includes(gt) || gt.includes(f))) return 75
-  // 公共前缀 ≥ 半长：目录名常带章节号，仍可对齐
-  const hit = forms.some((f) => {
-    const n = Math.min(f.length, gt.length, Math.ceil(gt.length / 2))
-    return n >= 3 && f.slice(0, n) === gt.slice(0, n)
-  })
-  return hit ? 55 : 10
-}
-
-/** 从搜索结果选自动应用项；null = 冲突待确认。 */
-function pickAuto(g: Game, results: ScrapeCandidate[]): ScrapeCandidate | null {
-  if (!results.length) return null
-  const scored = results.map((c) => ({ c, s: scoreCandidate(g, c) })).sort((a, b) => b.s - a.s)
-  const best = scored[0]!
-  if (best.s < 80) return null
-  // 第二名同分 → 真冲突，不猜
-  if (scored[1] && scored[1].s === best.s) return null
-  return best.c
-}
 
 /**
  * 批量刮削：对 selection 串行跑 现有 scrapeSearch → scrapeApply 管线。

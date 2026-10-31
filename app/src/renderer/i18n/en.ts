@@ -461,6 +461,7 @@ export const en: Record<I18nKey, string> = {
   sd_searching: 'Searching…',
   sd_empty: 'No results. Try another keyword, or fill in manually.',
   sd_apply: 'Apply selected',
+  sd_best: 'Best match',
   // ---- Steam import ----
   si_found: 'Found {n} Steam games not in the library',
   si_none: 'No new Steam games found (already imported are skipped)',

@@ -147,7 +147,8 @@ export async function searchSource(
   }
   const search = source === 'vndb' ? searchVndb : source === 'ymgal' ? searchYmgal : searchBangumi
   const ladder = queryLadder(title)
-  for (const q of ladder) {
+  for (let step = 0; step < ladder.length; step++) {
+    const q = ladder[step] as string;
     try {
       // 单源硬超时：慢源（Bangumi 固定 12s）在这里被裁到 SEARCH_SOURCE_TIMEOUT，
       // 整条词梯最多拖这么久，三源并行时快源照常先回。
@@ -155,7 +156,12 @@ export async function searchSource(
       // 通了就清失败计数（哪怕这条词 0 结果——源是活的，只是这个词没命中）
       breakerSuccess(source)
       if (results.length) {
-        for (const c of results) rememberCoverHost(c.coverUrl)
+        // 命中的是清洗梯第 step 档（0 = 原词）：放宽词命中的候选带上 queryStep，
+        // 渲染层打分封顶 75——裁词易撞同名作，不能和原词命中平权（2026-10-31 实测）。
+        for (const c of results) {
+          c.queryStep = step
+          rememberCoverHost(c.coverUrl)
+        }
         return { results, warnings: [] }
       }
       // 0 结果：源活着但这个词搜不到，放宽到下一个更干净的候选词
@@ -217,7 +223,9 @@ async function searchVndb(title: string): Promise<ScrapeCandidate[]> {
     fields:
       'id,title,alttitle,released,rating,image.url,description,tags.name,developers.name,relations.relation,relations.title,aliases,length_minutes',
     page: 1,
-    results: 8,
+    // 8 条太少：默认按 id 升序，本体常排第 6+（实测搜 eden 本体 v1286 排第 6）。
+    // 扩到 20 条给渲染层做矛盾淘汰 + 跨源互验。
+    results: 20,
   }
   const j = (await fetchJson('https://api.vndb.org/kana/vn', {
     method: 'POST',

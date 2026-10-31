@@ -467,6 +467,7 @@ export const zh = {
   sd_searching: '搜索中…',
   sd_empty: '没有结果。换关键词试试，或直接手动填写。',
   sd_apply: '应用选中',
+  sd_best: '推荐',
   // ---- Steam 导入 ----
   si_found: '找到 {n} 款未入库的 Steam 游戏',
   si_none: '未找到新的 Steam 游戏（已导入过的会自动跳过）',

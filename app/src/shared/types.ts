@@ -245,6 +245,8 @@ export interface ScrapeCandidate {
   aliases?: string[]
   /** 平均通关时长（分钟） */
   lengthMinutes?: number
+  /** 命中清洗梯的序号：0 = 原词命中，>0 = 放宽词命中（分数封顶 75，见 scrapeScore） */
+  queryStep?: number
 }
 
 /**

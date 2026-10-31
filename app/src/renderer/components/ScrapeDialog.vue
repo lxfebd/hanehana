@@ -4,6 +4,7 @@ import { Spin } from 'ant-design-vue'
 import DialogShell from './DialogShell.vue'
 import { Star } from 'lucide-vue-next'
 import { applyScrapeResult, library, runSearch } from '../stores/library'
+import { bestCandidateKey } from '../../shared/scrapeScore.js'
 import type { ScrapeCandidate } from '../../shared/types'
 import { tokens } from '../design/tokens'
 import { t } from '../i18n'
@@ -23,6 +24,11 @@ const selected = ref<ScrapeCandidate | null>(null)
 
 const selectedKey = computed(() => (selected.value ? `${selected.value.provider}::${selected.value.id}` : ''))
 
+/** 最高分候选的 key（provider::id），用于置顶高亮「推荐」徽章；同分冲突时返回空串不误导 */
+const bestKey = computed(() => {
+  const g = library.games.find((it) => it.id === library.scrapeTargetId)
+  return g ? bestCandidateKey(g, library.scrapeResults) : ''
+})
 watch(open, (v) => {
   if (v) {
     query.value = library.scrapeQuery
@@ -77,7 +83,7 @@ async function apply(): Promise<void> {
           v-for="r in library.scrapeResults"
           :key="r.provider + r.id"
           class="result-card"
-          :class="{ picked: selectedKey === r.provider + '::' + r.id }"
+          :class="{ picked: selectedKey === r.provider + '::' + r.id, best: bestKey === r.provider + '::' + r.id }"
           @click="pick(r)"
         >
           <div class="r-cover">
@@ -87,6 +93,7 @@ async function apply(): Promise<void> {
           <div class="r-info">
             <div class="r-title">
               {{ r.title }}
+              <span v-if="bestKey === r.provider + '::' + r.id" class="r-best">{{ t('sd_best') }}</span>
               <span v-if="r.titleNative" class="r-native">{{ r.titleNative }}</span>
             </div>
             <div class="r-meta">
@@ -219,6 +226,19 @@ async function apply(): Promise<void> {
   border-color: var(--hh-color-accent);
   box-shadow: 0 0 0 2px var(--hh-color-accent-ring);
   background: var(--hh-color-accent-card-bg);
+}
+/* 最高分候选：细边框 + 推荐徽章，不用整卡加粗，避免和 picked 态打架 */
+.result-card.best {
+  border-color: var(--hh-color-accent-ring);
+}
+.r-best {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--hh-color-accent);
+  background: var(--hh-color-accent-soft);
+  border: 1px solid var(--hh-color-accent-ring);
+  padding: 1px 7px;
+  border-radius: var(--hh-radius-xs);
 }
 .r-cover {
   width: 44px;
