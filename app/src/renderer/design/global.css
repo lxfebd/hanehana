@@ -46,7 +46,9 @@ body,
   height: var(--hh-layout-titlebar-h);
   display: flex;
   align-items: center;
-  padding: 0 var(--hh-space-x3) 0 var(--hh-space-x4);
+  /* 右侧给原生 titleBarOverlay（最小化/最大化/关闭，宽 138px）让位—— */
+  /* 不然自家圆钮会压到系统关闭按钮上（见 overlayRight token） */
+  padding: 0 calc(var(--hh-layout-overlay-right) + var(--hh-space-x3)) 0 var(--hh-space-x4);
   user-select: none;
 }
 .titlebar .no-drag,
