@@ -2,6 +2,53 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [Unreleased]
+
+### 修复
+
+- **标题栏右侧给原生窗口按钮让位**（`design/global.css`）：自绘标题栏的右内边距原先是固定值，设置钮压在 Windows 原生 titleBarOverlay（最小化/最大化/关闭，宽 138px）上。改成 `calc(var(--hh-layout-overlay-right) + var(--hh-space-x3))`，让位宽度跟着 overlay 走，设置钮与关闭钮不再重叠。
+- **删侧栏他人署名**（`NavSidebar.vue`）：移除侧栏底部的「© huoshen80」署名与配套样式——那是从基准图抄来的他人署名，不该出现在本项目 UI 里。
+- **KPI 值底部对齐**（`HomeView.vue`）：`.hk-val` 补 `margin-top: auto`，把四格 KPI 的数值压到等高 cell 底部，数字基线对齐（末格标签比其余高一截时尤其明显）。
+- **Continue 封面左缘渐变融底**（`LibraryHero.vue`）：hero 封面去掉垫底色与投影，图片左缘 24% 渐隐到透明，直接融进后面的模糊底，不再像「贴了一张硬矩形」；无封面时的大字占位仍保留面板底色与描边。渐隐色标走新增的 `--hh-mask-opaque` token（真值在 `design/tokens.ts`）——组件内裸 hex 是硬闸，`#000` 字面量会让 `regression:static` 变红。
+
+### 验证
+
+- typecheck 0；lint 0 problem；build OK；npm test 106 pass / 0 fail；regression:static 8+32+23 PASS（`REG_STATIC OK`）。
+
+## [0.2.21] - 2026-10-31
+
+> 已打 `v0.2.21` tag 并推送到 origin，GitHub Actions 按 tag 构建安装包。
+
+### 新增
+
+- **本地 exe 图标提取**（`main/localIcon.ts` + `Game.iconPath`）：Windows 下用 Electron `app.getFileIcon()` 读 exe 内嵌图标，转 PNG 存到 `userData/covers/{id}.png` 并写回 `Game.iconPath`；扫描入库 / 手动添加 / 启动后自动回填（`backfillLocalIcons`，setImmediate 起步不挡首帧）。渲染层走新的 `hh://icon/{id}` 协议（`thumbs.handleHhProtocol` 闸住非图片缓存路径），封面墙没有刮削封面时用本地图标兜底。exe 无内嵌图标或非 Windows 平台静默跳过，UI 退回占位字母。
+- **VNDB 刮削三增强**（`main/scraper.ts`）：① `searchVndb` 加 `sort=searchrank`，命中排序贴合 VNDB 搜索排名；② `image.dims / image.sexual / image.violence / image.votecount` 接入候选软信号——露骨封面 −15 分、高评票 +min(6, log10) 分，只调排序不越自动档；③ 已知开发商时先查 `/kana/producer` 拿稳定的 producer id（`pickProducerId` 纯函数 + 进程内缓存），再套嵌套 `developer` 过滤器滤掉同厂不同作。
+
+### 修复
+
+- **选候选加矛盾淘汰 / 梯级降权 / 跨源互验**（`shared/scrapeScore.ts`）：「封面牛头不对马嘴」的根因是选候选选错，不是下载链路——旧 `pickAuto` 只认标题完全相等且唯一最高分，不校验开发商与年份，也不要求跨源确认。现在：候选与已有元数据矛盾（年份相差 >1 年，或双方开发商都非空且归一化不等）直接 0 分淘汰；清洗梯放宽词命中的候选（`queryStep>0`）封顶 75，永远够不到自动应用档（≥80）；自动应用还要求同「主标题 + 开发商」key 在 ≥2 个源出现（跨源互验），同名不同社不互相壮胆。开发商 / 年份一致只作 +3 微调，不升档。纯逻辑零 vue 依赖，可被 node --test 直接单测。
+- **nekogal 分卷帖子不再只下 part1**（`main/sites/nekogal.ts`）：详情页改为收集全部下载按钮而不是只取第一个，分卷作品能拿到全部卷。
+
+### 验证
+
+- scrapeScore 单测 15 例（新增 `pickProducerId` 纯函数 3 例）。
+
+## [0.2.20] - 2026-10-31
+
+> 0.2.20 只在 `package.json` 存在过版本号，**未单独打 tag 发版**，其内容随 0.2.21 一并发布。
+
+### 变更
+
+- **`DetailPanel.vue` 拆分为 1 外壳 + 5 子组件**：1885 行单文件按区块拆开，外壳只留双形态切换 / 上下部翻页 / 快捷键 / 开目录 / 复制信息；`DetailBanner.vue`（横幅 hero + 收藏 chip）、`DetailMetaRow.vue`（元数据行，开发商点选 emit `filter` 交父面板调 `filterByMeta`）、`DetailTags.vue`（标签区，搜索与展开状态内聚，切游戏自行复位）、`DetailTabs.vue`（游玩数据 / 简介 / 编辑 / 存档四个 pane）、`DetailSimilar.vue`（相似游戏推荐）、`detailShared.ts`（`fmtPlay` / `fmtDate` / `lengthTextOf` 共用工具）。整页态穿透子组件的样式由 `scoped` 改 `:deep()`，视觉与行为语义不变。
+
+### 新增
+
+- **nightly 视觉 / 交互回归闸**（`.github/workflows/visual.yml`）：CDP 起真实 Electron 窗口跑各 `verify_*` / `ui_walkthrough_*`，每天 UTC 18:00（北京时间 02:00）定时 + 手动兜底。不进 PR 主链路——每条闸都要 build + 起真实窗口（分钟级、吃 CPU），runner 上偶发抖动（前台窗口被抢、端口占用、字体度量差异）会误伤合入；红 = 视觉 / 交互回归，人工判读，不阻断合入。
+
+### 验证
+
+- typecheck / lint / test（88 例）全绿。
+
 ## [0.2.19] - 2026-10-25
 
 ### 变更
