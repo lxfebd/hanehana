@@ -39,6 +39,12 @@ const base = {
     rowHover: '0 2px 8px rgba(0,0,0,0.07)',
     float: '0 2px 4px rgba(0,0,0,0.08), 0 8px 16px rgba(0,0,0,0.08), 0 24px 48px rgba(0,0,0,0.10)',
   },
+  /**
+   * 遮罩真值：CSS mask 渐变需要一个「完全不透明」的色标当终点。
+   * mask 默认按 alpha 通道取样、色相无关，所以固定黑 + alpha=1 就够；
+   * 组件只准写 var(--hh-mask-opaque)——裸 hex/rgb 字面量是硬闸，色真值只在本文件。
+   */
+  mask: { opaque: 'rgba(0,0,0,1)' },
   motion: {
     fast: '83ms',
     med: '167ms',
@@ -848,6 +854,7 @@ export const tokens = {
   radius: base.radius,
   space: base.space,
   shadow: base.shadow,
+  mask: base.mask,
   motion: base.motion,
   type: base.type,
   layout: base.layout,

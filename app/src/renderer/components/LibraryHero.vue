@@ -578,9 +578,10 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
   height: 100%;
   object-fit: cover;
   display: block;
-  /* 左缘 24% 渐隐到透明，与卡片背景自然过渡 */
-  -webkit-mask-image: linear-gradient(to right, transparent 0, #000 24%);
-  mask-image: linear-gradient(to right, transparent 0, #000 24%);
+  /* 左缘 24% 渐隐到透明，与卡片背景自然过渡。
+     色标走 --hh-mask-opaque（tokens.ts 真值）：mask 按 alpha 取样，色相无关 */
+  -webkit-mask-image: linear-gradient(to right, transparent 0, var(--hh-mask-opaque) 24%);
+  mask-image: linear-gradient(to right, transparent 0, var(--hh-mask-opaque) 24%);
 }
 /* NSFW：与封面墙同口径——模糊压住，点击临时揭示（chip 缩略图同理） */
 .hero-cover img.nsfw-blur,
