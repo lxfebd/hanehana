@@ -55,6 +55,9 @@ app/electron.vite.config.*.mjs
 # 审计/排查中间产物：探针扫描的 JSON 落盘（可随时重生，不属于源码）
 app/.audit*.json
 app/.prog*.json
+# 审计期 Electron 复现数据目录（如 app/.audit-data2/）与 pid 文件（可再生）
+app/.*-data2/
+app/.audit-pid
 
 # 用户指定的「不上传」夹：临时脚本 / 基准图 / 取证产物，一律不入库
 不要上传*/
