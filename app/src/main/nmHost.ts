@@ -16,7 +16,7 @@
  * stdout 是中继私有通道：本模式下所有日志一律走 stderr。
  */
 import { spawn } from 'node:child_process'
-import { createReadStream } from 'node:fs'
+import { createReadStream, type ReadStream } from 'node:fs'
 import { app } from 'electron'
 import {
   NM_EXTENSION_ID,
@@ -120,7 +120,7 @@ export function runNmHost(detection: NmHostDetection): void {
 
   if (!detection.trusted) {
     // 不是我们的扩展：明确拒掉并退出，绝不能默默开一个窗口出来。
-    void writeFrame({ ok: false, error: '这个扩展没有投递权限' }).then(() => app.exit(0))
+    void writeFrame({ ok: false, error: '这个扩展没有投递权限' }).then(() => exitHost(0))
     return
   }
 
@@ -130,16 +130,25 @@ export function runNmHost(detection: NmHostDetection): void {
   let lastWrite: Promise<void> = Promise.resolve()
   /** 消息处理链：保证一条接一条地应答。 */
   let chain: Promise<void> = Promise.resolve()
+  /** 还没应答完的消息数：用来判断「可以收工退出了」。 */
+  let inflight = 0
 
   const shutdown = (): void => {
     if (finished) return
     finished = true
-    void lastWrite.then(() => app.exit(0))
+    void lastWrite.then(
+      () => exitHost(0, stdin),
+      (e) => {
+        console.error('[nm] 最后一帧写失败：', e)
+        exitHost(1, stdin)
+      },
+    )
   }
 
   const stdin = openHostStdin()
-  stdin.on('data', (chunk: Buffer) => {
-    const result = decoder.push(chunk)
+  stdin.on('data', (chunk: string | Buffer) => {
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+    const result = decoder.push(bytes)
     if (!result.ok) {
       lastWrite = writeFrame({ ok: false, error: result.error })
       shutdown()
@@ -147,7 +156,17 @@ export function runNmHost(detection: NmHostDetection): void {
     }
     for (const raw of result.messages) {
       // 串行处理：一条消息的应答没写完，不接下一条（stdout 上帧不能交叠）。
-      chain = chain.then(() => handleMessage(raw, detection.origin))
+      inflight += 1
+      chain = chain
+        .then(() => handleMessage(raw, detection.origin))
+        .finally(() => {
+          inflight -= 1
+          // 应答写完就退出：Chrome 每次 sendNativeMessage 都是新拉一个宿主，
+          // 拿到应答后不会主动关管道（真 Chrome 实测：宿主会一直挂着），
+          // 不自己退就是每投递一次漏一套 Electron 进程（5 个进程）。
+          // 这里退的是「最后一条消息应答完」的时刻，多条消息排队时不会提前退。
+          if (inflight === 0) shutdown()
+        })
     }
     lastWrite = chain
   })
@@ -169,9 +188,13 @@ export function runNmHost(detection: NmHostDetection): void {
  * 现场完全看不出是哪一环错了（stdout 里连一个协议帧都没有）。
  * 真 stdin 只能按 fd 0 自己开流；这个流是异步的，不会卡住事件循环，
  * 所以桥的应答照常能回来。
+ *
+ * autoClose 必须开着（默认）：应答写完要 destroy() 这个流来退场，
+ * 而只有 autoClose 才会真正把 fd 0 关掉、释放掉 libuv 的句柄——
+ * 否则事件循环里永远挂着这个句柄，进程退不掉（每次投递漏一整套 Electron 进程）。
  */
-function openHostStdin(): NodeJS.ReadableStream {
-  return createReadStream('', { fd: 0, autoClose: false })
+function openHostStdin(): ReadStream {
+  return createReadStream('', { fd: 0 })
 }
 
 /**
@@ -193,6 +216,27 @@ function writeFrame(payload: unknown): Promise<void> {
       resolve()
     }
   })
+}
+
+/**
+ * 宿主退场。
+ *
+ * 坑（真 Chrome 实测踩出来的）：宿主模式（不开窗口、不等 app.whenReady）里
+ * **app.exit() 退不掉**——它把 Electron 的消息循环停掉，进程既不退（fd 0 的读流
+ * 还挂着，libuv 认为还有活干）又不再跑任何回调（后面的代码全都不执行，
+ * 连 process.exit 都轮不到执行）。
+ *
+ * 真正的退场办法是应答写完之后直接 `process.exit(0)`：数据已经交给内核管道，
+ * 进程先走数据也不丢。实测退出码 0，Electron 的子进程也跟着收干净，
+ * 一次投递不残留任何进程。
+ */
+function exitHost(code: number, stdin?: ReadStream | null): void {
+  try {
+    stdin?.destroy()
+  } catch (e) {
+    console.error('[nm] 断 stdin 失败：', e)
+  }
+  process.exit(code)
 }
 
 async function handleMessage(raw: unknown, origin: string): Promise<void> {

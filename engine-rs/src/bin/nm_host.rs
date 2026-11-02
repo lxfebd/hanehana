@@ -15,6 +15,11 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
+use std::thread;
+use std::time::{Duration, Instant};
 
 /// 桌面端私有帧的魔数。扫描时靠它对齐：桌面端 stdout 上的其它字节
 /// （Electron 写的 "\r\n" 等）一律跳过，只认带魔数的帧。
@@ -153,6 +158,19 @@ fn locate_desktop() -> Option<PathBuf> {
     None
 }
 
+/// 等写线程结束（最多 timeout）。它一结束，桌面端 stdin 的管子就关闭了，
+/// 桌面端随即读到 EOF。超时就放弃等——后面还有强杀兜底。
+fn wait_writer(writer: &thread::JoinHandle<()>, timeout: Duration) {
+    let deadline = Instant::now() + timeout;
+    while !writer.is_finished() {
+        if Instant::now() >= deadline {
+            eprintln!("[nm-host] 写线程没在时限内结束，桌面端可能收不到 EOF");
+            return;
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
 fn main() {
     std::process::exit(run());
 }
@@ -183,8 +201,11 @@ fn run() -> i32 {
     // 必须删掉 ELECTRON_RUN_AS_NODE：带着它 Electron 会退化成纯 Node 模式，
     // 直接崩在启动阶段，桌面端根本起不来。
     cmd.env_remove("ELECTRON_RUN_AS_NODE");
-    // stdin 直接给桌面端：Chrome 的输入管道由桌面端自己读（native messaging 的请求方向）。
-    cmd.stdin(Stdio::inherit());
+    // stdin 走中继自己的管子（不是直接继承 Chrome 的管道）：
+    // Chrome 读完应答不会关管道，直接继承的话桌面端会一直等 stdin EOF，
+    // 一整套 Electron 进程就常驻在那儿。改由中继掌握管子：应答发完就把
+    // 桌面端这头关掉，桌面端读到 EOF 会干净地退出（Electron 的子进程也跟着收干净）。
+    cmd.stdin(Stdio::piped());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::inherit());
 
@@ -196,7 +217,7 @@ fn run() -> i32 {
             return 1;
         }
     };
-    let mut child_out = match child.stdout.take() {
+    let child_out = match child.stdout.take() {
         Some(s) => s,
         None => {
             eprintln!("[nm-host] 拿不到桌面端 stdout");
@@ -206,46 +227,175 @@ fn run() -> i32 {
         }
     };
 
+    let child_in = match child.stdin.take() {
+        Some(s) => s,
+        None => {
+            eprintln!("[nm-host] 拿不到桌面端 stdin");
+            let _ = child.kill();
+            emit_error_frame("启动桌面端失败");
+            return 1;
+        }
+    };
+
+    // Chrome 的请求字节 → 通道 → 桌面端 stdin。
+    // stop 置位后写线程会退出并关掉桌面端的 stdin（桌面端随即读到 EOF）。
+    let stop = Arc::new(AtomicBool::new(false));
+    let (tx, rx) = mpsc::channel::<Vec<u8>>();
+    {
+        let stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            let mut chrome_in = std::io::stdin();
+            let mut buf = [0u8; 16 * 1024];
+            loop {
+                if stop.load(Ordering::Relaxed) {
+                    break;
+                }
+                match chrome_in.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+    }
+    // 写线程持有桌面端 stdin 的管子：它退出时管子关闭，桌面端随即读到 EOF。
+    // 关键是要**等它真的结束**再往下走——中继自己一退，线程就被带走了，
+    // 管子来不及关，桌面端就永远等不到 EOF（进程常驻）。
+    let writer = {
+        let stop = Arc::clone(&stop);
+        thread::spawn(move || {
+            let mut sink = child_in;
+            loop {
+                match rx.recv_timeout(Duration::from_millis(100)) {
+                    Ok(chunk) => {
+                        if sink.write_all(&chunk).is_err() {
+                            break;
+                        }
+                        let _ = sink.flush();
+                    }
+                    Err(RecvTimeoutError::Timeout) => {
+                        if stop.load(Ordering::Relaxed) {
+                            break;
+                        }
+                    }
+                    Err(RecvTimeoutError::Disconnected) => break,
+                }
+            }
+            // 退出循环 → sink 析构 → 桌面端 stdin 关闭 → 桌面端读到 EOF
+        })
+    };
+
+    // 桌面端的 stdout 单独一个线程读：主线程用**带超时**的收包，
+    // 桌面端要是卡住不回话，主线程还能在时限内强杀它——
+    // 直接在主线程里阻塞读的话，桌面端一卡，中继也跟着卡死，Chrome 那边一直等。
+    let (tx_out, rx_out) = mpsc::channel::<Vec<u8>>();
+    {
+        let mut src = child_out;
+        thread::spawn(move || {
+            let mut buf = [0u8; 64 * 1024];
+            loop {
+                match src.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        if tx_out.send(buf[..n].to_vec()).is_err() {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!("[nm-host] 读桌面端 stdout 失败: {e}");
+                        break;
+                    }
+                }
+            }
+        });
+    }
+
     let mut scanner = FrameScanner::new();
     let mut sent = 0usize;
-    let mut buf = [0u8; 64 * 1024];
+    let mut writer_done = false;
     let mut out = std::io::stdout();
+    // 应答转出去之后，给桌面端留 5 秒自己退；超时就强杀。
+    let mut kill_at: Option<Instant> = None;
     loop {
-        match child_out.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                for payload in scanner.push(&buf[..n]) {
+        match rx_out.recv_timeout(Duration::from_millis(100)) {
+            Ok(chunk) => {
+                for payload in scanner.push(&chunk) {
                     if let Err(e) = write_chrome_frame(&mut out, &payload) {
                         // Chrome 那边断链了：桌面端再写也没用，直接收摊。
                         eprintln!("[nm-host] 写 Chrome 帧失败: {e}");
+                        stop.store(true, Ordering::Relaxed);
                         let _ = child.kill();
                         let _ = child.wait();
                         return 1;
                     }
                     sent += 1;
+                    eprintln!("[nm-host] 应答已转给浏览器（{} 字节）", payload.len());
+                    // 应答已经交到 Chrome 手里了：让桌面端收摊——关掉它的 stdin，
+                    // 它读到 EOF 就自己退（否则每次投递都漏一整套 Electron 进程）。
+                    stop.store(true, Ordering::Relaxed);
+                }
+                if sent > 0 && !writer_done {
+                    // 必须等写线程真的把管子关掉再往下走：桌面端读到 EOF 才会退出，
+                    // 它的 stdout 才会收尾——顺序反了就成了互相等。
+                    wait_writer(&writer, Duration::from_secs(2));
+                    writer_done = true;
+                    eprintln!("[nm-host] 已关闭桌面端 stdin，桌面端应当读到 EOF");
+                    kill_at = Some(Instant::now() + Duration::from_secs(5));
                 }
             }
+            Err(RecvTimeoutError::Timeout) => {
+                if let Some(deadline) = kill_at {
+                    if Instant::now() >= deadline {
+                        eprintln!("[nm-host] 桌面端没在时限内退出，强杀");
+                        let _ = child.kill();
+                        break;
+                    }
+                }
+            }
+            // 桌面端的 stdout 收尾了 → 它退了。
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+    }
+
+    // 等桌面端自己退（它收到 EOF 后会干净地退出）；最多等 5 秒，超时就强杀。
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                eprintln!(
+                    "[nm-host] 桌面端已退出（code={}）",
+                    status.code().unwrap_or(-1)
+                );
+                break;
+            }
+            Ok(None) => {
+                if Instant::now() >= deadline {
+                    eprintln!("[nm-host] 桌面端没在时限内退出，强杀");
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    break;
+                }
+                thread::sleep(Duration::from_millis(50));
+            }
             Err(e) => {
-                eprintln!("[nm-host] 读桌面端 stdout 失败: {e}");
+                eprintln!("[nm-host] 等桌面端退出失败: {e}");
                 break;
             }
         }
     }
 
-    // 桌面端退出后中继退出，退出码跟随桌面端。
-    let code = match child.wait() {
-        Ok(s) => s.code().unwrap_or(1),
-        Err(e) => {
-            eprintln!("[nm-host] 等桌面端退出失败: {e}");
-            1
-        }
-    };
     if sent == 0 {
         // 一个帧都没产出：桌面端多半是启动就崩了。给 Chrome 一个说得清的答复，
         // 而不是让它对着空 stdout 干等。
         emit_error_frame("桌面端未返回应答");
+        return 1;
     }
-    code
+    // 应答已经送达，退出码报 0（桌面端自己的退出码不影响这次调用是否成功）。
+    0
 }
 
 #[cfg(test)]

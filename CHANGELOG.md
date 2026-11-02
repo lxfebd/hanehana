@@ -24,6 +24,7 @@
 
 - **native messaging 宿主读不到 stdin**（`main/nmHost.ts`）：Electron 主进程的 `process.stdin` 是空壳（`fd` 为 `undefined`，连接会立刻 `end`），照常规 Node 写法监听它的 `data`，宿主会在 Chrome 还没递消息之前就退掉，扩展侧只看到「宿主已退出」。改为按 fd 0 自己开流（`createReadStream('', { fd: 0 })`），异步读取不卡事件循环；同时应答写完等写回调再退出，避免 `app.exit()` 截断半截帧。
 - **宿主拉起图形界面时会把自己也带进宿主模式**（`main/nmHost.ts`）：origin 经环境变量传入，排队路径拉起 GUI 时若原样继承，界面进程会以为自己是宿主而不开窗口、转头去读 stdin。拉起前清掉 `HANEHANA_NM_ORIGIN` 与 `ELECTRON_RUN_AS_NODE`。
+- **每次投递都漏一整套宿主进程**（`main/nmHost.ts` + `engine-rs/src/bin/nm_host.rs`）：应答发出去后宿主退不掉，进程树（Electron 主进程 + GPU + utility）常驻。根因是 Electron 宿主模式（不开窗口、不等 `app.whenReady`）的退场方式选错了：`app.exit()` 会把 Electron 的消息循环**停掉**，进程既不退（fd 0 的读流还挂着，libuv 认为还有活干）又不再跑任何回调（连后面的代码都执行不到，于是 `process.exit()` 根本没机会跑）。改为：应答写完且写回调落地后直接 `process.exit(0)`（数据已交给内核管道，先退不丢数据），读流用默认的 `autoClose` 以便 `destroy()` 真正关掉 fd 0、释放句柄。中继侧配套加固：桌面端 stdin 由中继用管道接管（应答转出后**等写线程真的结束**再关管子——中继自己先退会把线程一起带走，管子来不及关，桌面端永远等不到 EOF），桌面端 stdout 改由独立线程读、主线程用带超时的收包，桌面端卡住时中继能在 5 秒内强杀它而不是跟着卡死。
 
 - **标题栏右侧给原生窗口按钮让位**（`design/global.css`）：自绘标题栏的右内边距原先是固定值，设置钮压在 Windows 原生 titleBarOverlay（最小化/最大化/关闭，宽 138px）上。改成 `calc(var(--hh-layout-overlay-right) + var(--hh-space-x3))`，让位宽度跟着 overlay 走，设置钮与关闭钮不再重叠。
 - **删侧栏他人署名**（`NavSidebar.vue`）：移除侧栏底部的「© huoshen80」署名与配套样式——那是从基准图抄来的他人署名，不该出现在本项目 UI 里。
@@ -33,8 +34,9 @@
 ### 验证
 
 - typecheck 0；lint 0 problem；build OK；npm test 130 pass / 0 fail（`nmProtocol` 契约单测 17 例，含新增的「中继私有帧剥掉魔数即 Chrome 帧」；`nmBridge` 回环单测 7 例：令牌不匹配拒、origin 不匹配拒、正常请求通、排队队列读写、关闭后清桥信息文件）；regression:static 8+32+23 PASS（`REG_STATIC OK`）。
-- Rust：`cargo test --locked` 36 passed / 0 failed（原有 29 例 + 宿主中继新增 7 例：正常帧、杂字节前缀、分片到达、魔数跨片、超长帧丢弃、坏 JSON 不转发、Chrome 帧格式）；`cargo build --release --locked` OK（中继产物 327,168 字节）。`cargo fmt --check` 在本仓库**基线**上即为红（`src/checksum.rs:83` 等既有行不合 rustfmt，本项目 house style 是紧凑单行写法），本次新增代码单独过 rustfmt 干净，故未执行全量 `cargo fmt`（会重排无关代码）。
-- **真机端到端**（打包产物实跑，脚本不入库）：自扮一次浏览器——用扩展 origin 当 argv 拉起 `resources/fastdrop-nm-host.exe`，按 Chrome 线协议喂一帧（4 字节小端长度 + JSON），起假桥回应答：**12 项全过**。其中最关键的一条是「stdout 首字节即帧头（无 Electron 启动噪音）」——改造前这里多出 2 个字节 `0d0a`，Chrome 会把长度头读错，整条链路直接错位；改造后 stdout 只有合规帧。桥侧同时验到 origin、token 与 Cookie 透传，非法动作与陌生扩展都在进桥前被拒。
+- Rust：`cargo test --locked` 36 passed / 0 failed（原有 29 例 + 宿主中继新增 7 例：正常帧、杂字节前缀、分片到达、魔数跨片、超长帧丢弃、坏 JSON 不转发、Chrome 帧格式）；`cargo build --release --locked` OK（中继产物 394,752 字节）。`cargo fmt --check` 在本仓库**基线**上即为红（`src/checksum.rs:83` 等既有行不合 rustfmt，本项目 house style 是紧凑单行写法），本次新增代码单独过 rustfmt 干净，故未执行全量 `cargo fmt`（会重排无关代码）。
+- **真机端到端**（打包产物实跑，脚本不入库）：自扮一次浏览器——用扩展 origin 当 argv 拉起 `resources/fastdrop-nm-host.exe`，按 Chrome 线协议喂一帧（4 字节小端长度 + JSON），起假桥回应答：**14 项全过**。其中最关键的一条是「stdout 首字节即帧头（无 Electron 启动噪音）」——改造前这里多出 2 个字节 `0d0a`，Chrome 会把长度头读错，整条链路直接错位；改造后 stdout 只有合规帧。桥侧同时验到 origin、token 与 Cookie 透传，非法动作与陌生扩展都在进桥前被拒。本次补上的两条是「应答送达后中继自己退了（不靠 Chrome 关管道）」与「桌面端宿主没有残留进程」。
+- **真 Chrome 全链路**（Chrome 156.0.8078.74，隔离 profile + `--remote-debugging-port`，经 CDP `Extensions.loadUnpacked` 装扩展，`loadUnpacked` 返回的 ID 与钉死的 `jjoapnhpnedocdkfffpiccdehollooab` 一致）：从扩展弹窗页触发 `chrome.runtime.sendMessage({type:'hn.deliver'})` 真投递，扩展侧收到 `{"ok":true,"status":"engine",...}`，链路走完「扩展 → Chrome → 中继 exe → 桌面端宿主 → 本机桥 → 主应用建任务」全程。投递后 6 秒的进程快照只剩验收用的桌面端自身，**中继与宿主进程树零残留**。另外确证 Chrome 156 已不认 `--load-extension`（加 `--disable-features=DisableLoadExtensionCommandLineSwitch` 也无效），装扩展只能走 CDP `Extensions.loadUnpacked`。
 
 ## [0.2.21] - 2026-10-31
 
