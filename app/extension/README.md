@@ -47,6 +47,9 @@
 
 扩展只是「递纸条的」，真正下载的是 HaneHana 应用。
 第一次使用请在应用设置里完成 native messaging 宿主的注册。
+注册写进注册表的是**宿主中继程序**（`fastdrop-nm-host`，随应用一起装在 `resources/` 下）——
+Chrome 拉起它，它再把消息递给桌面端；这一层存在的意义是让 Chrome 收到的字节流
+只有 native messaging 协议帧（桌面端自己启动时会往 stdout 写噪音，直接对接会错位）。
 应用没运行时链接会先排队，应用下次启动自动接手。
 
 ---

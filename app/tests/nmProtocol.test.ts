@@ -13,8 +13,10 @@ import {
   NM_MAX_CLIENT_MESSAGE,
   NM_MAX_HOST_MESSAGE,
   NM_PROTOCOL_VERSION,
+  NM_RELAY_MAGIC,
   NmFrameDecoder,
   encodeNmFrame,
+  encodeNmRelayFrame,
   nmRequestHeaders,
   validateNmDeliver,
 } from '../src/shared/nmProtocol.js'
@@ -186,4 +188,22 @@ test('NmFrameDecoder: 长度超限与坏 JSON 都报错', () => {
   const junk = Buffer.concat([Buffer.from([3, 0, 0, 0]), Buffer.from('abc', 'utf8')])
   const r2 = d2.push(junk)
   assert.equal(r2.ok, false)
+})
+
+test('encodeNmRelayFrame: 魔数 + 长度 + JSON，剥掉魔数就是 Chrome 帧', () => {
+  // 中继私有帧的布局必须和 Rust 侧宿主中继 exe 逐字节对齐：
+  //   HHNM | 4 字节小端长度 | UTF-8 JSON
+  // 中继把它剥掉魔数后，按 Chrome 的「4 字节小端长度 + JSON」转发。
+  const payload = { ok: true, mode: 'queued' }
+  const frame = encodeNmRelayFrame(payload)
+  assert.equal(frame.subarray(0, 4).toString('ascii'), NM_RELAY_MAGIC)
+  const body = frame.subarray(8)
+  assert.equal(frame.readUInt32LE(4), body.length)
+  assert.deepEqual(JSON.parse(body.toString('utf8')), payload)
+  // 剥掉魔数后应当正好是一帧合法的 Chrome 帧。
+  assert.deepEqual(frame.subarray(4), encodeNmFrame(payload))
+})
+
+test('encodeNmRelayFrame: 超上限抛错（不能悄悄截断）', () => {
+  assert.throws(() => encodeNmRelayFrame({ t: 'x'.repeat(2000) }, 100))
 })

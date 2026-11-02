@@ -69,23 +69,30 @@ export function nmExtensionDir(): string {
 }
 
 /**
- * Chrome 要拉起的那个可执行文件。
+ * Chrome 要拉起的那个可执行文件 = **宿主中继 exe**（fastdrop-nm-host）。
  *
- * 必须是「装完就能双击的那个 exe」——宿主清单没有 args 字段，Chrome 只会在命令行
- * 后面追加 origin，没法把「先跑哪个应用目录」也传进去。所以开发态不能拿 electron.exe
- * 顶（它会去找应用目录而找不到），只能指向打出来的未安装版 exe。
+ * 为什么不让 Chrome 直接拉起本应用（hanehana.exe）：
+ *   1. Electron 在 Windows 启动时会往 stdout 写一个 "\r\n"（原生代码，拦不掉）。
+ *      Chrome 把 stdout 首 4 字节当长度头，多这 2 个字节整条链路就错位——
+ *      扩展那边表现为「通信错误 / 一直转圈」，而且极难定位。
+ *   2. Chrome 只会把 origin 作为命令行第一个参数追加过来，而 Electron 会把
+ *      第一个位置参数当成「要加载的应用路径」，直接拉起会报找不到应用。
+ * 中继 exe 是纯 Rust 小程序：它把 origin 转成环境变量再拉起本应用，
+ * 并把本应用的应答按 Chrome 协议重新封帧转发，自己的 stdout 天然干净。
+ *
+ * 位置：
+ *   打包版 → resources/fastdrop-nm-host.exe（与 fastdrop-engine.exe 同级）
+ *   开发态 → engine-rs/target/release/fastdrop-nm-host.exe
+ *            （需要先 cargo build --release --locked）
  */
 export function nmHostExecutable(): string {
-  if (app.isPackaged) return process.execPath
-  const outRoot = join(app.getAppPath(), 'release')
-  const names = process.platform === 'win32' ? ['win-unpacked'] : ['linux-unpacked', 'mac']
-  for (const dir of names) {
-    for (const exe of ['hanehana.exe', 'hanehana', 'HaneHana.exe', 'HaneHana']) {
-      const p = join(outRoot, dir, exe)
-      if (existsSync(p)) return p
-    }
+  if (app.isPackaged) {
+    const p = join(process.resourcesPath, 'fastdrop-nm-host.exe')
+    return existsSync(p) ? p : ''
   }
-  return ''
+  const repoRoot = join(app.getAppPath(), '..')
+  const p = join(repoRoot, 'engine-rs', 'target', 'release', 'fastdrop-nm-host.exe')
+  return existsSync(p) ? p : ''
 }
 
 /** 宿主清单内容。path 指向我们自己，allowed_origins 钉死扩展 ID。 */
@@ -142,7 +149,7 @@ export function writeNmManifest(): { ok: boolean; path: string; error?: string }
     return {
       ok: false,
       path: nmHostManifestPath(),
-      error: '找不到可用的宿主程序：请先运行 npm run dist:dir 生成打包版（开发态无法直接用 electron.exe 当宿主）',
+      error: '找不到宿主中继程序（fastdrop-nm-host）：打包版需 npm run dist:dir，开发态需先在 engine-rs 跑 cargo build --release --locked',
     }
   }
   const dir = join(dataDir(), 'native-messaging')

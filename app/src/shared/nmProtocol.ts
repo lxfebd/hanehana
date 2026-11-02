@@ -198,6 +198,28 @@ export function encodeNmFrame(payload: unknown, maxBytes = NM_MAX_HOST_MESSAGE):
   return frame
 }
 
+/**
+ * 中继私有帧的魔数（桌面端 → 宿主中继 exe）。
+ *
+ * 为什么要有这层：桌面端是 Electron 应用，它在 Windows 上启动时会往 stdout 写
+ * 一个 "\r\n"（原生代码，JS 里拦不掉）。Chrome 把 stdout 的**首 4 字节**当长度头，
+ * 多出来的 2 个字节会让整条链路错位——扩展那边表现为「通信错误 / 一直转圈」。
+ * 所以桌面端不直接对 Chrome 说话，而是先把应答包成带魔数的私有帧，
+ * 由宿主中继 exe 剥掉魔数、按 Chrome 协议重新封好再转发。
+ * 中继 exe 的 stdout 没有任何 Electron 噪音，天然干净。
+ */
+export const NM_RELAY_MAGIC = 'HHNM'
+
+/** 编一帧中继私有帧：魔数 + 4 字节小端长度 + UTF-8 JSON。 */
+export function encodeNmRelayFrame(payload: unknown, maxBytes = NM_MAX_HOST_MESSAGE): Buffer {
+  const json = Buffer.from(JSON.stringify(payload), 'utf8')
+  if (json.length > maxBytes) throw new Error(`消息过大（${json.length} 字节）`)
+  const head = Buffer.allocUnsafe(8)
+  head.write(NM_RELAY_MAGIC, 0, 4, 'ascii')
+  head.writeUInt32LE(json.length, 4)
+  return Buffer.concat([head, json])
+}
+
 /** 解帧结果。协议层出错时整条连接都得弃掉——长度前缀错位后没有补救办法。 */
 export type NmDecodeResult =
   | { ok: true; messages: unknown[] }

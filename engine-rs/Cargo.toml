@@ -7,6 +7,12 @@ edition = "2021"
 name = "fastdrop-engine"
 path = "src/main.rs"
 
+# Chrome native messaging 的宿主中继：Chrome 启动它，由它把桌面端的私有帧
+# 转成 Chrome 认的原生消息帧（Electron 会在 stdout 上写 "\r\n"，Chrome 不吃）。
+[[bin]]
+name = "fastdrop-nm-host"
+path = "src/bin/nm_host.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

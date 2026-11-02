@@ -1,24 +1,27 @@
 /**
- * native messaging 宿主模式：Chrome 把我们这个 exe 当成「宿主进程」拉起来时的行为。
+ * native messaging 宿主模式：桌面端被当成「宿主进程」拉起来时的行为。
  *
- * 触发方式：Chrome 启动宿主时，命令行第一个参数是调用方 origin
- * （chrome-extension://<扩展ID>/），Windows 还会追加 --parent-window=<句柄>。
- * 所以判断「我现在是不是被当成宿主拉起来的」不靠我们自己加的开关——
- * 开关 Chrome 没法传（宿主清单没有 args 字段），只能认 origin。
+ * 分工（为什么不是 Chrome 直接拉起本应用）：
+ *   Chrome → 宿主中继 exe（fastdrop-nm-host，Rust 小程序）→ 本进程（Electron）
+ * 中继存在的唯一理由是 **stdout 干净**：Electron 在 Windows 启动时会往 stdout 写
+ * 一个 "\r\n"（原生代码，JS 里拦不掉），而 Chrome 把 stdout 首 4 字节当长度头，
+ * 多 2 个字节整条链路就错位。中继的 stdout 没有 Electron 噪音。
+ *
+ * 触发方式：宿主中继把调用方 origin 通过环境变量 HANEHANA_NM_ORIGIN 传进来，
+ * 本进程据此判断「我现在是不是被当成宿主拉起来的」。
  *
  * 宿主模式下这个进程**不开窗口**：它只做一件事——读 stdin 上的协议帧、
  * 把投递请求转给正在运行的主应用（见 nmBridge）、把结果写回 stdout，然后退出。
  *
- * stdout 是协议通道：Chrome 按「4 字节小端长度 + JSON」切分收到的字节，
- * 任何一行多余日志都会让 Chrome 把后面的内容当成长度/正文解析，表现为
- * 「扩展一直转圈或报通信错误」。所以本模式下所有日志一律走 stderr。
+ * stdout 是中继私有通道：本模式下所有日志一律走 stderr。
  */
 import { spawn } from 'node:child_process'
+import { createReadStream } from 'node:fs'
 import { app } from 'electron'
 import {
   NM_EXTENSION_ID,
   NmFrameDecoder,
-  encodeNmFrame,
+  encodeNmRelayFrame,
   validateNmDeliver,
   type NmDeliverResponse,
 } from '../shared/nmProtocol'
@@ -39,16 +42,37 @@ export interface NmHostDetection {
  *   moz-extension://<uuid>/             —— Firefox（清单格式一样，但本项目只保证 Chromium 系可用）
  * 认到 Firefox 的 origin 也返回 trusted=false：Firefox 会把宿主名映射到自己的
  * 清单路径，行为与 Chrome 不同，这里不做承诺。
+ *
+ * 正常路径是**环境变量**（HANEHANA_NM_ORIGIN）：Chrome 只把 origin 作为命令行
+ * 第一个参数追加给宿主 exe，而 Electron 会把第一个位置参数当成「要加载的应用路径」
+ * ——直接拿 Electron 当宿主，这条路走不通。宿主中继 exe 会把 origin 转成环境变量
+ * 再拉起本进程（见 nmHostInstall.ts 里的中继说明）。命令行那条保留下来，
+ * 是为了让人能手工带 origin 启动本进程做调试。
  */
-export function detectNmHostLaunch(argv: string[]): NmHostDetection | null {
+export function detectNmHostLaunch(
+  argv: string[],
+  env: NodeJS.ProcessEnv = process.env,
+): NmHostDetection | null {
+  const fromEnv = env.HANEHANA_NM_ORIGIN
+  if (fromEnv) {
+    const detected = detectOrigin(fromEnv)
+    if (detected) return detected
+  }
   for (const arg of argv) {
-    const m = /^chrome-extension:\/\/([a-p]{32})\/$/.exec(arg)
-    if (m) {
-      return { origin: arg, trusted: m[1] === NM_EXTENSION_ID }
-    }
-    if (/^moz-extension:\/\/[0-9a-f-]{36}\/$/.test(arg)) {
-      return { origin: arg, trusted: false }
-    }
+    const detected = detectOrigin(arg)
+    if (detected) return detected
+  }
+  return null
+}
+
+/** 认一个 origin 字符串；形状不对就当没这个 origin。 */
+function detectOrigin(arg: string): NmHostDetection | null {
+  const m = /^chrome-extension:\/\/([a-p]{32})\/$/.exec(arg)
+  if (m) {
+    return { origin: arg, trusted: m[1] === NM_EXTENSION_ID }
+  }
+  if (/^moz-extension:\/\/[0-9a-f-]{36}\/$/.test(arg)) {
+    return { origin: arg, trusted: false }
   }
   return null
 }
@@ -65,14 +89,6 @@ function redirectStdoutToStderr(): void {
   Object.assign(console, { log: toErr, info: toErr, debug: toErr })
 }
 
-function writeFrame(payload: unknown): void {
-  try {
-    process.stdout.write(encodeNmFrame(payload))
-  } catch (e) {
-    console.error('[nm] 写应答失败：', e)
-  }
-}
-
 /**
  * 拉起图形界面（应用没在运行时）。
  *
@@ -82,7 +98,14 @@ function writeFrame(payload: unknown): void {
 function launchGui(): void {
   try {
     const args = app.isPackaged ? [] : [app.getAppPath()]
-    const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore' })
+    // 环境变量必须清干净再拉：
+    //   HANEHANA_NM_ORIGIN —— 留着它，新起的图形界面会以为自己是宿主进程，
+    //     于是不开窗口、转头去读 stdin，界面永远出不来。
+    //   ELECTRON_RUN_AS_NODE —— 留着它，Electron 会退化成纯 Node 模式直接崩。
+    const env = { ...process.env }
+    delete env.HANEHANA_NM_ORIGIN
+    delete env.ELECTRON_RUN_AS_NODE
+    const child = spawn(process.execPath, args, { detached: true, stdio: 'ignore', env })
     child.unref()
   } catch (e) {
     console.error('[nm] 拉起界面失败：', e)
@@ -97,49 +120,92 @@ export function runNmHost(detection: NmHostDetection): void {
 
   if (!detection.trusted) {
     // 不是我们的扩展：明确拒掉并退出，绝不能默默开一个窗口出来。
-    writeFrame({ ok: false, error: '这个扩展没有投递权限' })
-    setTimeout(() => app.exit(0), 50)
+    void writeFrame({ ok: false, error: '这个扩展没有投递权限' }).then(() => app.exit(0))
     return
   }
 
   const decoder = new NmFrameDecoder()
   let finished = false
+  /** 最近一次应答的落盘进度：退出前必须等它写完，否则半截帧 = Chrome 侧通信错误。 */
+  let lastWrite: Promise<void> = Promise.resolve()
+  /** 消息处理链：保证一条接一条地应答。 */
+  let chain: Promise<void> = Promise.resolve()
 
   const shutdown = (): void => {
     if (finished) return
     finished = true
-    app.exit(0)
+    void lastWrite.then(() => app.exit(0))
   }
 
-  process.stdin.on('data', (chunk: Buffer) => {
+  const stdin = openHostStdin()
+  stdin.on('data', (chunk: Buffer) => {
     const result = decoder.push(chunk)
     if (!result.ok) {
-      writeFrame({ ok: false, error: result.error })
+      lastWrite = writeFrame({ ok: false, error: result.error })
       shutdown()
       return
     }
     for (const raw of result.messages) {
-      void handleMessage(raw, detection.origin)
+      // 串行处理：一条消息的应答没写完，不接下一条（stdout 上帧不能交叠）。
+      chain = chain.then(() => handleMessage(raw, detection.origin))
     }
+    lastWrite = chain
   })
 
-  process.stdin.on('end', shutdown)
-  process.stdin.on('close', shutdown)
-  process.stdin.on('error', shutdown)
-  process.stdin.resume()
+  stdin.on('end', shutdown)
+  stdin.on('close', shutdown)
+  stdin.on('error', (e) => {
+    console.error('[nm] 读 stdin 出错：', e)
+    shutdown()
+  })
+}
+
+/**
+ * 打开真正的 stdin。
+ *
+ * 坑（端到端实测踩出来的）：Electron 主进程的 `process.stdin` 是个**空壳**——
+ * `fd` 是 undefined，而且连接会立刻 end。照着常规 Node 写法监听它的 'data'，
+ * 宿主会在 Chrome 还没递消息之前就退掉，扩展那边只看到「宿主已退出」，
+ * 现场完全看不出是哪一环错了（stdout 里连一个协议帧都没有）。
+ * 真 stdin 只能按 fd 0 自己开流；这个流是异步的，不会卡住事件循环，
+ * 所以桥的应答照常能回来。
+ */
+function openHostStdin(): NodeJS.ReadableStream {
+  return createReadStream('', { fd: 0, autoClose: false })
+}
+
+/**
+ * 写一帧应答。
+ *
+ * stdout 是**中继私有通道**，不是直接给 Chrome 的：桌面端写的是
+ * 「魔数 + 长度 + JSON」（见 shared/nmProtocol.ts 的 NM_RELAY_MAGIC），
+ * 宿主中继 exe 剥掉魔数、按 Chrome 协议重新封帧后才转发给 Chrome。
+ * 这样 Electron 启动时写进 stdout 的 "\r\n" 就碰不到 Chrome 的协议车道。
+ *
+ * 写完等回调（数据已交给内核管道）再允许退出，否则 app.exit() 会截断半截帧。
+ */
+function writeFrame(payload: unknown): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      process.stdout.write(encodeNmRelayFrame(payload), () => resolve())
+    } catch (e) {
+      console.error('[nm] 写应答失败：', e)
+      resolve()
+    }
+  })
 }
 
 async function handleMessage(raw: unknown, origin: string): Promise<void> {
   const checked = validateNmDeliver(raw)
   if (!checked.ok) {
-    writeFrame({ ok: false, error: checked.error })
+    await writeFrame({ ok: false, error: checked.error })
     return
   }
   const req = checked.value
 
   const viaApp = await sendToNmBridge(dataDir(), req, origin)
   if (viaApp) {
-    writeFrame(viaApp)
+    await writeFrame(viaApp)
     return
   }
 
@@ -151,5 +217,5 @@ async function handleMessage(raw: unknown, origin: string): Promise<void> {
     mode: 'queued',
     message: 'HaneHana 未在运行，链接已排队，启动后自动接手',
   }
-  writeFrame(response)
+  await writeFrame(response)
 }

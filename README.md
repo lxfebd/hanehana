@@ -83,6 +83,7 @@
 - **带登录态**：扩展把当前页的 `Referer` / `Cookie` / `User-Agent` 随链接一起交给引擎（需站点本身认这些头时才有效）
 - 扩展 ID 固定（`jjoapnhpnedocdkfffpiccdehollooab`），桌面端只认这一个扩展——改 ID 要同时改扩展 `key`、宿主清单 `allowed_origins` 与 `src/shared/nmProtocol.ts`
 - 设置页「浏览器扩展」一键注册 / 注销宿主（Chrome / Edge / Brave / Chromium，写注册表 + 宿主清单）
+- 宿主是独立的 `fastdrop-nm-host` 小程序（Rust，不依赖 Electron）：Chrome 只把 origin 作为命令行参数传给它，它再拉起桌面端并按 native messaging 协议转发应答——**Chrome 的 stdout 上只有协议帧**，Electron 启动噪音被挡在外面
 - 应用没开着也能收：链接先排队，应用下次启动自动接手
 - 凭据只在内存里：Cookie / Referer 不写进 `tasks.json`，代价是**重启后续传会丢登录态**（引擎照常报 403）
 
@@ -152,7 +153,7 @@ hanehana/
 │   ├── scripts/            门禁脚本（回归闸 / 打包 smoke / 图标生成）
 │   ├── tests/              node:test 单元测试
 │   └── build/              图标素材（icon.ico / tray.png / 生成源图）
-├── engine-rs/              Rust 下载引擎（tokio + reqwest，每任务一进程）
+├── engine-rs/              Rust 下载引擎（tokio + reqwest，每任务一进程）+ 宿主中继 fastdrop-nm-host
 ├── .github/workflows/      CI 守门 + tag 触发的 Release 发布
 └── LICENSE                 MIT
 ```

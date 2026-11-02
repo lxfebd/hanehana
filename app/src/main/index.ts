@@ -91,9 +91,9 @@ if (process.env.HANEHANA_DATA_DIR) {
   app.setPath('userData', join(process.env.HANEHANA_DATA_DIR, 'chromium'))
 }
 
-// 宿主模式：Chrome 把我们拉起来当 native messaging 宿主用。
-// 认据是命令行里的扩展 origin——宿主清单没有 args 字段，Chrome 只会追加 origin，
-// 所以这是唯一可靠的判别方式（见 nmHost.ts 的说明）。
+// 宿主模式：宿主中继 exe 把我们拉起来当 native messaging 宿主用。
+// 认据是环境变量里的扩展 origin（宿主中继把 Chrome 给它的命令行参数转成了环境变量；
+// 命令行那条只是手工调试的备用路径）。详见 nmHost.ts 的说明。
 const nmHostLaunch = detectNmHostLaunch(process.argv)
 
 // 单实例锁：避免双开导致数据互踩（两份内存任务表全量覆盖写 tasks.json）。

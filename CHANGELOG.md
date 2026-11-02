@@ -12,14 +12,18 @@
 ### 变更
 
 - **扩展 ID 钉死**（`shared/nmProtocol.ts` + `app/extension/manifest.json` + 宿主清单 `allowed_origins`）：扩展 manifest 的 `key` 写死公钥，ID 恒为 `jjoapnhpnedocdkfffpiccdehollooab`。不钉死的话每台机器「加载已解压的扩展程序」生成的 ID 都不同，宿主清单得按机器生成，那就不叫一键安装了。改 ID 必须三处同步改。扩展弹窗带运行时 ID 自检，不一致会直接报红。
+- **宿主改由独立中继 exe 承接**（`engine-rs/src/bin/nm_host.rs`，产物 `fastdrop-nm-host`）：Chrome 宿主清单的 `path` 现在指向这个纯 Rust 小程序，它把 Chrome 给的 origin 转成环境变量再拉起桌面端，并把桌面端的应答按 native messaging 协议重新封帧转发。原因是端到端实测挖出的两个硬坑：① Electron 在 Windows 启动时会往 stdout 写一个 `"\r\n"`（原生代码，JS 拦不掉），而 Chrome 把 stdout **首 4 字节**当长度头，多 2 个字节整条链路就错位，扩展侧表现为「通信错误 / 一直转圈」；② Chrome 只把 origin 作为命令行第一个参数追加给宿主，而 Electron 会把第一个位置参数当成「要加载的应用路径」，直接拉起根本起不来。中继的 stdout 没有任何 Electron 噪音，天然干净。桌面端与中继之间用私有帧（`HHNM` + 4 字节小端长度 + JSON）传应答，中继剥掉魔数后按 Chrome 协议转发。
 
 ### 已知限制
 
 - 扩展传来的 `Cookie` / `Referer` **只在内存里**，不写进 `tasks.json`（凭据不该明文躺在存档里）；代价是重启后续传会缺登录态，引擎照常报 403。
-- 开发态无法直接用 `electron.exe` 当宿主（宿主清单没有 `args` 字段，Chrome 只会追加 origin），必须在设置页注册前先跑 `npm run dist:dir` 生成未安装版；找不到可用宿主时安装动作会明确报错而不是写半截清单。
+- 开发态注册宿主需要两个产物就位：`engine-rs` 跑 `cargo build --release --locked`（生成 `fastdrop-nm-host`）与 `npm run dist:dir`（生成桌面端未安装版）；缺任何一个时安装动作会明确报错而不是写半截清单。
 - 「加载已解压的扩展程序」这一步仍需用户在浏览器里手动做（浏览器安全限制），界面只做引导。
 
 ### 修复
+
+- **native messaging 宿主读不到 stdin**（`main/nmHost.ts`）：Electron 主进程的 `process.stdin` 是空壳（`fd` 为 `undefined`，连接会立刻 `end`），照常规 Node 写法监听它的 `data`，宿主会在 Chrome 还没递消息之前就退掉，扩展侧只看到「宿主已退出」。改为按 fd 0 自己开流（`createReadStream('', { fd: 0 })`），异步读取不卡事件循环；同时应答写完等写回调再退出，避免 `app.exit()` 截断半截帧。
+- **宿主拉起图形界面时会把自己也带进宿主模式**（`main/nmHost.ts`）：origin 经环境变量传入，排队路径拉起 GUI 时若原样继承，界面进程会以为自己是宿主而不开窗口、转头去读 stdin。拉起前清掉 `HANEHANA_NM_ORIGIN` 与 `ELECTRON_RUN_AS_NODE`。
 
 - **标题栏右侧给原生窗口按钮让位**（`design/global.css`）：自绘标题栏的右内边距原先是固定值，设置钮压在 Windows 原生 titleBarOverlay（最小化/最大化/关闭，宽 138px）上。改成 `calc(var(--hh-layout-overlay-right) + var(--hh-space-x3))`，让位宽度跟着 overlay 走，设置钮与关闭钮不再重叠。
 - **删侧栏他人署名**（`NavSidebar.vue`）：移除侧栏底部的「© huoshen80」署名与配套样式——那是从基准图抄来的他人署名，不该出现在本项目 UI 里。
@@ -28,8 +32,9 @@
 
 ### 验证
 
-- typecheck 0；lint 0 problem；build OK；npm test 128 pass / 0 fail（新增 `nmProtocol` 契约单测 15 例 + `nmBridge` 回环单测 7 例：令牌不匹配拒、origin 不匹配拒、正常请求通、排队队列读写、关闭后清桥信息文件）；regression:static 8+32+23 PASS（`REG_STATIC OK`）。
-- Rust：`cargo test --locked` 29 passed / 0 failed（新增 9 例：黑名单大小写不敏感、非法头跳过、自定义 UA 覆盖参数 UA、错误文案不含头值等）；`cargo build --release --locked` OK（产物 4,697,088 字节）。`cargo fmt --check` 在本仓库**基线**上即为红（`src/checksum.rs:83` 等既有行不合 rustfmt，本项目 house style 是紧凑单行写法），本次新增代码单独过 rustfmt 干净，故未执行全量 `cargo fmt`（会重排无关代码）。
+- typecheck 0；lint 0 problem；build OK；npm test 130 pass / 0 fail（`nmProtocol` 契约单测 17 例，含新增的「中继私有帧剥掉魔数即 Chrome 帧」；`nmBridge` 回环单测 7 例：令牌不匹配拒、origin 不匹配拒、正常请求通、排队队列读写、关闭后清桥信息文件）；regression:static 8+32+23 PASS（`REG_STATIC OK`）。
+- Rust：`cargo test --locked` 36 passed / 0 failed（原有 29 例 + 宿主中继新增 7 例：正常帧、杂字节前缀、分片到达、魔数跨片、超长帧丢弃、坏 JSON 不转发、Chrome 帧格式）；`cargo build --release --locked` OK（中继产物 327,168 字节）。`cargo fmt --check` 在本仓库**基线**上即为红（`src/checksum.rs:83` 等既有行不合 rustfmt，本项目 house style 是紧凑单行写法），本次新增代码单独过 rustfmt 干净，故未执行全量 `cargo fmt`（会重排无关代码）。
+- **真机端到端**（打包产物实跑，脚本不入库）：自扮一次浏览器——用扩展 origin 当 argv 拉起 `resources/fastdrop-nm-host.exe`，按 Chrome 线协议喂一帧（4 字节小端长度 + JSON），起假桥回应答：**12 项全过**。其中最关键的一条是「stdout 首字节即帧头（无 Electron 启动噪音）」——改造前这里多出 2 个字节 `0d0a`，Chrome 会把长度头读错，整条链路直接错位；改造后 stdout 只有合规帧。桥侧同时验到 origin、token 与 Cookie 透传，非法动作与陌生扩展都在进桥前被拒。
 
 ## [0.2.21] - 2026-10-31
 

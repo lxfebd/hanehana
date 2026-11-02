@@ -22,6 +22,11 @@ extraResources:
   # 缺这个 exe 时打包产物启动正常、点下载才报错，故 CI 有解包 smoke 守门。
   - from: ../engine-rs/target/release/fastdrop-engine.exe
     to: fastdrop-engine.exe
+  # 宿主中继也必须在 asar 外：Chrome 的宿主清单 path 指向一个真实 exe。
+  # 它是纯 Rust 小程序，存在的意义是 stdout 干净（Electron 启动噪音会让
+  # Chrome 把 stdout 首 4 字节误当长度头而错位），见 src/main/nmHost.ts。
+  - from: ../engine-rs/target/release/fastdrop-nm-host.exe
+    to: fastdrop-nm-host.exe
   # 浏览器扩展也必须在 asar 外：用户在 Chrome 里「加载已解压的扩展程序」
   # 选的是一个真实目录，asar 里的文件浏览器读不出来。
   # 宿主清单里的 allowed_origins 写死了扩展 ID，扩展 manifest 的 key 必须和

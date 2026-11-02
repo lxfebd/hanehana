@@ -4,7 +4,7 @@
  * 一次投递的完整链路：
  *   扩展 service worker
  *     → chrome.runtime.sendNativeMessage('com.lxfebd.hanehana', msg)
- *     → Chrome 拉起我们的 exe（宿主模式，见 nmHost）
+ *     → Chrome 拉起宿主中继 exe（fastdrop-nm-host）→ 拉起本进程（宿主模式，见 nmHost）
  *     → 宿主把消息递给本机桥（见 nmBridge）
  *     → 本模块把它变成一个下载任务
  *     → 渲染层收到推送，下载页出现这个任务
