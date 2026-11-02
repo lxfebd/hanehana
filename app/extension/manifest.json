@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "HaneHana 下载助手",
+  "short_name": "HaneHana",
+  "version": "0.2.21",
+  "description": "把网页上的下载链接投递给 HaneHana 桌面应用，由下载引擎接管。",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA4q6KBdrC83ogovXrIGxGbC4QANA4/P3tobcq5eWMUknzl6jp/21r2ekUDPK+OpHNmeIEYN9gW+lXdaLjuAlS4y7GRNVqEbOHRz7wuu7WEUU17PbktEnUGIzeFP7JQhgjNAP/DHmvRV0WOnAa8o2xlqqyQ/HWT+grSDbzExINGOelOdyDQNGVzLkVeflaqlmqzZiFICqZN0WDC4/gOMUmtb0MevNaKLP7eeqS2jTtKcnbg8xrDQu0T5iZ4GeVLMqWI2a7hr6UpA98OCSAZuVqAaJxp5Ifj9/u9Mbk1g54gu28BdsBRao+Q14/EMGs37xwZGt/i8FLkUyuzPWjyRYr4QIDAQAB",
+  "permissions": ["nativeMessaging", "contextMenus", "storage"],
+  "optional_permissions": ["cookies"],
+  "optional_host_permissions": ["http://*/*", "https://*/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "HaneHana 下载助手",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "32": "icons/icon32.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "32": "icons/icon32.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": ["http://*/*", "https://*/*"],
+      "js": ["strings.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}

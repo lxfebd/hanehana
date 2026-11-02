@@ -41,10 +41,19 @@ export interface AddInput {
   note?: string
   /** 期望校验和原文（`sha256:<hex>` 或裸十六进制）。由 IPC 层校验后传进来。 */
   checksum?: string
+  /**
+   * 任务专属的请求头（浏览器扩展投递来的 Cookie / Referer）。
+   *
+   * 只在内存里活一轮：它是凭据，不进 TaskDef、不进 tasks.json。
+   * 代价是重启后续传会缺登录态（引擎照常报 403），这是有意换来的。
+   */
+  headers?: Record<string, string>
 }
 
 /** add 的结果：duplicate=true 表示列表里本来就有这个链接，没有新建任务。 */
 export interface AddOutcome {
+  /** 恒为 true：add 目前没有失败分支（校验都在调用方做），留着是为了和兄弟接口同形。 */
+  ok: true
   def: TaskDef
   duplicate: boolean
 }
@@ -146,6 +155,14 @@ export class Manager {
   /** 已经做过磁盘预检的任务。每次 startOne 清空，腾出空间后重试会重新检查。 */
   private spaceChecked = new Set<string>()
   /**
+   * 任务专属请求头的暂存处（扩展投递来的 Cookie / Referer）。
+   *
+   * 为什么不在 TaskDef 里：TaskDef 会原样落进 tasks.json，Cookie 属于凭据，
+   * 明文躺在存档里不合适（备份、换机、同步都会把它带走）。
+   * 所以它只活在这一次会话里，重启后没有——续传缺登录态会 403，这是已知取舍。
+   */
+  private transientHeaders = new Map<string, Record<string, string>>()
+  /**
    * 调度心跳。maybeStart 只在状态变化时触发；慢任务/探测中任务长期占着槽位时，
    * 排队任务没有任何事件可依赖——心跳兜底周期性补位，防止「排队中」永久卡死。
    */
@@ -198,7 +215,7 @@ export class Manager {
     // byUrl 索引 O(1) 判重；加载旧存档时按 defs 重建，见 loadPersisted。
     const existingId = this.byUrl.get(url)
     const existing = existingId ? this.defs.get(existingId) : undefined
-    if (existing) return { def: existing, duplicate: true }
+    if (existing) return { ok: true, def: existing, duplicate: true }
 
     const threads = input.threads ?? s.threads
     const dest = uniquePath(this.resolveDest(url, input.dest || s.download_dir))
@@ -218,11 +235,15 @@ export class Manager {
       finished_at: 0,
     }
     this.register(d)
+    // 请求头只在内存里：与 id 绑一起，任务被移除时一起丢。
+    if (input.headers && Object.keys(input.headers).length > 0) {
+      this.transientHeaders.set(d.id, { ...input.headers })
+    }
     this.persist(this.listDefs())
     // 新任务交给调度器而不是直接 startOne：上限 3 时连点 4 次下载，
     // 第 4 个应该排队，而不是冲破并发限制一起抢带宽。
     this.maybeStart()
-    return { def: d, duplicate: false }
+    return { ok: true, def: d, duplicate: false }
   }
 
   /** dest 指向目录时用 URL 文件名补全成完整文件路径。 */
@@ -259,7 +280,14 @@ export class Manager {
     // 代理取当前设置而不是 d.proxy：TaskDef 里那份是「添加任务那一刻」的快照，
     // 用户后来在设置里改了代理（这正是他被卡住之后唯一会去做的事），
     // 老任务还在用旧值，表现就是「改了代理没反应」。
-    const task = new EngineTask(d.url, d.dest, d.threads, this.settings.proxy, this.settings.user_agent)
+    const task = new EngineTask(
+      d.url,
+      d.dest,
+      d.threads,
+      this.settings.proxy,
+      this.settings.user_agent,
+      this.transientHeaders.get(d.id) ?? {},
+    )
     d.proxy = this.settings.proxy
     // 限速与校验和是「这一轮下载」的参数，必须在 spawn 前就位：EngineTask.run()
     // 一进来就把 probe 命令写进 stdin，之后再赋值只能影响下一轮。
@@ -504,6 +532,8 @@ export class Manager {
     this.tasks.delete(id)
     this.notified.delete(id)
     this.spaceChecked.delete(id)
+    // 任务没了，它那份请求头（Cookie）也不该留在内存里。
+    this.transientHeaders.delete(id)
     // 先停子进程再删文件：引擎还压着 .part 的句柄时删不掉。
     if (task) this.shutdownTask(task)
     this.persist(this.listDefs())

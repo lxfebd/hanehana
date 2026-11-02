@@ -50,7 +50,9 @@ export function registerTasksHandlers(ctx: IpcCtx): void {
           : NaN
     const requested = Number.isFinite(parsedThreads) ? Math.floor(parsedThreads) : s().loadSettings().threads
     const threads = Math.min(32, Math.max(1, Number.isFinite(requested) ? requested : 8))
-    return { ok: true as const, ...m().add({ url, dest, threads, note, checksum }) }
+    // AddOutcome 自带 ok:true（与兄弟接口同形），别再在外层写一遍——
+    // 同一对象里 ok 写两遍，TS 会报 TS2783，而且后写的会覆盖先写的。
+    return m().add({ url, dest, threads, note, checksum })
   })
 
   ipcMain.handle(Ipc.TasksRemove, async (_e, id: unknown, deleteFiles: unknown) => {

@@ -7,8 +7,9 @@
 import { computed, reactive } from 'vue'
 import { message } from 'ant-design-vue'
 import type { ActionResult, AddResult, Settings, TaskProgressPush, TaskRow, TaskState } from '../../shared/types'
-import type { SiteDownloadPush } from '../../shared/ipc'
+import type { NmLinkPush, SiteDownloadPush } from '../../shared/ipc'
 import { rowState, type TaskSort } from '../status'
+import { t, tf } from '../i18n'
 import { library } from './library'
 import { ui, applyDarkFromSettings } from './ui'
 
@@ -218,9 +219,26 @@ export async function initTasks(): Promise<Array<() => void>> {
   // 游戏站下载推送挂在这里而不是 GameSites 组件里：浏览器下载的「完成」
   // 提示可能在用户切回下载页签之后才到，挂在组件上就等于把这条消息丢掉。
   unsubs.push(window.hh.onSiteDownload((p) => void handleSiteDownload(p)))
+  // 浏览器扩展投递：宿主/应用不在时链接会先排队，启动后由主进程补发。
+  unsubs.push(window.hh.onNmLink((p) => void handleNmLink(p)))
   const timer = setInterval(refreshTasks, REFRESH_MS)
   unsubs.push(() => clearInterval(timer))
   return unsubs
+}
+
+/**
+ * 浏览器扩展投递：成功就刷新任务列表并播报，失败则把主进程给出的原因
+ * 原样交给用户。pending 来源是应用未启动时排队的链接，提示与实时投递区分开。
+ */
+async function handleNmLink(p: NmLinkPush): Promise<void> {
+  const title = p.title?.trim() || p.url
+  if (!p.ok) {
+    message.error(tf('nm_link_failed', { reason: p.error || t('nm_link_unknown_error') }))
+    return
+  }
+  await refreshTasks()
+  if (p.source === 'pending') message.success(tf('nm_link_pending_ok', { title }))
+  else message.success(tf('nm_link_extension_ok', { title }))
 }
 
 /**

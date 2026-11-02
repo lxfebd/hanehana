@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>HaneHana</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <header class="head">
+      <img class="logo" src="icons/icon48.png" alt="" width="28" height="28" />
+      <div class="head-text">
+        <h1 id="app-title"></h1>
+        <p id="app-subtitle" class="subtitle"></p>
+      </div>
+    </header>
+
+    <div id="id-warning" class="warn-box" hidden>
+      <strong id="id-warning-title"></strong>
+      <span id="id-warning-body"></span>
+    </div>
+
+    <main>
+      <label id="url-label" class="label" for="url-input"></label>
+      <textarea
+        id="url-input"
+        class="url-input"
+        rows="2"
+        spellcheck="false"
+        autocomplete="off"
+      ></textarea>
+
+      <button id="deliver-button" class="primary" type="button"></button>
+
+      <label class="checkbox-row" for="cookie-check">
+        <input id="cookie-check" type="checkbox" />
+        <span id="cookie-label"></span>
+      </label>
+      <p id="cookie-hint" class="hint"></p>
+
+      <div id="status" class="status" role="status" aria-live="polite"></div>
+      <div id="status-notes" class="notes"></div>
+
+      <section id="links-block" class="block" hidden>
+        <h2 id="links-title" class="block-title"></h2>
+        <p id="links-empty" class="hint"></p>
+        <ul id="links-list" class="list"></ul>
+      </section>
+
+      <section class="block">
+        <h2 id="history-title" class="block-title"></h2>
+        <p id="history-empty" class="hint"></p>
+        <ul id="history-list" class="list"></ul>
+      </section>
+    </main>
+
+    <script src="strings.js"></script>
+    <script src="popup.js"></script>
+  </body>
+</html>

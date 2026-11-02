@@ -6,6 +6,14 @@
  * 通道静默失效（handle 挂了而 preload 还在调旧名），界面表现为「点了没反应」。
  */
 export type { Mirror, ResolveOutcome, SiteInfo, SiteMirrorOutcome, SiteSearchOutcome } from './sites'
+export type {
+  NmActionResult,
+  NmBrowserId,
+  NmDeliverRequest,
+  NmDeliverResponse,
+  NmHostStatus,
+  NmLinkPush,
+} from './nmProtocol'
 
 export const Ipc = {
   Hello: 'hanehana:hello',
@@ -86,12 +94,23 @@ export const Ipc = {
   SitesResolve: 'hanehana:sites:resolve',
   SitesAddTask: 'hanehana:sites:add-task',
   WebviewOpenExternal: 'hanehana:webview:open-external',
+  // 浏览器扩展投递（native messaging）
+  /** 宿主状态：注册情况、桥是否在跑、扩展目录、排队数 */
+  NmStatus: 'hanehana:nm:status',
+  /** 把 native messaging 宿主注册到浏览器（写注册表 + 宿主清单） */
+  NmInstall: 'hanehana:nm:install',
+  /** 注销宿主注册 */
+  NmUninstall: 'hanehana:nm:uninstall',
+  /** 打开扩展目录（浏览器「加载已解压的扩展程序」要选它） */
+  NmOpenExtDir: 'hanehana:nm:open-ext-dir',
   // 主进程 → 渲染进程（推送）
   FullscreenChanged: 'hanehana:push:fullscreen-changed',
   TaskProgress: 'hanehana:push:task-progress',
   TaskFocus: 'hanehana:push:task-focus',
   UpdateStatus: 'hanehana:push:update-status',
   SiteDownload: 'hanehana:push:site-download',
+  /** 扩展投递了一条下载链接进来（成功建任务或失败） */
+  NmLink: 'hanehana:push:nm-link',
   /** 系统深浅切换（仅 theme_mode='system' 时推送） */
   ThemeChanged: 'hanehana:push:theme-changed',
 } as const

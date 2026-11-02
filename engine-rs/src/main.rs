@@ -3,7 +3,7 @@
 //! Protocol: newline-delimited JSON, one message per line, both directions.
 //!
 //!   stdin   {"cmd":"probe","url":...,"dest":...,"threads":8,"proxy":"","user_agent":"",
-//!            "rate_limit_kbps":0,"checksum":""}
+//!            "rate_limit_kbps":0,"checksum":"","headers":{"Cookie":"a=1","Referer":"https://…"}}
 //!           {"cmd":"run"} {"cmd":"pause"} {"cmd":"resume"} {"cmd":"stop"}
 //!           {"cmd":"set_threads","n":16} {"cmd":"stats"}
 //!           {"cmd":"set_rate","rate_limit_kbps":512}
@@ -27,6 +27,13 @@
 //! `--max-download-limit` semantics), 0 = unlimited. `checksum` is `"sha256:<hex>"` /
 //! `"sha1:<hex>"` / `"md5:<hex>"` (prefix case-insensitive; a bare 64-hex string means
 //! sha256) and is verified over the finished `.part` right before the rename.
+//!
+//! `headers` 是调用方带来的自定义请求头（扩展投递的 Referer/Cookie 等）：字符串→字符串，
+//! 缺省 = 空 = 不带自定义头。头名大小写不敏感；只在 `probe` / `run` 上有意义（这两个命令
+//! 才真的发 HTTP 请求），其余命令共用同一个结构体，serde 默认忽略即可。
+//! `host`、`content-length`、`transfer-encoding`、`connection`、`accept-encoding`、`range`、
+//! `upgrade`、`te`、`trailer`、`proxy-authorization`、`proxy-connection` 会被丢掉：它们能改写
+//! 分段下载的区间或连接分帧。头值（含 Cookie/Authorization 这类凭据）不会进错误事件、日志或快照。
 //!
 //! `set_threads` and `set_rate` each answer with one fresh snapshot — there is no
 //! separate ack event. `{"cmd":"run"}`/`{"cmd":"resume"}` may also carry
@@ -120,6 +127,10 @@ struct Task {
     speed: f64,
     segments: Vec<Segment>,
     client: reqwest::Client,
+    /// 探测时用的代理与 UA。`run` 若带了新的自定义头要重建 client，而重建必须沿用
+    /// 同一套代理/UA——`run` 命令本身不重复传这两个字段。
+    proxy: String,
+    user_agent: String,
     paused: Arc<AtomicBool>,
     cancelled: Arc<AtomicBool>,
     /// 每次 run 递增。被取消的 worker 看到代际变化就退出，避免恢复时
@@ -989,7 +1000,7 @@ async fn handle(
                     return;
                 }
             };
-            let client = match make_client(&cmd.proxy, &cmd.user_agent) {
+            let client = match make_client(&cmd.proxy, &cmd.user_agent, &cmd.headers) {
                 Ok(c) => c,
                 Err(e) => {
                     // 代理串解析不了和「客户端根本没建起来」是两种病：前者用户能自己改，
@@ -1040,6 +1051,8 @@ async fn handle(
                 speed: 0.0,
                 segments: Vec::new(),
                 client,
+                proxy: cmd.proxy.clone(),
+                user_agent: cmd.user_agent.clone(),
                 paused: Arc::new(AtomicBool::new(false)),
                 cancelled: Arc::new(AtomicBool::new(false)),
                 gen: 0,
@@ -1063,6 +1076,27 @@ async fn handle(
                         Err(e) => {
                             let _ = emit_line(out, error_event("unsupported_checksum", &e, &Value::Null))
                                 .await;
+                            return;
+                        }
+                    }
+                }
+                // run 带的自定义头也得能生效：真正下载用的是 probe 时建好的 client，
+                // 只在 probe 传头的话 run 的头会被无声忽略。所以 run 带了头就按同一套
+                // 代理/UA 重建 client（run 不重复传代理/UA，沿用探测时那套）。
+                if !cmd.headers.is_empty() {
+                    let rebuilt = {
+                        let g = t.lock().await;
+                        make_client(&g.proxy, &g.user_agent, &cmd.headers)
+                    };
+                    match rebuilt {
+                        Ok(c) => t.lock().await.client = c,
+                        Err(e) => {
+                            let code = if e.contains("proxy") {
+                                "proxy_invalid"
+                            } else {
+                                "client_build_failed"
+                            };
+                            let _ = emit_line(out, error_event(code, &e, &Value::Null)).await;
                             return;
                         }
                     }

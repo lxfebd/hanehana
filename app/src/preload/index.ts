@@ -3,6 +3,10 @@ import {
   Ipc,
   type IpcChannel,
   type Mirror,
+  type NmActionResult,
+  type NmBrowserId,
+  type NmHostStatus,
+  type NmLinkPush,
   type ResolveOutcome,
   type SiteDownloadPush,
   type SiteInfo,
@@ -167,6 +171,19 @@ const bridge = {
     ipcRenderer.invoke(Ipc.SitesAddTask, input),
   webviewOpenExternal: (url: string): Promise<void> => ipcRenderer.invoke(Ipc.WebviewOpenExternal, url),
   onSiteDownload: (cb: (p: SiteDownloadPush) => void): (() => void) => onPush(Ipc.SiteDownload, cb),
+
+  // ---- 浏览器扩展投递（native messaging）----
+  /** 宿主状态：注册情况、桥是否在跑、扩展目录、排队数。 */
+  nmStatus: (): Promise<NmHostStatus> => ipcRenderer.invoke(Ipc.NmStatus),
+  /** 把宿主注册到指定浏览器（写宿主清单 + 注册表）。 */
+  nmInstall: (browsers: NmBrowserId[]): Promise<NmActionResult> => ipcRenderer.invoke(Ipc.NmInstall, browsers),
+  /** 注销指定浏览器的宿主注册。 */
+  nmUninstall: (browsers: NmBrowserId[]): Promise<NmActionResult> => ipcRenderer.invoke(Ipc.NmUninstall, browsers),
+  /** 打开扩展目录（浏览器「加载已解压的扩展程序」要选它）。 */
+  nmOpenExtDir: (): Promise<{ ok: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke(Ipc.NmOpenExtDir),
+  /** 扩展投递了一条链接进来（成功建任务或失败）。 */
+  onNmLink: (cb: (p: NmLinkPush) => void): (() => void) => onPush(Ipc.NmLink, cb),
 }
 
 contextBridge.exposeInMainWorld('hh', bridge)

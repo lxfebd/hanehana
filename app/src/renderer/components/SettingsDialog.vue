@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 偏好设置：下载 / 通知 / 网络 / 外观四个页签。
+ * 偏好设置：下载 / 通知 / 网络 / 外观 / 工具 / 浏览器扩展等页签。
  *
  * save() 必须逐个字段列出来（而不是 {...form}）：Settings 加了字段时这里
  * 漏一个，主进程会把它回落到默认值，用户会发现「勾了没保存」。
@@ -14,6 +14,7 @@ import { fmtSpeed } from '../../shared/format'
 import { THEME_PRESET_IDS } from '../design/tokens'
 import { ACCENT_PRESETS, normalizeAccentHex } from '../../shared/accent'
 import { t, tf } from '../i18n'
+import BrowserExtensionPanel from './nm/BrowserExtensionPanel.vue'
 
 import { themePresets } from '../design/tokens'
 
@@ -529,6 +530,9 @@ function save(): void {
             </Form.Item>
           </Form>
         </div>
+      </TabPane>
+      <TabPane key="browser" :tab="t('set_tab_browser')">
+        <BrowserExtensionPanel />
       </TabPane>
       <TabPane key="track" :tab="t('set_tab_track')">
         <div class="card">

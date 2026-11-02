@@ -6,12 +6,13 @@
 //! 下载驱动（分段 `fetch_and_write` / 未知长度单流 `fetch_unbounded`）。
 //! 归类用的 `FetchErr` 也在这里，因为它的字段是给 UI 的稳定契约。
 
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures_util::TryStreamExt;
-use reqwest::header::HeaderValue;
+use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::Mutex;
@@ -39,6 +40,24 @@ const CHUNK_IDLE: Duration = Duration::from_secs(60);
 const FLUSH_BYTES: u64 = 64 * 1024 * 1024;
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                           (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
+/// 调用方指定的头里，这些不许生效：它们要么决定连接怎么建、报文怎么分帧
+/// （host/connection/te/transfer-encoding/trailer/upgrade…），要么直接决定正文边界
+/// （content-length/range）。让外部注入这些头就能改写分段下载的区间、把两个请求
+/// 挤进一条连接（走私），或者借 host 头绕过代理/网关的访问控制，所以一律丢掉。
+/// 名单写成小写：头名本身大小写不敏感，`HeaderName` 解析后已经归一化过了。
+const BLOCKED_HEADERS: &[&str] = &[
+    "host",
+    "content-length",
+    "transfer-encoding",
+    "connection",
+    "accept-encoding",
+    "range",
+    "upgrade",
+    "te",
+    "trailer",
+    "proxy-authorization",
+    "proxy-connection",
+];
 /// 分段写入时的单次写盘封顶（字节）。
 const CHUNK: u64 = 64 * 1024;
 
@@ -128,7 +147,39 @@ pub fn truncated_err(written: u64, expect: u64) -> FetchErr {
         .with_params(json!({"got": written, "expect": expect}))
 }
 
-pub fn make_client(proxy: &str, user_agent: &str) -> Result<reqwest::Client, String> {
+/// 把调用方给的自定义头并进默认头表。
+///
+/// 头名大小写不敏感（HTTP 头名就不区分大小写），所以先归一成 `HeaderName` 再比较、
+/// 再写表；同名（大小写不同的也算同名）后者覆盖前者。
+/// 非法头名/头值一律跳过，而不是让整个客户端建不起来：扩展带来的一个坏头不该毁掉整次下载。
+/// 头值不会进任何错误/日志——这里只往 `HeaderMap` 里写，不拼任何字符串，
+/// Cookie / Authorization 这类凭据因此不会外泄。
+pub fn apply_custom_headers(map: &mut HeaderMap, headers: &BTreeMap<String, String>) {
+    for (k, v) in headers {
+        let name = match HeaderName::from_bytes(k.as_bytes()) {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if BLOCKED_HEADERS.contains(&name.as_str()) {
+            continue;
+        }
+        let value = match HeaderValue::from_str(v) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        map.insert(name, value);
+    }
+}
+
+/// 建 HTTP 客户端。`headers` 是调用方带来的自定义头（扩展投递的 Cookie/Referer 等），
+/// 和 User-Agent 一起作为**默认头**下发：探测（HEAD / 带 Range 的 GET）和真正下载
+/// （分段 GET）带的是同一组头，不会出现「探测能过、下载又 403」。
+/// 自定义头里的 `user-agent` 优先于 `user_agent` 参数：显式给的头是调用方最后说的话。
+pub fn make_client(
+    proxy: &str,
+    user_agent: &str,
+    headers: &BTreeMap<String, String>,
+) -> Result<reqwest::Client, String> {
     let mut b = reqwest::Client::builder()
         .connect_timeout(CONNECT_TIMEOUT)
         .http2_adaptive_window(true)
@@ -149,11 +200,14 @@ pub fn make_client(proxy: &str, user_agent: &str) -> Result<reqwest::Client, Str
             reqwest::Proxy::all(proxy).map_err(|e| format!("invalid proxy url: {readable} ({e})"))?;
         b = b.proxy(p);
     }
-    let mut h = reqwest::header::HeaderMap::new();
+    let mut h = HeaderMap::new();
     let ua = if user_agent.is_empty() { USER_AGENT } else { user_agent };
     if let Ok(ua) = HeaderValue::from_str(ua) {
         h.insert("User-Agent", ua);
     }
+    // 自定义头后并：`headers` 里的 user-agent 会顶掉上面这行（显式头优先），
+    // 其余头是补充；坏头在这里被丢掉，不影响已经放好的 UA。
+    apply_custom_headers(&mut h, headers);
     b.default_headers(h)
         .build()
         .map_err(|e| format!("http client build failed: {e}"))
@@ -574,4 +628,97 @@ pub async fn fetch_unbounded(
         }
     }
     Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn headers(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn custom_headers_are_kept() {
+        // 扩展投递的直链要带的三个头，一个都不能丢。
+        let mut h = HeaderMap::new();
+        apply_custom_headers(
+            &mut h,
+            &headers(&[
+                ("Cookie", "a=1; b=2"),
+                ("Referer", "https://site/page"),
+                ("X-Foo", "bar"),
+            ]),
+        );
+        assert_eq!(h.get("cookie").unwrap(), "a=1; b=2");
+        assert_eq!(h.get("referer").unwrap(), "https://site/page");
+        assert_eq!(h.get("x-foo").unwrap(), "bar");
+        assert_eq!(h.len(), 3);
+    }
+
+    #[test]
+    fn blocked_headers_are_dropped_case_insensitively() {
+        // 过滤名单里的头一个都不能生效；大小写变体也不行（头名不区分大小写）。
+        let mut all: Vec<(&str, &str)> = BLOCKED_HEADERS.iter().map(|n| (*n, "x")).collect();
+        all.push(("Host", "evil.example"));
+        all.push(("RANGE", "bytes=0-1"));
+        all.push(("Transfer-Encoding", "chunked"));
+        all.push(("User-Agent", "keep"));
+        let mut h = HeaderMap::new();
+        apply_custom_headers(&mut h, &headers(&all));
+        for n in BLOCKED_HEADERS {
+            assert!(h.get(*n).is_none(), "{n} 不该被放行");
+        }
+        // 没被禁的头照常放行——过滤不是「全丢」。
+        assert_eq!(h.get("user-agent").unwrap(), "keep");
+        assert_eq!(h.len(), 1);
+    }
+
+    #[test]
+    fn invalid_headers_are_skipped_without_panicking() {
+        // 坏头只是被丢掉，不能 panic，也不能连累旁边的好头。
+        let mut h = HeaderMap::new();
+        apply_custom_headers(
+            &mut h,
+            &headers(&[
+                ("bad header", "x"),       // 头名含空格：非法
+                ("X-Bad", "line1\nline2"), // 头值含换行：非法
+                ("X-Good", "fine"),
+            ]),
+        );
+        assert_eq!(h.len(), 1);
+        assert_eq!(h.get("x-good").unwrap(), "fine");
+    }
+
+    #[test]
+    fn custom_user_agent_overrides_parameter() {
+        // make_client 里的顺序：先放参数 UA，再并自定义头 → 自定义头赢（大小写变体也一样）。
+        let mut h = HeaderMap::new();
+        h.insert("User-Agent", HeaderValue::from_str("param-ua").unwrap());
+        apply_custom_headers(&mut h, &headers(&[("user-agent", "custom-ua")]));
+        assert_eq!(h.get("user-agent").unwrap(), "custom-ua");
+    }
+
+    #[test]
+    fn bad_headers_do_not_break_client_build() {
+        // 坏头被丢掉后客户端照样建得起来（这一步不起网络，纯本地构造）。
+        let mut m = headers(&[("bad header", "x"), ("X-Bad", "line1\nline2")]);
+        m.insert("Cookie".to_string(), "a=1".to_string());
+        assert!(make_client("", "ua", &m).is_ok());
+    }
+
+    #[test]
+    fn client_build_error_does_not_leak_header_values() {
+        // 代理串非法时会有错误文案，但头里的凭据一个字都不能进去。
+        let m = headers(&[
+            ("Cookie", "secret-cookie-value"),
+            ("Authorization", "Bearer secret-token"),
+        ]);
+        let err = make_client("not a proxy url", "ua", &m).unwrap_err();
+        assert!(!err.contains("secret-cookie-value"), "{err}");
+        assert!(!err.contains("secret-token"), "{err}");
+    }
 }

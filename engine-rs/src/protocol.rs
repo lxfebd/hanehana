@@ -15,6 +15,11 @@ pub struct Cmd {
     #[serde(default)] pub threads: usize,
     #[serde(default)] pub proxy: String,
     #[serde(default)] pub user_agent: String,
+    /// 自定义请求头（扩展投递的 Referer/Cookie 等）。只在 `probe` / `run` 上有意义：
+    /// 这两个命令才真的发 HTTP 请求；其余命令共用这个结构体，serde 默认即可忽略。
+    /// 头名大小写不敏感；用 BTreeMap 只是为了让顺序确定（同名大小写变体谁覆盖谁是确定的）。
+    /// 缺省 = 空 = 不带任何自定义头。
+    #[serde(default)] pub headers: std::collections::BTreeMap<String, String>,
     #[serde(default)] pub n: usize,
     /// 限速，单位 KiB/s，0 = 不限速。`probe` / `run` / `set_rate` 都接受。
     /// 用 `Option` 是为了区分「JSON 里没这个字段」和「显式给 0」：前者**不改**当前限速，
@@ -49,4 +54,42 @@ pub async fn read_stdin_line(
     }
     let s = String::from_utf8_lossy(buf);
     Ok(Some(s.trim().to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cmd_headers_default_to_empty() {
+        // 老主进程一条头都不给：解析必须照样成功，headers 为空表示「不带自定义头」。
+        let c: Cmd = serde_json::from_str(r#"{"cmd":"probe","url":"https://x/y"}"#).unwrap();
+        assert_eq!(c.cmd, "probe");
+        assert!(c.headers.is_empty());
+    }
+
+    #[test]
+    fn cmd_parses_headers_map() {
+        // 扩展投递的直链：Cookie/Referer 随命令一起过来，字符串→字符串一一对应。
+        let c: Cmd = serde_json::from_str(
+            r#"{"cmd":"probe","url":"https://x/y","headers":{"Cookie":"a=1; b=2","Referer":"https://site/page"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            c.headers.get("Cookie").map(String::as_str),
+            Some("a=1; b=2")
+        );
+        assert_eq!(
+            c.headers.get("Referer").map(String::as_str),
+            Some("https://site/page")
+        );
+    }
+
+    #[test]
+    fn cmd_ignores_headers_on_non_http_commands() {
+        // pause/stop 这些命令共用同一个结构体：带了 headers 也只是被忽略，不能报错。
+        let c: Cmd = serde_json::from_str(r#"{"cmd":"pause","headers":{"X-Foo":"bar"}}"#).unwrap();
+        assert_eq!(c.cmd, "pause");
+        assert_eq!(c.headers.get("X-Foo").map(String::as_str), Some("bar"));
+    }
 }

@@ -22,6 +22,12 @@ extraResources:
   # 缺这个 exe 时打包产物启动正常、点下载才报错，故 CI 有解包 smoke 守门。
   - from: ../engine-rs/target/release/fastdrop-engine.exe
     to: fastdrop-engine.exe
+  # 浏览器扩展也必须在 asar 外：用户在 Chrome 里「加载已解压的扩展程序」
+  # 选的是一个真实目录，asar 里的文件浏览器读不出来。
+  # 宿主清单里的 allowed_origins 写死了扩展 ID，扩展 manifest 的 key 必须和
+  # src/shared/nmProtocol.ts 的 NM_EXTENSION_ID 对得上——那三处要一起改。
+  - from: extension
+    to: extension
 
 win:
   icon: build/icon.ico

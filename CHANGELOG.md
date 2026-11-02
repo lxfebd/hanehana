@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+### 新增
+
+- **浏览器扩展投递下载链接**（native messaging 全链路）：`app/extension/` 新增 MV3 扩展——右键菜单（链接 / 页面）+ 弹窗手动投递直链，经 Chrome 的 native messaging 通道交给桌面端建下载任务。链路是三段：扩展 service worker →（4 字节小端长度 + UTF-8 JSON 帧）→ Chrome 拉起的**宿主模式进程**（`main/nmHost.ts`：认 argv 里的扩展 origin，不占单实例锁、不开窗口、stdout 只走协议帧、日志一律 stderr）→ 本机桥（`main/nmBridge.ts`：127.0.0.1 随机端口 + 每次启动换新的随机 token，桥上再校验一次 origin）→ 主应用（`main/nmService.ts`：Manager 建任务 + `Ipc.NmLink` 推给下载页）。应用没开着时链接先排队（`nm-pending.jsonl`），应用下次启动自动接手并补发推送。设置页新增「浏览器扩展」页签（`renderer/components/nm/BrowserExtensionPanel.vue`）：逐浏览器注册 / 注销宿主（写注册表 32/64 位双视图 + 宿主清单）、扩展 ID 一键复制、扩展目录打开、桥状态与排队数。协议契约唯一真值在 `shared/nmProtocol.ts`（字段名、长度上限、校验规则），扩展侧同名常量必须与它对齐。
+- **下载引擎支持自定义请求头**（`engine-rs`）：`Cmd` 新增 `headers`（字符串→字符串），`probe` / `run` 都带，扩展带来的 `Referer` / `Cookie` / `User-Agent` 因此能真正发到下载源（解决「离开浏览器就下不动」）。引擎侧有黑名单：`host` / `content-length` / `transfer-encoding` / `connection` / `accept-encoding` / `range` / `upgrade` / `te` / `trailer` / `proxy-authorization` / `proxy-connection` 一律丢弃（能改写分段区间或连接分帧）；非法头名/头值跳过而不是让整个客户端建不起来；头值不进任何错误文案、日志与快照。
+
+### 变更
+
+- **扩展 ID 钉死**（`shared/nmProtocol.ts` + `app/extension/manifest.json` + 宿主清单 `allowed_origins`）：扩展 manifest 的 `key` 写死公钥，ID 恒为 `jjoapnhpnedocdkfffpiccdehollooab`。不钉死的话每台机器「加载已解压的扩展程序」生成的 ID 都不同，宿主清单得按机器生成，那就不叫一键安装了。改 ID 必须三处同步改。扩展弹窗带运行时 ID 自检，不一致会直接报红。
+
+### 已知限制
+
+- 扩展传来的 `Cookie` / `Referer` **只在内存里**，不写进 `tasks.json`（凭据不该明文躺在存档里）；代价是重启后续传会缺登录态，引擎照常报 403。
+- 开发态无法直接用 `electron.exe` 当宿主（宿主清单没有 `args` 字段，Chrome 只会追加 origin），必须在设置页注册前先跑 `npm run dist:dir` 生成未安装版；找不到可用宿主时安装动作会明确报错而不是写半截清单。
+- 「加载已解压的扩展程序」这一步仍需用户在浏览器里手动做（浏览器安全限制），界面只做引导。
+
 ### 修复
 
 - **标题栏右侧给原生窗口按钮让位**（`design/global.css`）：自绘标题栏的右内边距原先是固定值，设置钮压在 Windows 原生 titleBarOverlay（最小化/最大化/关闭，宽 138px）上。改成 `calc(var(--hh-layout-overlay-right) + var(--hh-space-x3))`，让位宽度跟着 overlay 走，设置钮与关闭钮不再重叠。
@@ -13,7 +28,8 @@
 
 ### 验证
 
-- typecheck 0；lint 0 problem；build OK；npm test 106 pass / 0 fail；regression:static 8+32+23 PASS（`REG_STATIC OK`）。
+- typecheck 0；lint 0 problem；build OK；npm test 128 pass / 0 fail（新增 `nmProtocol` 契约单测 15 例 + `nmBridge` 回环单测 7 例：令牌不匹配拒、origin 不匹配拒、正常请求通、排队队列读写、关闭后清桥信息文件）；regression:static 8+32+23 PASS（`REG_STATIC OK`）。
+- Rust：`cargo test --locked` 29 passed / 0 failed（新增 9 例：黑名单大小写不敏感、非法头跳过、自定义 UA 覆盖参数 UA、错误文案不含头值等）；`cargo build --release --locked` OK（产物 4,697,088 字节）。`cargo fmt --check` 在本仓库**基线**上即为红（`src/checksum.rs:83` 等既有行不合 rustfmt，本项目 house style 是紧凑单行写法），本次新增代码单独过 rustfmt 干净，故未执行全量 `cargo fmt`（会重排无关代码）。
 
 ## [0.2.21] - 2026-10-31
 

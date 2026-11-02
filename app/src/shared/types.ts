@@ -337,6 +337,14 @@ export interface EngineCommand {
   threads?: number
   proxy?: string
   user_agent?: string
+  /**
+   * 任务专属的请求头（如扩展投递来的 Cookie / Referer）。
+   *
+   * 只在 probe/run 阶段有意义：引擎把它当客户端的默认头，
+   * Range / Host 这类由引擎自己管的头会被过滤掉（见 engine-rs 的黑名单）。
+   * 里面装的是凭据，所以不进任务存档、不进日志、不进错误文案。
+   */
+  headers?: Record<string, string>
   n?: number
   /** 该任务的下载上限，KiB/s，0 = 不限。所有分段共享同一个桶（aria2 的口径）。 */
   rate_limit_kbps?: number

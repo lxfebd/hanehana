@@ -77,6 +77,15 @@
 - 下载捕获：复用内嵌浏览器的登录态，按站点域名归属标注来源
 - 新作追踪：订阅开发商 / 系列 / 关键词，定时查 VNDB，检出新作才弹系统通知
 
+### 🧩 浏览器扩展投递（native messaging）
+
+- 在浏览器里右键「用 HaneHana 下载」或用扩展弹窗投递直链，链接直接进下载队列
+- **带登录态**：扩展把当前页的 `Referer` / `Cookie` / `User-Agent` 随链接一起交给引擎（需站点本身认这些头时才有效）
+- 扩展 ID 固定（`jjoapnhpnedocdkfffpiccdehollooab`），桌面端只认这一个扩展——改 ID 要同时改扩展 `key`、宿主清单 `allowed_origins` 与 `src/shared/nmProtocol.ts`
+- 设置页「浏览器扩展」一键注册 / 注销宿主（Chrome / Edge / Brave / Chromium，写注册表 + 宿主清单）
+- 应用没开着也能收：链接先排队，应用下次启动自动接手
+- 凭据只在内存里：Cookie / Referer 不写进 `tasks.json`，代价是**重启后续传会丢登录态**（引擎照常报 403）
+
 ### 🎨 界面与体验
 
 - Windows 11 Mica 毛玻璃窗口（22H2+，低版本自动降级）+ 自定义标题栏
@@ -139,6 +148,7 @@ hanehana/
 │   ├── src/preload/        contextBridge 暴露的 window.hh（沙箱开启）
 │   ├── src/renderer/       Vue 3 界面：components / composables / stores / design / i18n
 │   ├── src/shared/         主进程与渲染层共享的类型、IPC 通道名、错误与格式化
+│   ├── extension/          浏览器扩展（MV3，投递下载链接；协议契约见 src/shared/nmProtocol.ts）
 │   ├── scripts/            门禁脚本（回归闸 / 打包 smoke / 图标生成）
 │   ├── tests/              node:test 单元测试
 │   └── build/              图标素材（icon.ico / tray.png / 生成源图）
@@ -219,7 +229,7 @@ cd app && npm run dist        # NSIS 安装包（--publish never，仅本地产�
 - [x] 刮削可用性：搜索词清洗梯 + 双源流式上屏 + 应用落库修复 + 没找到/待确认分开报
 - [x] 同款多安装目录判重去重（扫描结果可一键补入）
 - [x] 真实 UI 走查验收（`regression:ui` / `regression:dupe`）
-- [ ] 浏览器扩展投递下载链接（native messaging 通道）
+- [x] 浏览器扩展投递下载链接（native messaging 通道）
 - [ ] 安装包代码签名
 
 ---

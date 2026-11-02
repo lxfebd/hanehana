@@ -13,6 +13,7 @@
  * 校验和），打包后随 extraResources 一起分发，不进 asar。
  */
 import { spawn, type ChildProcess } from 'node:child_process'
+import { createHash } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { app } from 'electron'
@@ -138,6 +139,15 @@ export class EngineTask {
      */
     public proxySetting = '',
     public userAgent = '',
+    /**
+     * 任务专属的请求头（浏览器扩展投递来的 Cookie / Referer 等）。
+     *
+     * 为什么单独一路而不是塞进全局设置：Cookie 是**这个任务**的凭据，
+     * 放全局会让所有任务都带上别人的登录态。
+     * 它只活在内存里：不进 tasks.json（凭据明文躺在存档里不合适），
+     * 代价是重启后续传会缺登录态，引擎会照常报 403。
+     */
+    public headers: Record<string, string> = {},
   ) {}
 
   /**
@@ -161,9 +171,20 @@ export class EngineTask {
    */
   private planNet = ''
 
-  /** 出口指纹：代理 + UA。probe 与换进程判定必须用同一个算法，否则比对会长期错位。 */
+  /**
+   * 出口指纹：代理 + UA + 请求头摘要。
+   *
+   * probe 与换进程判定必须用同一个算法，否则比对会长期错位。
+   * 请求头只取摘要不取原文：里面有 Cookie，指纹这串有机会进日志，
+   * 凭据不该以明文出现在任何一行输出里。
+   */
   private netKey(): string {
-    return `${this.effectiveProxy}\n${this.userAgent}`
+    const keys = Object.keys(this.headers ?? {}).sort()
+    const h = createHash('sha256')
+      .update(keys.map((k) => `${k}:${this.headers[k]}`).join('\n'))
+      .digest('hex')
+      .slice(0, 16)
+    return `${this.effectiveProxy}\n${this.userAgent}\n${h}`
   }
 
   /** 本任务限速，KiB/s，0 = 不限。改值要走 setRate()，才能立刻推给引擎。 */
@@ -343,6 +364,9 @@ export class EngineTask {
           threads: this.threads,
           proxy: this.effectiveProxy,
           user_agent: this.userAgent,
+          // 任务专属请求头（扩展投递来的 Cookie / Referer）：引擎把它当客户端默认头。
+          // 空对象也照发，引擎侧按「没有自定义头」处理。
+          headers: this.headers,
           rate_limit_kbps: this.rateLimitKbps,
           checksum: this.checksum,
         })
@@ -379,10 +403,17 @@ export class EngineTask {
     this.sendRun()
   }
 
-  /** 发 run 命令（带上本轮的限速与校验和）。失败就地报成 error，不让它静默卡住。 */
+  /** 发 run 命令（带上本轮的限速、校验和与请求头）。失败就地报成 error，不让它静默卡住。 */
   private sendRun(): void {
     try {
-      this.send({ cmd: 'run', rate_limit_kbps: this.rateLimitKbps, checksum: this.checksum })
+      this.send({
+        cmd: 'run',
+        rate_limit_kbps: this.rateLimitKbps,
+        checksum: this.checksum,
+        // 引擎的 client 在 probe 时建好并复用，run 里的头通常不生效；
+        // 但引擎若在 run 时重建 client，这条就是它的唯一来源——两头都放最稳。
+        headers: this.headers,
+      })
     } catch (e) {
       this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
       this.setState('error')

@@ -48,6 +48,8 @@ import { TRAY_ICON_DATA_URL } from './trayIcon'
 import { checkUpdate, initAutoUpdater, setUpdatePush } from './updater'
 import { installMainLogger } from './log'
 import { wireSites } from './sites/bridge'
+import { detectNmHostLaunch, runNmHost } from './nmHost'
+import { wireNm, type NmWire } from './nmService'
 import { checkTracks } from './tracking'
 import { registerSettingsHandlers } from './ipc/settings'
 import { registerWinHandlers } from './ipc/win'
@@ -89,11 +91,18 @@ if (process.env.HANEHANA_DATA_DIR) {
   app.setPath('userData', join(process.env.HANEHANA_DATA_DIR, 'chromium'))
 }
 
+// 宿主模式：Chrome 把我们拉起来当 native messaging 宿主用。
+// 认据是命令行里的扩展 origin——宿主清单没有 args 字段，Chrome 只会追加 origin，
+// 所以这是唯一可靠的判别方式（见 nmHost.ts 的说明）。
+const nmHostLaunch = detectNmHostLaunch(process.argv)
+
 // 单实例锁：避免双开导致数据互踩（两份内存任务表全量覆盖写 tasks.json）。
-const gotSingleInstanceLock = app.requestSingleInstanceLock()
+// 宿主模式例外：宿主进程是 Chrome 拉起来的短命进程，不能占锁——
+// 图形界面正开着的时候它占不到锁，app.quit() 会让宿主当场退出，扩展永远收不到应答。
+const gotSingleInstanceLock = nmHostLaunch ? true : app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
-} else {
+} else if (!nmHostLaunch) {
   app.on('second-instance', () => {
     showWindow()
   })
@@ -105,6 +114,8 @@ let trayTimer: ReturnType<typeof setInterval> | null = null
 let trackTimer: ReturnType<typeof setInterval> | null = null
 let store: Store
 let manager: Manager
+/** 浏览器扩展投递接线（桥 + 注册 + 排队接手）。宿主模式下为 null。 */
+let nmWire: NmWire | null = null
 
 // 全局窗口拦截：主窗口的 setWindowOpenHandler 只覆盖它自己，游戏站页签的
 // webview（allowpopups）开的客人窗口是另一组 WebContents——不给它同样约束，
@@ -223,6 +234,12 @@ function createWindow(): void {
 
   win.on('ready-to-show', () => {
     win?.show()
+  })
+
+  // 启动时接手排队的链接：那时窗口还没建，推送会丢。
+  // 渲染层加载完再补发——早一点发，接收端还没注册监听，等于白发。
+  win.webContents.on('did-finish-load', () => {
+    nmWire?.replayPending()
   })
 
   win.on('closed', () => {
@@ -467,7 +484,11 @@ function quit(): void {
   app.quit()
 }
 
-if (gotSingleInstanceLock) {
+if (nmHostLaunch) {
+  // 宿主模式：不开窗口、不建托盘，只跑协议应答（stdin 读帧、stdout 写帧）。
+  // 这里不进 whenReady —— Chrome 拉起宿主是为了那一次应答，等窗口就绪纯属拖延。
+  runNmHost(nmHostLaunch)
+} else if (gotSingleInstanceLock) {
   void app.whenReady().then(() => {
     // 主进程日志落盘（userData/logs/）：放在最早，把启动早期的事件也记上
     installMainLogger()
@@ -557,6 +578,14 @@ if (gotSingleInstanceLock) {
       getDownloadDir: () => store.loadSettings().download_dir,
       getThreads: () => store.loadSettings().threads,
     })
+    // 浏览器扩展投递：本机桥 + 宿主注册 + 排队接手。
+    // 同样依赖 Manager.add：扩展投递和游戏站捕获共用一条建任务出口。
+    nmWire = wireNm({
+      getWindow: () => win,
+      addTask: (input) => manager.add(input),
+      getDownloadDir: () => store.loadSettings().download_dir,
+      getThreads: () => store.loadSettings().threads,
+    })
     wireIpc()
     createWindow()
     createTray()
@@ -623,6 +652,10 @@ app.on('before-quit', () => {
   releaseKeepAwake()
   manager?.shutdown()
   detachAllRunning()
+  // 桥的端口信息文件必须随进程一起清掉：留着旧文件会让下一个宿主进程
+  // 连上一个已经不存在的端口，用户看到的是「扩展一直报通信失败」。
+  nmWire?.dispose()
+  nmWire = null
   // 合并写入的 400ms 定时器可能还没到期：退出前把待写内容同步落盘，
   // 不丢最后一批更新（回填时长/字段变更/任务状态/游玩会话）。
   flushPersist()

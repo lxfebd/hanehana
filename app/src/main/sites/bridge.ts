@@ -50,7 +50,8 @@ export function wireSites(deps: BridgeDeps): () => void {
     const name = input.filename ? safeFileName(input.filename) : ''
     const dir = deps.getDownloadDir() || defaultDownloadDir()
     const dest = uniquePath(name ? join(dir, name) : dir)
-    return { ok: true as const, ...deps.addTask({ url, dest, threads: deps.getThreads(), note: '游戏站' }) }
+    // AddOutcome 自带 ok:true，别在外层再写一遍（同对象里 ok 写两遍会触发 TS2783）。
+    return deps.addTask({ url, dest, threads: deps.getThreads(), note: '游戏站' })
   })
 
   ipcMain.handle(Ipc.WebviewOpenExternal, (_e, url: string) => {
