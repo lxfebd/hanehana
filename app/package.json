@@ -45,6 +45,7 @@
     "regression:process": "node scripts/ui_walkthrough_process.mjs",
     "regression:accent": "node scripts/ui_walkthrough_accent.mjs",
     "regression:batchedit": "node scripts/verify_batch_edit.mjs",
+    "regression:layers": "node scripts/verify_ui_layers.mjs",
     "regression:collection": "node scripts/verify_dlview.mjs",
     "regression:reina": "node scripts/ui_walkthrough_reina.mjs"
   },

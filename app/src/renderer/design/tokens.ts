@@ -100,7 +100,41 @@ const base = {
     taskRowH: 64,
     overlayRight: 138,
   },
+  /**
+   * 层叠层级真值（z-index）—— 页级浮层唯一取值点，组件里禁止裸写数字。
+   * 发射为 --hh-layer-* CSS 变量（applyCssVars 的通用平铺分支，unitless）。
+   *
+   * 关键铁律：z-index 只在「同一 stacking context」内比较；backdrop-filter /
+   * transform / filter / opacity<1 都会把后代关进该元素自建的 stacking context。
+   * 因此：① 真·弹层（对话框/右键菜单/帮助）一律 <Teleport to="body"> 落到根上下文；
+   * ② 页内锚定浮层（导出下拉/更多菜单/批量浮条）的祖先若带 backdrop-filter，
+   *    祖先自身必须抬到正 z（如 .toolbar），否则浮层被后绘制的内容区盖住——
+   *    这正是「按钮弹窗被下面的游戏卡片覆盖」的根因，回归闸 regression:layers 盯防。
+   */
+  layer: {
+    /** 动态封面底（.app-bg） */
+    bg: 0,
+    /** 顶栏 / 主布局 .app-shell > .titlebar|layout */
+    base: 1,
+    /** 侧栏（isolation: isolate） */
+    sidebar: 2,
+    /** 面板内吸顶头（dp-head-actions / fs-bar），局部上下文内相对值 */
+    sticky: 5,
+    /** 页内通知条（.error-banner），压过内容区、低于下拉 */
+    notice: 20,
+    /** 页内锚定浮层：导出下拉 / 更多菜单 / 批量编辑浮条 / 工具栏自身 */
+    popover: 30,
+    /** 详情整页展开（.detail-panel.is-expanded） */
+    overlay: 60,
+    /** 真·弹层（Teleport body）：对话框 / 快捷键帮助 / 全屏 / 镜像遮罩 / antd 浮层 */
+    modal: 1000,
+    /** 右键菜单（Teleport body，最高） */
+    context: 1100,
+  },
 } as const
+
+/** 层级数值对象：给 antd zIndexPopupBase 等非 CSS 变量场景消费（单一真值）。 */
+export const LAYER = base.layer
 
 type BaseLayout = {
   titlebarH: number

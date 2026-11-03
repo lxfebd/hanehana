@@ -215,7 +215,7 @@ onBeforeUnmount(() => {
   bottom: 16px;
   left: 50%;
   transform: translateX(-50%);
-  z-index: 30;
+  z-index: var(--hh-layer-popover);
   display: flex;
   flex-direction: column;
   align-items: center;

@@ -788,7 +788,7 @@ onBeforeUnmount(() => {
   position: fixed;
   inset: 0;
   background: var(--hh-color-shade-thumb);
-  z-index: 1000;
+  z-index: var(--hh-layer-modal);
   display: flex;
   align-items: center;
   justify-content: center;

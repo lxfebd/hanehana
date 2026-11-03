@@ -239,8 +239,8 @@ function moreAction(fn: () => void): void {
   isolation: isolate;
   /* .glass 的 backdrop-filter 会建立层叠上下文且 z-index 仍为 auto，
      内容区里后绘制的封面（position:absolute 行项）会盖住悬出的 .more-menu。
-     抬到 2：压过内容区 z-index:auto 的定位子树，仍低于弹层 30/40。 */
-  z-index: 2;
+     抬到 --hh-layer-sidebar：压过内容区 z-index:auto 的定位子树，仍低于弹层。 */
+  z-index: var(--hh-layer-sidebar);
   display: flex;
   flex-direction: column;
   /* 不设 overflow-y:auto：overflow-x 会被算成 auto，把 .more-menu 伸出侧栏
@@ -350,7 +350,7 @@ function moreAction(fn: () => void): void {
   padding: 6px;
   border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-panel-glass-border);
-  z-index: 40;
+  z-index: var(--hh-layer-popover);
   display: flex;
   flex-direction: column;
 }

@@ -191,7 +191,7 @@ defineExpose({ showAt, close })
 <style scoped>
 .ctx-menu {
   position: fixed;
-  z-index: 1100;
+  z-index: var(--hh-layer-context);
   padding: 5px;
   border-radius: var(--hh-radius-md);
   display: flex;

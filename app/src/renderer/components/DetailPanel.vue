@@ -319,7 +319,7 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
 .dp-head-actions {
   position: sticky;
   top: 0;
-  z-index: 5;
+  z-index: var(--hh-layer-sticky);
   align-self: flex-end;
   display: flex;
   gap: 6px;
@@ -464,7 +464,7 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
   bottom: 12px;
   left: 12px;
   width: auto;
-  z-index: 60;
+  z-index: var(--hh-layer-overlay);
   overflow: hidden;
   padding: var(--hh-space-x4);
   gap: var(--hh-space-x3);

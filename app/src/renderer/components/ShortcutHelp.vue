@@ -79,7 +79,7 @@ const groups = computed(() => [
 .sc-mask {
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--hh-layer-modal);
   display: flex;
   align-items: center;
   justify-content: center;

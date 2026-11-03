@@ -481,7 +481,7 @@ function imgErr(e: Event): void {
 
   position: fixed;
   inset: 0;
-  z-index: 1000;
+  z-index: var(--hh-layer-modal);
   background: var(--fs-bg);
   overflow: hidden;
   color: var(--fs-ink-fill);
@@ -492,7 +492,7 @@ function imgErr(e: Event): void {
 .fs-bar {
   position: sticky;
   top: 0;
-  z-index: 10;
+  z-index: var(--hh-layer-sticky);
   display: flex;
   align-items: center;
   gap: 10px;

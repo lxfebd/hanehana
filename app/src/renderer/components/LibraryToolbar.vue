@@ -151,6 +151,12 @@ const emit = defineEmits<{
   border: 1px solid var(--hh-color-card-border);
   background: var(--hh-color-surface-bright);
   backdrop-filter: blur(12px) saturate(1.3);
+  /* backdrop-filter 会让本元素自建 stacking context，把内部 .export-menu 的
+     z-index 关在工具栏内；工具栏在 .layout 层叠上下文里是 z-auto、先于后绘制的
+     .cover-wrap，于是下拉菜单被下面的游戏卡片盖住（命中测试 regression:layers 曾捕获）。
+     给 toolbar 自身一个正 z：整条工具栏（含其下拉）压过封面墙，仍低于真·弹层。 */
+  position: relative;
+  z-index: var(--hh-layer-popover);
 }
 .search-box {
   position: relative;
@@ -391,7 +397,7 @@ const emit = defineEmits<{
   position: absolute;
   top: calc(100% + 6px);
   right: 0;
-  z-index: 30;
+  z-index: var(--hh-layer-popover);
   min-width: 132px;
   padding: 6px;
   display: flex;

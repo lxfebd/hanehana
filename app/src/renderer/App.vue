@@ -323,7 +323,7 @@ async function submitAddTask(input: {
 .app-bg {
   position: fixed;
   inset: 0;
-  z-index: 0;
+  z-index: var(--hh-layer-bg);
   background-size: cover;
   background-position: center;
   filter: blur(120px) saturate(1.8);
@@ -345,7 +345,7 @@ async function submitAddTask(input: {
 .app-shell > .titlebar,
 .app-shell > .layout {
   position: relative;
-  z-index: 1;
+  z-index: var(--hh-layer-base);
 }
 
 /* 顶栏内容（对标基准 home.png 顶部：返回箭头/头像/名称/BETA 芯片/右侧圆钮）。
@@ -597,6 +597,6 @@ async function submitAddTask(input: {
   display: flex;
   gap: 10px;
   align-items: center;
-  z-index: 20;
+  z-index: var(--hh-layer-notice);
 }
 </style>

@@ -15,7 +15,7 @@ import { computed } from 'vue'
 import type { ThemeConfig } from 'ant-design-vue/es/config-provider/context'
 import { theme } from 'ant-design-vue'
 import { ui } from '../stores/ui'
-import { colorState, themePresets, type TokenColors } from './tokens'
+import { colorState, themePresets, LAYER, type TokenColors } from './tokens'
 
 /** RGB 元组 → 实色 hex（antd seed 只收实色，§0-3）。 */
 const seedHex = (c: readonly [number, number, number]): string =>
@@ -100,6 +100,9 @@ export const antdTheme = computed<ThemeConfig>(() => {
       borderRadius: 8,
       fontSize: 13,
       controlHeight: 32,
+      // antd 浮层（Modal/Select 下拉/Popconfirm/Message）统一落在 --hh-layer-modal，
+      // 与自绘对话框/快捷键帮助同层，避免 antd 弹层和自绘弹层互相盖住。
+      zIndexPopupBase: LAYER.modal,
     },
     components: componentTokens(colorState),
   } as unknown as ThemeConfig
