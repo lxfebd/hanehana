@@ -643,4 +643,18 @@ watch(heroGame, () => void refreshHeroWeek(), { immediate: true })
     flex: 0 0 132px;
   }
 }
+@media (max-width: 560px) {
+  /* 极窄窗：hero 改单列纵排，封面/最近游玩不再与主列争宽导致横向溢出被裁 */
+  .hero-animated {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'main'
+      'cover'
+      'recent';
+  }
+  .hero-cover {
+    width: 120px;
+    height: 128px;
+  }
+}
 </style>

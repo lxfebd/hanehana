@@ -403,6 +403,14 @@ async function submitAddTask(input: {
   display: flex;
   justify-content: flex-end;
 }
+@media (max-width: 700px) {
+  /* 极窄窗收起应用名/BETA 芯片，给右上角设置钮和原生 overlay（关闭按钮）留出空间，
+     避免标题栏左侧固定宽度把设置钮挤出可视区 */
+  .tb-name,
+  .tb-beta {
+    display: none;
+  }
+}
 .tb-round {
   display: flex;
   align-items: center;
@@ -438,7 +446,9 @@ async function submitAddTask(input: {
   flex-direction: column;
   gap: 12px;
   min-height: 0;
-  overflow: hidden;
+  /* 窄窗下比内容区宽的子元素改为横向滚动可达，而不是被 overflow:hidden 直接裁掉「消失」 */
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 /* 封面墙容器：相对定位承载批量编辑浮层（浮层 absolute 贴底） */

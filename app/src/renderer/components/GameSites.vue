@@ -718,6 +718,9 @@ onBeforeUnmount(() => {
 }
 .g-toolbar {
   display: flex;
+  /* 窄窗允许换行：地址栏收缩后「在浏览器中打开」等按钮换到下一行，
+     而不是被整体推到视口外裁掉 */
+  flex-wrap: wrap;
   gap: 6px;
   align-items: center;
 }

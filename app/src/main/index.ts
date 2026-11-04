@@ -208,8 +208,8 @@ function createWindow(): void {
   const winOpts: Electron.BrowserWindowConstructorOptions = {
     width: 1280,
     height: 800,
-    minWidth: 960,
-    minHeight: 600,
+    minWidth: 800,
+    minHeight: 520,
     show: false,
     backgroundColor: winBackground(initialDark),
     title: 'HaneHana · 羽花',
