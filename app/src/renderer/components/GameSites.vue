@@ -53,6 +53,8 @@ const pageTitle = ref('')
 
 // --------------------------------------------------------------- 站点与导航
 
+let offGsLoad: (() => void) | null = null
+
 onMounted(async () => {
   try {
     sites.value = await window.hh.sitesList()
@@ -64,6 +66,11 @@ onMounted(async () => {
   }
   await nextTick()
   bindWebview()
+  // 主进程把 webview guest 的 window.open / target=_blank 新开窗口推到这里
+  // （已 deny 弹窗，不会冒出不受控窗口）：在当前 webview 内打开，站内浏览不离开内嵌页。
+  offGsLoad = window.hh.onGsLoadUrl((url) => {
+    if (/^https?:\/\//i.test(url)) nav(url)
+  })
 })
 
 function activeSite(): SiteInfo {
@@ -417,6 +424,8 @@ function reportResolve(added: number, dups: number, failed: string[], note?: str
 }
 
 onBeforeUnmount(() => {
+  offGsLoad?.()
+  offGsLoad = null
   // 浮层挂在 document.body 上，不随组件销毁；不主动摘掉就会留下一层吃掉全窗点击的遮罩
   activeMirrorHolder?.remove()
   activeMirrorHolder = null

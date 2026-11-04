@@ -113,6 +113,8 @@ export const Ipc = {
   NmLink: 'hanehana:push:nm-link',
   /** 系统深浅切换（仅 theme_mode='system' 时推送） */
   ThemeChanged: 'hanehana:push:theme-changed',
+  /** 游戏站内嵌 webview 里 target=_blank / window.open 的新开窗口：请嵌入端在当前 webview 内 loadURL */
+  GsLoadUrl: 'hanehana:push:gs-load-url',
 } as const
 
 export type IpcChannel = (typeof Ipc)[keyof typeof Ipc]

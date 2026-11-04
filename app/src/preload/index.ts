@@ -171,6 +171,8 @@ const bridge = {
     ipcRenderer.invoke(Ipc.SitesAddTask, input),
   webviewOpenExternal: (url: string): Promise<void> => ipcRenderer.invoke(Ipc.WebviewOpenExternal, url),
   onSiteDownload: (cb: (p: SiteDownloadPush) => void): (() => void) => onPush(Ipc.SiteDownload, cb),
+  /** 游戏站内嵌浏览器新开窗口请求：嵌入端收到后应在当前 webview 内打开该 URL（主进程已 deny 弹窗） */
+  onGsLoadUrl: (cb: (url: string) => void): (() => void) => onPush(Ipc.GsLoadUrl, cb),
 
   // ---- 浏览器扩展投递（native messaging）----
   /** 宿主状态：注册情况、桥是否在跑、扩展目录、排队数。 */

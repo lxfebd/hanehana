@@ -120,16 +120,23 @@ let nmWire: NmWire | null = null
 // 全局窗口拦截：主窗口的 setWindowOpenHandler 只覆盖它自己，游戏站页签的
 // webview（allowpopups）开的客人窗口是另一组 WebContents——不给它同样约束，
 // 被嵌入的站点页面就能 `window.open` 出一个不受控的 Electron 窗口。
-// 统一规则：只放 https/http 外链到系统浏览器，其余（javascript:、file:、
-// 自定义协议）一律拒绝；跨协议降级（https→http）也在这里拒绝。
-// `web-contents-created` 是 app 级事件，对主窗口、webview 客人窗口、DevTools
-// 全部生效，一处约束管住所有 WebContents。
+// 统一规则：弹窗一律 deny（不产生不受控窗口）。https/http 中，主窗口等非 webview
+// 一律甩系统浏览器；而「嵌入在主窗口里的游戏站 webview」的新开窗口推送 GsLoadUrl，
+// 让嵌入端在当前 webview 内 loadURL（站内 target=_blank/window.open 不再跳出内嵌页）。
+// 其余协议（javascript:/file:/data:/自定义）一律拒绝。
+// `web-contents-created` 是 app 级事件，对主窗口、webview 客人窗口、DevTools 全部生效。
 app.on('web-contents-created', (_e, contents) => {
   contents.setWindowOpenHandler(({ url }) => {
     try {
       const u = new URL(url)
       if (u.protocol === 'https:' || u.protocol === 'http:') {
-        void shell.openExternal(url)
+        const host = contents.hostWebContents
+        if (contents.getType() === 'webview' && host && win && !win.isDestroyed() && host === win.webContents) {
+          // 游戏站内嵌 webview：留在内嵌浏览器打开
+          host.send(Ipc.GsLoadUrl, url)
+        } else {
+          void shell.openExternal(url)
+        }
       }
       // 其它协议（javascript:/file:/data:/自定义）不开任何东西
     } catch {
