@@ -129,6 +129,45 @@ const LAYOUT_PROBE = `() => {
   return { overflow, cardOverlap, cardCount: cards.length, vw: de.clientWidth, vh: de.clientHeight }
 }`
 
+// 全页面清单：nav 文案（zh）+ 就绪标记 + 是否在"更多"菜单 + 是否有右栏
+const PAGES = [
+  { name: 'home', nav: '首页', marker: '.home-view', more: false, rail: true },
+  { name: 'library', nav: '全部游戏', marker: '.cover-wrap', more: false, rail: true },
+  { name: 'collection', nav: '收藏夹', marker: '.collection-page', more: false, rail: false },
+  { name: 'downloads', nav: '下载任务', marker: '.dl-layout', more: false, rail: false },
+  { name: 'stats', nav: '统计', marker: '.stats-page', more: true, rail: false },
+  { name: 'games', nav: '游戏站', marker: '.games', more: true, rail: false },
+]
+
+// 全页面通用布局探针：横向溢出 + 主列（sidebar/content/aside）两两重叠 + 右栏空白 + 封面卡片重叠
+const PAGE_PROBE = `() => {
+  const de = document.documentElement
+  const overflow = []
+  if (de.scrollWidth > de.clientWidth + 1) overflow.push('doc:' + de.scrollWidth + '>' + de.clientWidth)
+  for (const sel of ['.app-shell', '.layout', '.content', '.page-col', '.cover-wrap', '.toolbar', '.sidebar', '.aside', '.page-head']) {
+    const el = document.querySelector(sel)
+    if (el && el.scrollWidth > el.clientWidth + 1) overflow.push(sel + ':' + el.scrollWidth + '>' + el.clientWidth)
+  }
+  const cols = ['.sidebar', '.content', '.aside'].map((s) => {
+    const e = document.querySelector(s); if (!e) return null
+    const r = e.getBoundingClientRect(); return { l: r.left, r: r.right, t: r.top, b: r.bottom }
+  }).filter(Boolean)
+  let colOverlap = 0
+  for (let i = 0; i < cols.length; i++) for (let j = i + 1; j < cols.length; j++) {
+    const a = cols[i], b = cols[j]
+    if (Math.min(a.r, b.r) - Math.max(a.l, b.l) > 2 && Math.min(a.b, b.b) - Math.max(a.t, b.t) > 2) colOverlap++
+  }
+  const aside = document.querySelector('.aside')
+  const railBlank = !!(aside && !aside.classList.contains('collapsed') && !aside.querySelector('.activity-feed, .detail-panel'))
+  const cards = [...document.querySelectorAll('.cover-card')].map((c) => c.getBoundingClientRect())
+  let cardOverlap = 0
+  for (let i = 0; i < cards.length; i++) for (let j = i + 1; j < cards.length; j++) {
+    const a = cards[i], b = cards[j]
+    if (Math.min(a.right, b.right) - Math.max(a.left, b.left) > 2 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 2) cardOverlap++
+  }
+  return { overflow, colOverlap, railBlank, cardOverlap, cardCount: cards.length, vw: de.clientWidth, vh: de.clientHeight }
+}`
+
 async function main() {
   const wsUrl = await getWsUrl()
   await sleep(2500)
@@ -241,6 +280,25 @@ async function main() {
       }
       return false
     }
+    const goPage = async (nav, more) => {
+      if (more) {
+        await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+        await sleep(450)
+        await ev(`(() => { const items=[...document.querySelectorAll('.more-menu .nav-item')]; const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
+        await sleep(250)
+        await esc()
+        await sleep(400)
+      } else {
+        await ev(`(() => { const items=[...document.querySelectorAll('.sidebar .nav-item')].filter(x=>!x.closest('.more-menu')); const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
+      }
+    }
+    const waitMarker = async (marker) => {
+      for (let i = 0; i < 24; i++) {
+        if ((await ev('!!document.querySelector(' + JSON.stringify(marker) + ')')) === true) return true
+        await sleep(500)
+      }
+      return false
+    }
 
     for (const [w, h] of SIZES) {
       const tag = w + 'x' + h
@@ -250,6 +308,27 @@ async function main() {
       await sleep(3000)
       await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false })
       await sleep(500)
+      // ---- 全页面布局扫描：每个视口下切到每页，断言横向溢出/主列重叠/空白右栏/卡片重叠 ----
+      for (const p of PAGES) {
+        await goPage(p.nav, p.more)
+        const ready = await waitMarker(p.marker)
+        ck(tag + ' 切换:' + p.name, ready === true)
+        await sleep(600)
+        await moveAway()
+        await sleep(200)
+        let L = await ev('(' + PAGE_PROBE + ')()')
+        if (L && L.__err) {
+          await sleep(800)
+          L = await ev('(' + PAGE_PROBE + ')()')
+        }
+        const f0 = fail
+        ck(tag + ' ' + p.name + ' 无横向溢出', !!L && (L.overflow || []).length === 0, JSON.stringify(L && L.overflow))
+        ck(tag + ' ' + p.name + ' 主列互不重叠', !!L && L.colOverlap === 0, 'colOverlap=' + (L && L.colOverlap))
+        if (p.rail) ck(tag + ' ' + p.name + ' 右栏非空白', !!L && !L.railBlank, 'railBlank=' + (L && L.railBlank))
+        if (p.name === 'library') ck(tag + ' library 卡片互不重叠', !!L && L.cardOverlap === 0, 'cardOverlap=' + (L && L.cardOverlap) + ' cards=' + (L && L.cardCount))
+        if (tag === '1440x900' || fail > f0) await shot(tag + ' page-' + p.name)
+      }
+
       ck(tag + ' 进入库页', (await gotoLibrary()) === true)
       await ev('document.querySelector(".cover-card")?.scrollIntoView({ block: "center" })')
       await sleep(600)
