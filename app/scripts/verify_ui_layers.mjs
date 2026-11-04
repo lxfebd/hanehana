@@ -256,6 +256,9 @@ async function main() {
       await moveAway()
       await sleep(200)
       ck(tag + ' 封面墙就绪', (await ev('!!document.querySelector(".cover-card")')) === true)
+      // B4：右栏永远有内容——展开态（>1100px）库页未选中应显示动态流而非空白；
+      // ≤1100px 时 useBoot 有意收起为 28px 栏（.aside.collapsed），属窄屏策略，允许。
+      ck(tag + ' 库页右栏非空白', (await ev(`(() => { const a = document.querySelector('.aside'); if (!a) return false; if (a.classList.contains('collapsed')) return true; return !!a.querySelector('.activity-feed, .detail-panel') })()`)) === true)
       let L = await ev('(' + LAYOUT_PROBE + ')()')
       if (L && L.__err) {
         await sleep(800)

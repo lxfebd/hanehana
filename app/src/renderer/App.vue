@@ -257,7 +257,7 @@ async function submitAddTask(input: {
                 @collapse="ui.detailCollapsed = true"
               />
               <ActivityFeed
-                v-else-if="page === 'home' && !ui.detailCollapsed"
+                v-else-if="!ui.detailCollapsed && (page === 'home' || !selectedGame)"
                 key="feed"
                 class="detail"
               />
