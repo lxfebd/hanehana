@@ -596,6 +596,8 @@ export class Manager {
   /**
    * 启动后补跑：把上次被强杀/崩溃留下的未完成任务重新拉起来续传。
    * 不动 paused —— 那是用户主动按的暂停，重启后该保持。
+   * error 态里只有「引擎进程自身故障」(engine_exited/hang/spawn_failed) 这类过程性错误
+   * 会被续跑（断点还在）；来源端致命错误（磁盘满/403/校验不过…）保持 error，交给用户手动重试。
    */
   startQueued(): void {
     this.maybeStart()
@@ -662,7 +664,7 @@ export class Manager {
       // 任何任务状态变化都会把历史任务（包括早就下完的）重新拉起从头下。
       const tid = this.order.find((id) => {
         const d = this.defs.get(id)
-        return d && !this.tasks.has(id) && isAutoResumable(d.state)
+        return d && !this.tasks.has(id) && isAutoResumable(d.state, d.error_code)
       })
       if (!tid) return
       this.startOne(this.defs.get(tid)!)

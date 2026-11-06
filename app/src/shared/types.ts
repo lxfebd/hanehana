@@ -530,8 +530,24 @@ export interface TaskDef {
   checksum: string
 }
 
-/** 该任务是不是"等重启后自动续跑"的状态。done/paused/error 都不该被自动拉起。 */
-export function isAutoResumable(state: TaskState | ''): boolean {
+/**
+ * 引擎进程自身挂掉（崩溃/卡死/起不来）这类「过程性」错误码：下载源和断点都还在，
+ * 重启后自动续跑是安全的。与来源端致命错误（403 / 磁盘满 / 校验不过 / 无视 Range…）
+ * 严格区分——后者若自动拉起，每轮启动都会重试一遍然后继续失败，等于空转。
+ */
+export const ENGINE_TRANSIENT_ERROR_CODES: ReadonlySet<string> = new Set([
+  'engine_exited',
+  'engine_hang',
+  'engine_spawn_failed',
+])
+
+/**
+ * 该任务是不是"等重启后自动续跑"的状态。done/paused 不该被自动拉起；
+ * error 只有在错误码属于「引擎进程自身故障」这类过程性错误时才自动续跑，
+ * 来源端致命错误（磁盘满、403、校验不过…）保持 error，交给用户手动重试。
+ */
+export function isAutoResumable(state: TaskState | '', errorCode?: string): boolean {
+  if (state === 'error') return !!errorCode && ENGINE_TRANSIENT_ERROR_CODES.has(errorCode)
   return state === '' || state === 'queued' || state === 'downloading' || state === 'preparing'
 }
 

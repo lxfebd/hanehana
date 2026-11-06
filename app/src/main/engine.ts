@@ -24,6 +24,11 @@ import { consumeLines } from './engineLines'
 
 /** 暂停/停止命令的确认等待上限。超时按「引擎没听见」处理，见 pause()/discard()。 */
 const PAUSE_ACK_MS = 1500
+/** 引擎子进程意外退出（崩溃/卡死）时的会话内自动重拉：上限与退避毫秒。
+ *  断点（.part + sidecar）还在，重拉后 probe 会读回 sidecar 从断点续传，
+ *  所以过程性故障不需要人工点「重试」。 */
+const MAX_ENGINE_AUTO_RETRY = 3
+const AUTO_RETRY_DELAYS_MS = [2000, 5000, 10000]
 const STOP_ACK_MS = 1000
 /** probe/run 阶段的心跳超时。正常 probe 是毫秒级，60s 只拦「引擎进程整个挂死」这一种情形。 */
 const PROBE_TIMEOUT_MS = 60_000
@@ -279,6 +284,26 @@ export class EngineTask {
       // 再改状态——否则用户只看到「失败」两个字，没有病因可查（此前只
       // setState('error')，快照里 error 是空的，界面报不出为什么）。
       if (this.state !== 'done' && this.state !== 'cancelled') {
+        // 过程性故障（进程崩溃/卡死）先自动重拉：断点还在，run(true) 重 spawn 后
+        // probe 会读回 sidecar 从断点续传。次数用完再落 error 交给用户手动重试。
+        if (this.autoRetryCount < MAX_ENGINE_AUTO_RETRY) {
+          this.autoRetryCount++
+          const delay = AUTO_RETRY_DELAYS_MS[Math.min(this.autoRetryCount, AUTO_RETRY_DELAYS_MS.length) - 1]
+          const note = `引擎进程意外退出，${delay / 1000}s 后自动重试（${this.autoRetryCount}/${MAX_ENGINE_AUTO_RETRY}）`
+          this.setError(note, 'engine_exited')
+          this.snap = {
+            ...(this.snap ?? emptySnap(this.url, this.dest, this.state)),
+            error: note,
+            error_code: 'engine_exited',
+            error_params: null,
+          }
+          this.emitProgress()
+          this.autoRetryTimer = setTimeout(() => {
+            this.autoRetryTimer = null
+            this.run(true)
+          }, delay)
+          return
+        }
         const reason = '引擎进程意外退出，请重试'
         this.setError(reason, 'engine_exited')
         this.snap = {
@@ -294,10 +319,14 @@ export class EngineTask {
   }
 
   /** 启动/恢复这一轮下载。真正发命令在 resolveThenSend() 里——代理要先按地址解析。 */
-  run(): void {
-    if (this.state === 'downloading' || this.state === 'done') return
+  run(force = false): void {
+    // force 用于引擎进程意外退出后的自动重拉：那时 state 还是 downloading，
+    // 普通守卫会直接 return，重拉永远发不出去。用户手动「开始/继续」仍走默认 guard。
+    if (!force && (this.state === 'downloading' || this.state === 'done')) return
     this.clearPauseWatchdog()
     this.clearProbeWatchdog()
+    this.clearAutoRetryTimer()
+    if (!force) this.autoRetryCount = 0
     this.clearError()
     this.spawnProc()
     // 「引擎到底起没起来」只能看子进程，不能看状态。失败任务的状态本来就是 error，
@@ -422,6 +451,8 @@ export class EngineTask {
 
   pause(): void {
     if (this.state !== 'downloading' && this.state !== 'preparing') return
+    this.clearAutoRetryTimer()
+    this.autoRetryCount = 0
     this.setState('paused')
     try {
       this.send({ cmd: 'pause' })
@@ -442,6 +473,14 @@ export class EngineTask {
 
   /** 暂停确认看门狗，见 pause()。任何离开 paused 的路径都必须清掉它。 */
   private pauseWatchdog: ReturnType<typeof setTimeout> | null = null
+  /** 引擎进程意外退出的自动重拉计数与计时器，见 spawnProc 的 close 处理。 */
+  private autoRetryCount = 0
+  private autoRetryTimer: ReturnType<typeof setTimeout> | null = null
+  private clearAutoRetryTimer(): void {
+    if (!this.autoRetryTimer) return
+    clearTimeout(this.autoRetryTimer)
+    this.autoRetryTimer = null
+  }
 
   private clearPauseWatchdog(): void {
     if (!this.pauseWatchdog) return
@@ -511,6 +550,7 @@ export class EngineTask {
    * 直接杀进程最多丢 100ms 的偏移量。
    */
   kill(): void {
+    this.clearAutoRetryTimer()
     this.terminate()
     this.setState('cancelled')
   }
@@ -524,6 +564,7 @@ export class EngineTask {
    * 兜底，不是设计）。1s 没退出就强杀。
    */
   async discard(): Promise<void> {
+    this.clearAutoRetryTimer()
     const proc = this.proc
     if (proc && proc.exitCode === null && proc.signalCode === null) {
       try {
@@ -689,6 +730,8 @@ export class EngineTask {
           }
           cur.state = ns
           this.setState(ns)
+          // 真正跑起来后重置自动重拉计数：崩溃重试成功、下载恢复后再崩溃应重新给足预算
+          if (ns === 'downloading') this.autoRetryCount = 0
           // 引擎自己报「已暂停」= 它听见了 pause 命令，看门狗可以撤了
           if (ns === 'paused') this.clearPauseWatchdog()
           // 走出准备中就撤心跳看门狗：probe/run 已经走通，剩下的进度事件
@@ -722,6 +765,7 @@ export class EngineTask {
         }
         this.speed = 0
         this.forceState('done')
+        this.autoRetryCount = 0
         this.emitProgress()
         break
       }
