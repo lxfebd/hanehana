@@ -413,7 +413,7 @@ export const en: Record<I18nKey, string> = {
   gs_no_result: 'No results',
   gs_new_kw: 'New keyword',
   gs_open_browser: 'Open {site} in browser',
-  gs_hint: 'Enter a keyword to search three sites; click a result to resolve the download link.',
+  gs_hint: 'Enter a keyword to search across all sites; click a result to resolve the download link.',
   gs_recent: 'Recently visited',
   gs_home: 'Back to site home',
   gs_open_ext: 'Open current page in system browser',

@@ -6,6 +6,7 @@ import type { SiteInfo, SiteMirrorOutcome, SiteSearchOutcome } from '../../share
 import * as gamer520 from './gamer520'
 import * as nekogal from './nekogal'
 import * as playzip from './playzip'
+import * as touchgal from './touchgal'
 
 export interface SiteAdapter {
   search(keyword: string): Promise<SiteSearchOutcome>
@@ -47,6 +48,28 @@ const SITES: SiteRegistration[] = [
     searchPlaceholder: '搜索游戏…',
     hosts: ['playzip.com'],
     adapter: playzip,
+  },
+  {
+    id: 'touchgal',
+    name: 'TouchGAL',
+    home: 'https://www.touchgal.ink/galgame',
+    searchPlaceholder: '搜索 Galgame…',
+    // TouchGAL 有多个镜像域 + 资源 CDN，全部归入 hosts：内嵌浏览器里点任意一个的下载
+    // 都会被 siteIdForUrl 认回 touchgal（实测镜像域见 touchgal.ts 注释）。
+    hosts: [
+      'touchgal.ink',
+      'touchgal.com',
+      'touchgal.co',
+      'touchgal.io',
+      'touchgal.me',
+      'touchgal.moe',
+      'touchgal.net',
+      'touchgal.one',
+      'touchgal.org',
+      'touchgal.us',
+      'touchgaloss.com',
+    ],
+    adapter: touchgal,
   },
 ]
 
