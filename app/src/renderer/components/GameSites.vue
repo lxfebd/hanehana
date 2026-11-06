@@ -7,7 +7,7 @@ OOPIF，有自己的进程与会话；它在沙箱化渲染进程里 * 也能用
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { message } from 'ant-design-vue'
-import { ArrowLeft, ArrowRight, Compass, Download, Link, RefreshCw, Search } from 'lucide-vue-next'
+import { ArrowLeft, ArrowRight, Compass, Download, History, Link, RefreshCw, Search } from 'lucide-vue-next'
 import type {
   Mirror,
   ResolveOutcome,
@@ -27,6 +27,36 @@ const activeSiteId = ref<string>('gamer520')
 const searchKeyword = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const searchDone = ref(false)
+
+/** 内嵌浏览器「最近访问」：webview 每次主框架导航记一笔，存在 localStorage（重启不丢），
+ *  左栏闲置态（未搜索时）用它填充，避免整栏空白。 */
+const RECENT_KEY = 'hh:gs-recent'
+function loadRecent(): string[] {
+  try {
+    const v = JSON.parse(localStorage.getItem(RECENT_KEY) || '[]')
+    return Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string' && /^https?:\/\//i.test(x)) : []
+  } catch {
+    return []
+  }
+}
+const recent = ref<string[]>(loadRecent())
+function pushRecent(url: string): void {
+  if (!/^https?:\/\//i.test(url)) return
+  const list = [url, ...recent.value.filter((u) => u !== url)].slice(0, 8)
+  recent.value = list
+  try {
+    localStorage.setItem(RECENT_KEY, JSON.stringify(list))
+  } catch {
+    /* 隐私模式等不可写时忽略 */
+  }
+}
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host
+  } catch {
+    return url
+  }
+}
 /** 每个站一列，各列独立结项（谁先回来谁先能看） */
 interface SiteGroup {
   site: SiteInfo
@@ -104,11 +134,13 @@ async function bindWebview(): Promise<void> {
   if (!wv) return
   wv.addEventListener('did-navigate', (e) => {
     address.value = e.url
+    pushRecent(e.url)
     void refreshNavState()
   })
   wv.addEventListener('did-navigate-in-page', (e) => {
     if (e.isMainFrame) {
       address.value = e.url
+      pushRecent(e.url)
       void refreshNavState()
     }
   })
@@ -505,7 +537,22 @@ onBeforeUnmount(() => {
             </div>
           </div>
         </template>
-        <div v-else class="g-hint">{{ t('gs_hint') }}</div>
+        <div v-else>
+          <div v-if="recent.length" class="g-recent">
+            <div class="g-group-title">{{ t('gs_recent') }}</div>
+            <button
+              v-for="u in recent"
+              :key="u"
+              class="g-recent-item"
+              :title="u"
+              @click="nav(u)"
+            >
+              <History :size="12" class="g-recent-ic" />
+              <span class="g-recent-url">{{ hostOf(u) }}</span>
+            </button>
+          </div>
+          <div class="g-hint">{{ t('gs_hint') }}</div>
+        </div>
       </div>
     </aside>
 
@@ -708,6 +755,40 @@ onBeforeUnmount(() => {
   color: var(--hh-color-text-faint);
   padding: 8px 2px;
   line-height: 1.6;
+}
+/* 最近访问：左栏闲置态（未搜索时）的内容，避免整栏空白 */
+.g-recent {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 2px;
+}
+.g-recent-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--hh-color-border-ghost);
+  border-radius: var(--hh-radius-md);
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-mid);
+  cursor: pointer;
+  font-size: var(--hh-font-caption-size);
+  text-align: left;
+}
+.g-recent-item:hover {
+  background: var(--hh-color-surface-hover);
+  color: var(--hh-color-text-strong);
+}
+.g-recent-ic {
+  flex: none;
+  color: var(--hh-color-text-tertiary);
+}
+.g-recent-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .g-main {
   flex: 1;

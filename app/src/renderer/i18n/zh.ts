@@ -422,6 +422,7 @@ export const zh = {
   gs_new_kw: '换关键词',
   gs_open_browser: '用浏览器打开 {site}',
   gs_hint: '输入关键词搜索三个站点，点结果解析下载链接。',
+  gs_recent: '最近访问',
   gs_home: '回到站点首页',
   gs_open_ext: '在系统浏览器打开当前页',
   // ---- 编辑对话框 ----
