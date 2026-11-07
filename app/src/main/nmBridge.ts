@@ -263,11 +263,38 @@ export function sendToNmBridge(
   })
 }
 
+/** 排队行数上限。应用没开时反复投递（连点弹窗/右键）会让文件无限增长，
+ *  而 readNmPending 启动时一次全量读进内存，且每行都带着 Cookie/Referer。 */
+const MAX_PENDING_LINES = 200
+
+/** 排队行是不是同一个 URL：同链接已排队就不重复写（下载列表按 URL 判重，
+ *  重复排队只会让接管时白跑一遍）。坏行按「不同」处理，不连累新行。 */
+function pendingHasUrl(raw: string, url: string): boolean {
+  try {
+    return (JSON.parse(raw) as NmDeliverRequest).url === url
+  } catch {
+    return false
+  }
+}
+
 /** 链接排队：应用没在运行时的落脚点。 */
 export function appendNmPending(dir: string, request: NmDeliverRequest): void {
   try {
     mkdirSync(dir, { recursive: true })
-    appendFileSync(nmPendingFile(dir), JSON.stringify(request) + '\n', 'utf8')
+    const file = nmPendingFile(dir)
+    if (existsSync(file)) {
+      const lines = readFileSync(file, 'utf8')
+        .split('\n')
+        .filter((t) => t.trim())
+      if (lines.some((l) => pendingHasUrl(l, request.url))) return
+      if (lines.length >= MAX_PENDING_LINES) {
+        // 丢最旧的：保留最近投递的 MAX-1 条 + 新行。整文件重写（文件有界，
+        // 重写成本可以忽略）比「静默拒绝新行」好——用户刚点的链接不该被吞。
+        const keep = lines.slice(lines.length - MAX_PENDING_LINES + 1)
+        writeFileSync(file, keep.join('\n') + '\n', 'utf8')
+      }
+    }
+    appendFileSync(file, JSON.stringify(request) + '\n', 'utf8')
   } catch (e) {
     console.error('[nm] 排队写入失败：', e)
   }

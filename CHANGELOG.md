@@ -59,6 +59,7 @@
   - **协议噪音占用 error 语义**（`main.rs`）：bad_json / unknown_cmd 原发 `error` 事件，主进程把它当**本任务失败**——一条坏行就把健康下载打成 error。改发 `log` 事件（主进程 switch 的 default 正好忽略）。
   - **dest 纵深防御**（`main.rs`）：probe 时拒绝含 `..` 的路径与 Windows 保留设备名（CON/COM1/LPT9…，大小写不敏感）。
   - 新增两个纯函数单测（`dest_reject_reason` 9 例、`blocked_redirect_target` 14 例），随 cargo test 跑。
+- **排队文件加上限与去重**（`main/nmBridge.ts`）：`nm-pending.jsonl` 此前只追加不设限——应用没开时反复投递（连点弹窗/右键）会让文件无限增长，而 `readNmPending` 启动时一次全量读进内存、每行还带着 Cookie/Referer。修为：同 URL 已排队就不再写（下载列表按 URL 判重，重复排队只是白跑）、行数上限 200、超出丢最旧的但保住刚投递的那条。新增单测 2 例（重复入队只留一行 / 205 行截到 200 且最新在最尾）。闸门：typecheck ✓、test 138/138、reg_all ALL PASS（8/32/23/35）。
 
 ### 验证
 

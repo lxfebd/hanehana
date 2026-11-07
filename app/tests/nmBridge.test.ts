@@ -149,6 +149,29 @@ test('排队：坏行跳过，不让一行垃圾把整个队列卡死', () => {
   rmSync(dir, { recursive: true, force: true })
 })
 
+test('排队：同 URL 不重复入队（下载列表按 URL 判重，重复排队没意义）', () => {
+  const dir = tempDir()
+  const req = { v: 1, action: 'deliver' as const, url: 'https://e.com/a.zip', title: '第一个' }
+  appendNmPending(dir, req)
+  appendNmPending(dir, { ...req, title: '第二个' })
+  appendNmPending(dir, req)
+  const got = readNmPending(dir)
+  assert.equal(got.length, 1, '同 URL 只留一行')
+  rmSync(dir, { recursive: true, force: true })
+})
+
+test('排队：行数有上限，超出丢最旧的、保住刚投递的', () => {
+  const dir = tempDir()
+  for (let i = 0; i < 205; i++) {
+    appendNmPending(dir, { v: 1, action: 'deliver', url: `https://e.com/${i}.zip` })
+  }
+  const got = readNmPending(dir)
+  assert.equal(got.length, 200, '上限 200 行')
+  assert.equal(got[got.length - 1].url, 'https://e.com/204.zip', '最新一行必须保住')
+  assert.equal(got[0].url, 'https://e.com/5.zip', '最旧的被丢')
+  rmSync(dir, { recursive: true, force: true })
+})
+
 // ---- 多字节分片 / 超时语义（修复：逐块 toString 会把跨分片的中文换成 U+FFFD）----
 
 test('桥：中文被切在 TCP 分片里也必须原样到达（按字节攒缓冲）', async () => {
