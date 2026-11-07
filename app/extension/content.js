@@ -72,7 +72,13 @@
   function filenameFromAnchor(anchor) {
     if (!anchor) return ''
     const attr = anchor.getAttribute('download')
-    if (attr && attr.trim()) return attr.trim()
+    // download 属性支与「从路径猜」支共用同一个收尾：替换 Windows 保留字符
+    //与控制字符、截到 255。此前属性支原样返回，净化全靠下游 safeFileName 兜底，
+    //两条路径口径不一。页面可以写出 <a download="<2000 字符>">，截断在这里
+    //就做掉，别把超长/含控制字符的名字一路带到协议里。
+    if (attr && attr.trim()) {
+      return attr.trim().replace(/[\\/:*?"<>|]/g, '_').slice(0, 255)
+    }
     try {
       const u = new URL(anchor.href, location.href)
       const parts = u.pathname.split('/').filter(Boolean)

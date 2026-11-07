@@ -112,6 +112,16 @@ function str(v: unknown): string | undefined {
   return typeof v === 'string' ? v : undefined
 }
 
+/**
+ * 头字段类文本一律拒绝的控制字符。
+ *
+ * referer / cookie / userAgent 最终原样变成 HTTP 请求头（见 nmRequestHeaders），
+ * 值里带 CR/LF 就能在请求里插一行——今天是扩展自己的取值来源（页面地址、UA、
+ * chrome.cookies）不含这些字符，但这层自称是「安全边界」，就不能依赖上游自觉。
+ * NUL 更不用说。filename 侧 safeFileName 下游会兜底，这里一并挡掉。
+ */
+const CONTROL_CHARS = /[\r\n\0]/
+
 function optionalText(
   raw: Record<string, unknown>,
   key: string,
@@ -121,6 +131,7 @@ function optionalText(
   if (v === undefined || v === null) return {}
   if (typeof v !== 'string') return { error: `${key} 必须是字符串` }
   if (v.length > max) return { error: `${key} 太长（上限 ${max} 字符）` }
+  if (CONTROL_CHARS.test(v)) return { error: `${key} 含有非法控制字符` }
   const s = v.trim()
   return s ? { value: s } : {}
 }
@@ -143,6 +154,7 @@ export function validateNmDeliver(raw: unknown): NmValidateResult {
   const url = str(r.url)?.trim() ?? ''
   if (!url) return { ok: false, error: '缺少下载链接' }
   if (url.length > NM_MAX_URL_LEN) return { ok: false, error: '下载链接过长' }
+  if (CONTROL_CHARS.test(url)) return { ok: false, error: '下载链接含有非法控制字符' }
   if (!/^https?:\/\//i.test(url)) return { ok: false, error: '只支持 http/https 链接' }
 
   const filename = optionalText(r, 'filename', NM_MAX_FILENAME_LEN)

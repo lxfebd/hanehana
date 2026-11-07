@@ -160,6 +160,28 @@ export function writeNmManifest(): { ok: boolean; path: string; error?: string }
 }
 
 /**
+ * 幂等自愈：清单内容与「当下应该的样子」不一致就重写。
+ *
+ * 注册表里记的是注册那一刻的宿主中继 exe 路径。允许改安装目录、便携模式切换、
+ * 升级后 resources/ 路径变化，都会让注册表指向一个不存在的 exe——用户侧症状
+ * 正是 README 里最难自查的那行「找不到 HaneHana 宿主」。用户不可能知道要去
+ * 重写清单，所以每次查状态（设置页打开/轮询）时顺手比一次：一个字符串读 +
+ * 解析，内容真不同才写，没有额外磁盘压力。
+ */
+export function ensureNmManifest(): void {
+  const path = nmHostManifestPath()
+  if (!existsSync(path)) return
+  try {
+    const cur = readFileSync(path, 'utf8')
+    if (cur === JSON.stringify(nmHostManifest(), null, 2)) return
+    writeNmManifest()
+  } catch {
+    /* 读不了（占用中/权限）就重写一次兜底 */
+    writeNmManifest()
+  }
+}
+
+/**
  * 注册到指定浏览器。
  *
  * 两个视图都写：Chrome 先查 32 位再查 64 位，只写一个视图的话，
@@ -181,7 +203,16 @@ export async function registerNmHost(
       if (view === '32' && !existsSync(exe)) continue
       const r = await runReg(exe, ['add', key, '/ve', '/t', 'REG_SZ', '/d', manifest.path, '/f'])
       if (r.code === 0) done = true
-      else if (view === '64') errors.push(`${NM_BROWSER_LABELS[b]}：${r.stderr.trim() || '注册表写入失败'}`)
+      // 两个视图的失败都要报：64 位写成功、32 位被安全软件锁了时，界面显示
+      // 「注册成功」而 32 位浏览器实际不可用——那正是最难自查的一档。
+      else {
+        const why = r.stderr.trim() || '注册表写入失败'
+        errors.push(
+          view === '32'
+            ? `${NM_BROWSER_LABELS[b]}：32 位视图写入失败（${why}），32 位浏览器可能不可用`
+            : `${NM_BROWSER_LABELS[b]}：${why}`,
+        )
+      }
     }
     if (done) {
       installed.push(b)

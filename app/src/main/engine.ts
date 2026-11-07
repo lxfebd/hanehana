@@ -30,8 +30,11 @@ const PAUSE_ACK_MS = 1500
 const MAX_ENGINE_AUTO_RETRY = 3
 const AUTO_RETRY_DELAYS_MS = [2000, 5000, 10000]
 const STOP_ACK_MS = 1000
-/** probe/run 阶段的心跳超时。正常 probe 是毫秒级，60s 只拦「引擎进程整个挂死」这一种情形。 */
-const PROBE_TIMEOUT_MS = 60_000
+/** probe/run 阶段的心跳超时。正常 probe 是毫秒级，这个值只拦「引擎进程整个挂死」。
+ *  必须大于引擎侧探测的最坏耗时：HEAD（PROBE_TIMEOUT 40s）+ check_ranges
+ *  （HEADERS_TIMEOUT 30s）串行最坏 70s，60s 会把慢但健康的服务器误判成
+ *  engine_hang（每轮 60s、三次后落 error，用户看到「引擎挂死」其实是服务器慢）。 */
+const PROBE_TIMEOUT_MS = 120_000
 
 /** 定位 fastdrop-engine 可执行文件。 */
 export function enginePath(): string {

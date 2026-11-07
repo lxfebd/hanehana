@@ -20,7 +20,7 @@
  * Electron），自己算就得 import electron，而 import 'electron' 在纯 Node 下会直接
  * 抛「没有 app 这个导出」。目录由调用方（主进程）传进来，模块本身保持零依赖。
  */
-import { randomBytes } from 'node:crypto'
+import { randomBytes, timingSafeEqual } from 'node:crypto'
 import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { connect, createServer, type Server, type Socket } from 'node:net'
 import { join } from 'node:path'
@@ -80,7 +80,12 @@ export function startNmBridge(
 ): { close: () => void; info: NmBridgeInfo } {
   const token = randomBytes(24).toString('hex')
   const info: NmBridgeInfo = { port: 0, token, pid: process.pid, startedAt: Date.now() }
+  // 已建立的连接集合：close() 时统一 destroy——只 server.close() 的话，
+  // 退出瞬间正连着的宿主进程会把句柄留到进程终结。
+  const socks = new Set<Socket>()
   const server: Server = createServer((sock) => {
+    socks.add(sock)
+    sock.on('close', () => socks.delete(sock))
     handleConnection(sock, token, onDeliver)
   })
 
@@ -102,6 +107,14 @@ export function startNmBridge(
       } catch {
         /* 已经关了 */
       }
+      for (const s of socks) {
+        try {
+          s.destroy()
+        } catch {
+          /* 对端可能已经断了 */
+        }
+      }
+      socks.clear()
       try {
         rmSync(nmBridgeFile(dir), { force: true })
       } catch {
@@ -111,12 +124,26 @@ export function startNmBridge(
   }
 }
 
+/** 令牌比较：时序安全 + 长度预判（timingSafeEqual 不等长会抛）。 */
+function tokenEq(given: unknown, expect: string): boolean {
+  if (typeof given !== 'string') return false
+  const a = Buffer.from(given, 'utf8')
+  const b = Buffer.from(expect, 'utf8')
+  if (a.length !== b.length) return false
+  return timingSafeEqual(a, b)
+}
+
 function handleConnection(
   sock: Socket,
   token: string,
   onDeliver: (req: NmDeliverRequest, origin: string) => Promise<NmDeliverResponse>,
 ): void {
-  let buf = ''
+  // 按**字节**攒缓冲：UTF-8 序列被切在 TCP 分片里时，逐块 toString('utf8')
+  // 会把残缺序列换成不可逆的 U+FFFD（中文文件名/Cookie 一冲就坏），随后
+  // JSON.parse 失败、用户看到跟真实原因毫不相干的「消息不是合法 JSON」。
+  // 必须 Buffer.concat 攒够一整行再一次性解码（与 NmFrameDecoder 同口径）。
+  let chunks: Buffer[] = []
+  let bytes = 0
   let answered = false
   sock.setTimeout(BRIDGE_TIMEOUT_MS * 2, () => sock.destroy())
 
@@ -132,16 +159,19 @@ function handleConnection(
   }
 
   sock.on('data', (chunk: Buffer) => {
-    buf += chunk.toString('utf8')
-    if (buf.length > MAX_BRIDGE_MESSAGE) {
+    chunks.push(chunk)
+    bytes += chunk.length
+    if (bytes > MAX_BRIDGE_MESSAGE) {
       finish({ ok: false, error: '消息过大' })
       sock.destroy()
       return
     }
-    const nl = buf.indexOf('\n')
+    const joined = Buffer.concat(chunks)
+    const nl = joined.indexOf(0x0a)
     if (nl < 0) return
-    const line = buf.slice(0, nl)
-    buf = buf.slice(nl + 1)
+    const line = joined.subarray(0, nl).toString('utf8')
+    chunks = [joined.subarray(nl + 1)]
+    bytes = chunks[0].length
 
     let parsed: { token?: string; origin?: string; request?: unknown }
     try {
@@ -150,7 +180,7 @@ function handleConnection(
       finish({ ok: false, error: '消息不是合法 JSON' })
       return
     }
-    if (parsed.token !== token) {
+    if (!tokenEq(parsed.token, token)) {
       finish({ ok: false, error: '桥令牌不匹配' })
       return
     }
@@ -175,7 +205,12 @@ function handleConnection(
 /**
  * 宿主进程侧：把请求递给正在运行的应用。
  *
- * 连不上（应用没开）返回 null，由调用方走排队路径。
+ * 返回值区分两种「没拿到应答」：
+ *   null                                   —— 应用没在跑/连不上（调用方走排队路径）
+ *   { ok: false, error: '主应用应答超时…' }  —— 连上了但超时（**不是**没开）
+ * 以前两种都返回 null，排队路径会把「应用只是慢」也当成没开：多写一行
+ * nm-pending.jsonl，而下次启动接手时那条排队行**不带 Cookie**（凭据只活在
+ * 内存），manager 又按 URL 判重不重建任务——登录态站点的续传就此 403。
  */
 export function sendToNmBridge(
   dir: string,
@@ -194,10 +229,12 @@ export function sendToNmBridge(
       resolve(v)
     }
     const sock = connect({ host: '127.0.0.1', port: info.port })
-    let buf = ''
+    // 应答方向同样按字节攒：dest 路径/标题带中文时，逐块 toString 会把
+    // 跨分片的序列换成不可逆的 U+FFFD。
+    let chunks: Buffer[] = []
     sock.setTimeout(timeoutMs, () => {
       sock.destroy()
-      finish(null)
+      finish({ ok: false, error: '主应用应答超时（任务可能已创建，请到下载页查看）' })
     })
     sock.on('error', () => {
       finish(null)
@@ -206,11 +243,13 @@ export function sendToNmBridge(
       sock.write(JSON.stringify({ token: info.token, origin, request }) + '\n')
     })
     sock.on('data', (chunk: Buffer) => {
-      buf += chunk.toString('utf8')
-      const nl = buf.indexOf('\n')
+      chunks.push(chunk)
+      const joined = Buffer.concat(chunks)
+      const nl = joined.indexOf(0x0a)
       if (nl < 0) return
+      chunks = [joined.subarray(nl + 1)]
       try {
-        const parsed = JSON.parse(buf.slice(0, nl)) as {
+        const parsed = JSON.parse(joined.subarray(0, nl).toString('utf8')) as {
           ok?: boolean
           response?: NmDeliverResponse
           error?: string

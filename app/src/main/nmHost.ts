@@ -209,11 +209,29 @@ function openHostStdin(): ReadStream {
  */
 function writeFrame(payload: unknown): Promise<void> {
   return new Promise((resolve) => {
+    let settled = false
+    const done = (): void => {
+      if (!settled) {
+        settled = true
+        resolve()
+      }
+    }
+    // 写回调可能永不来（中继已退/管道读端消失）：挂个 2s 竞速兜底，
+    // 否则 shutdown() 的 lastWrite.then(...) 永远不跑，process.exit 轮不到。
+    const timer = setTimeout(() => {
+      console.error('[nm] 写应答超时（管道可能已断）')
+      done()
+    }, 2000)
+    timer.unref()
     try {
-      process.stdout.write(encodeNmRelayFrame(payload), () => resolve())
+      process.stdout.write(encodeNmRelayFrame(payload), () => {
+        clearTimeout(timer)
+        done()
+      })
     } catch (e) {
+      clearTimeout(timer)
       console.error('[nm] 写应答失败：', e)
-      resolve()
+      done()
     }
   })
 }

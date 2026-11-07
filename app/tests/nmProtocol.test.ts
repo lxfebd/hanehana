@@ -104,6 +104,25 @@ test('validateNmDeliver: 可选字段去空白，空串按「没给」处理', (
   assert.equal('title' in r.value, false)
 })
 
+test('validateNmDeliver: 头字段类文本里的 CR/LF/NUL 一律拒（头注入面）', () => {
+  const base = { v: 1, action: 'deliver', url: 'https://e.com/a.zip' }
+  const cases: Array<[string, Record<string, unknown>]> = [
+    ['cookie', { cookie: 'sid=1\r\nX-Injected: 1' }],
+    ['referer', { referer: 'https://e.com/\nX-Injected: 1' }],
+    ['userAgent', { userAgent: 'UA/1.0\rmore' }],
+    ['filename', { filename: 'a.zip\0.exe' }],
+    ['url', { url: 'https://e.com/a.zip\r\nHost: evil' }],
+  ]
+  for (const [field, patch] of cases) {
+    const r = validateNmDeliver({ ...base, ...patch })
+    assert.equal(r.ok, false, `${field} 含控制字符必须被拒`)
+    if (!r.ok) assert.match(r.error, /控制字符/)
+  }
+  // 正常值不受影响
+  const ok = validateNmDeliver({ ...base, cookie: 'sid=1; theme=dark', filename: '中文 文件.zip' })
+  assert.equal(ok.ok, true)
+})
+
 test('nmRequestHeaders: 只映射 Referer / Cookie / User-Agent', () => {
   const r = validateNmDeliver({
     v: 1,

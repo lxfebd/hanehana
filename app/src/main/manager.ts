@@ -9,7 +9,7 @@
  * Node 是单线程的，不需要显式互斥锁——
  * 主进程的事件循环就是唯一的执行上下文，不存在并发写。
  */
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, extname, join } from 'node:path'
 import { existsSync, rmSync, statSync, statfsSync } from 'node:fs'
 import { EngineTask } from './engine'
 import { randomBytes } from 'node:crypto'
@@ -116,8 +116,7 @@ async function removeFile(p: string): Promise<string | null> {
   return null
 }
 
-/**
- * URL 里取文件名。引擎侧只接受完整文件路径（它自己不会从 URL 推文件名），
+/** URL 里取文件名。引擎侧只接受完整文件路径（它自己不会从 URL 推文件名），
  * 所以这里是唯一的推导点：URL 非法时也不能抛，退化成去掉 query 后的尾段。
  */
 function fileNameFromUrl(url: string): string {
@@ -131,6 +130,14 @@ function fileNameFromUrl(url: string): string {
   return basename(path)
 }
 
+/** 在 dest 的扩展名前插 " (i)"：与 uniquePath 的后缀规则一致。 */
+function bumpName(p: string, i: number): string {
+  const dir = dirname(p)
+  const ext = extname(p)
+  const stem = basename(p, ext)
+  return join(dir, `${stem} (${i})${ext}`)
+}
+
 /** 调度中心：持有任务定义表、运行中的引擎实例、排队顺序。 */
 export class Manager {
   settings: Settings
@@ -140,6 +147,10 @@ export class Manager {
   /** url → id 索引：add 去重从 O(n) 扫 listDefs 变成 O(1) 查表（千级队列 + 连点
    *  添加是最常见路径，每次都全表 find 没必要）。register/remove 处同步维护。 */
   private byUrl = new Map<string, string>()
+  /** dest → id 索引。uniquePath 只认盘上存在的名字，而引擎要先 probe 成功才建
+   *  `.part`——两次添加之间隔着探测延迟，只靠盘会把同一个 dest 发给两个引擎
+   *  进程（各写一份 .part/.part.meta，内容混合、rename 后写错 inode）。 */
+  private byDest = new Map<string, string>()
   private onPush: (p: TaskProgressPush) => void
   private persist: PersistFn
   /** 正在退出：kill() 引发的 cancelled 不落盘，见 syncDef */
@@ -200,6 +211,7 @@ export class Manager {
   private register(d: TaskDef): void {
     this.defs.set(d.id, d)
     this.byUrl.set(d.url, d.id)
+    this.byDest.set(d.dest, d.id)
     if (!this.order.includes(d.id)) this.order.push(d.id)
   }
 
@@ -218,7 +230,17 @@ export class Manager {
     if (existing) return { ok: true, def: existing, duplicate: true }
 
     const threads = input.threads ?? s.threads
-    const dest = uniquePath(this.resolveDest(url, input.dest || s.download_dir))
+    // 配置里的下载目录**按目录对待**（无论盘上是否存在）：新机器/自定义路径
+    // 首次下载前它还不存在，isDirectory 判不出来，dest 会被当成文件路径原样
+    // 传给引擎——引擎把目录名当文件写，下载必然失败。显式手输的路径仍走原判据。
+    const rawDest = input.dest || s.download_dir
+    // in-process 去重：盘上还没出现的 dest 也要让位（引擎 probe 期间同名文件
+    // 并不存在，但名字已经在这次会话里分配掉了，见 byDest 注释）。
+    const base = this.resolveDest(url, rawDest, rawDest === s.download_dir)
+    let dest = uniquePath(base)
+    for (let i = 1; this.byDest.has(dest) && i < 1000; i++) {
+      dest = uniquePath(bumpName(base, i))
+    }
     const d: TaskDef = {
       id: randomBytes(6).toString('hex'),
       url,
@@ -246,13 +268,17 @@ export class Manager {
     return { ok: true, def: d, duplicate: false }
   }
 
-  /** dest 指向目录时用 URL 文件名补全成完整文件路径。 */
-  private resolveDest(url: string, dest: string): string {
+  /**
+   * dest 指向目录时用 URL 文件名补全成完整文件路径。
+   *
+   * `forceDir`：调用方明确说「这就是设置里的下载目录」（它可能还不存在，
+   * 见 add() 的注释）。判断「是不是目录」不能只看结尾分隔符：默认保存目录
+   * 是 ~/Downloads，没有尾部斜杠，把它当文件路径会让引擎下完 100% 后 rename
+   * 到已存在目录上失败。引擎只吃完整文件路径，所以补全必须在这里做完。
+   */
+  private resolveDest(url: string, dest: string, forceDir = false): string {
     if (!dest) return dest
-    // 判断「是不是目录」不能只看结尾分隔符：默认保存目录是 ~/Downloads，
-    // 没有尾部斜杠。把它当文件路径会让引擎下完 100% 后 rename 到已存在目录上失败。
-    // 引擎只吃完整文件路径，所以补全必须在这里做完。
-    const isDir = dest.endsWith('/') || dest.endsWith('\\') || isDirectory(dest)
+    const isDir = forceDir || dest.endsWith('/') || dest.endsWith('\\') || isDirectory(dest)
     if (!isDir) return dest
     return join(dest, safeFileName(fileNameFromUrl(url)))
   }
@@ -527,7 +553,10 @@ export class Manager {
     const dest = d?.dest ?? ''
     const task = this.tasks.get(id)
     this.defs.delete(id)
-    if (d) this.byUrl.delete(d.url)
+    if (d) {
+      this.byUrl.delete(d.url)
+      this.byDest.delete(d.dest)
+    }
     this.order = this.order.filter((x) => x !== id)
     this.tasks.delete(id)
     this.notified.delete(id)

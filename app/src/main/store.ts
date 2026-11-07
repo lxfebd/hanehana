@@ -314,16 +314,30 @@ export class Store {
  * 下载目录里躺着的可能是用户自己的文件，和这次要下的东西毫无关系——
  * 实测过：路径撞车时旧文件会被新下载整份替换掉。
  */
+/**
+ * 唯一落点：成品名或**任一断点名**被占用就换名字。
+ *
+ * 只查成品是不够的：引擎先写 `dest.part`，成品要等全部下完才 rename 出来。
+ * 「下载 A 进行中（磁盘上还只有 a.zip.part、没有 a.zip）→ 添加同名的新链接 B」——
+ * uniquePath 只看成品会判 a.zip 空闲，两个引擎进程就往同一个 .part/.part.meta
+ * 里对写：内容混合、rename 后句柄写错 inode、边车被交替覆写。所以 .part 与
+ * .part.meta 一并算占用——它们就是「这个名字已经有主了」的在盘证据。
+ */
 export function uniquePath(p: string): string {
-  if (!p || !existsSync(p)) return p
+  if (!p || !busy(p)) return p
   const dir = dirname(p)
   const ext = extname(p)
   const stem = basename(p, ext)
   for (let i = 1; i < 1000; i++) {
     const cand = join(dir, `${stem} (${i})${ext}`)
-    if (!existsSync(cand)) return cand
+    if (!busy(cand)) return cand
   }
   return p
+}
+
+/** 这个名字（含下载断点）是不是已经有主了。 */
+function busy(p: string): boolean {
+  return existsSync(p) || existsSync(`${p}.part`) || existsSync(`${p}.part.meta`)
 }
 
 /** 12 位十六进制随机 ID。 */

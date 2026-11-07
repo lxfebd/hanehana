@@ -83,6 +83,22 @@ importScripts('strings.js')
     return text.length > max ? text.slice(0, max) : text
   }
 
+  /**
+   * 超长 URL 的特判：**不静默截断**。
+   *
+   * clampText 对 url 一刀切会让一个 5000 字符的链接变成 4096 字符发出去，
+   * 主机侧的长度校验永远不触发，用户拿到的是一个形态完好、指向错误资源的
+   * 下载任务——而不是「下载链接过长」（S.errorUrlTooLong 此前是死字符串，
+   * 没有任何地方引用它）。url 是任务的根，错一位整个任务就废了，必须明确拒绝。
+   */
+  function clampUrlOrError(value) {
+    const text = typeof value === 'string' ? value.trim() : ''
+    if (text && text.length > MAX_URL) {
+      return { error: S.errorUrlTooLong }
+    }
+    return { url: clampText(text, MAX_URL) }
+  }
+
   function isHttpUrl(value) {
     try {
       const u = new URL(String(value))
@@ -245,7 +261,11 @@ importScripts('strings.js')
     const input = payload || {}
     const notes = []
 
-    const url = clampText(input.url, MAX_URL)
+    const urlCheck = clampUrlOrError(input.url)
+    if (urlCheck.error) {
+      return { ok: false, status: 'error', message: urlCheck.error, notes: notes }
+    }
+    const url = urlCheck.url
     if (!url) {
       return { ok: false, status: 'error', message: S.errorEmptyUrl, notes: notes }
     }

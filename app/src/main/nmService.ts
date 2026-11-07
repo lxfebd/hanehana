@@ -35,6 +35,7 @@ import {
 } from './nmBridge'
 import {
   NM_BROWSERS,
+  ensureNmManifest,
   nmExtensionDir,
   nmHostManifestPath,
   nmHostRegistration,
@@ -84,10 +85,18 @@ export function wireNm(deps: NmServiceDeps): NmWire {
    * 接手发生在启动早期，那时窗口还不存在，推给渲染层等于丢进虚空——
    * 用户看到的现象是「链接明明排上了队，下载列表里却什么都没有」。
    * 所以这批推送先存着，等窗口建好由主进程调 replayPending() 重发。
+   * 按 url 去重（同一条链接重复投递只留最新一条）+ 设上限：
+   * replayPending 挂在 did-finish-load 上，窗口每重载一次就重发一遍，
+   * 不去重会让用户在同一条链接上弹出一模一样的提示。
    */
   const pendingPushes: NmLinkPush[] = []
   const push = (p: NmLinkPush): void => {
-    if (p.source === 'pending') pendingPushes.push(p)
+    if (p.source === 'pending') {
+      const i = pendingPushes.findIndex((x) => x.url === p.url)
+      if (i >= 0) pendingPushes.splice(i, 1)
+      pendingPushes.push(p)
+      if (pendingPushes.length > 50) pendingPushes.shift()
+    }
     deps.getWindow()?.webContents.send(Ipc.NmLink, p)
   }
 
@@ -157,6 +166,9 @@ export function wireNm(deps: NmServiceDeps): NmWire {
   }
 
   const status = async (): Promise<NmHostStatus> => {
+    // 顺手自愈清单：安装目录变了/升级后 resources 路径变了，注册表会指向一个
+    // 不存在的宿主 exe（用户侧 = 「找不到 HaneHana 宿主」，最难自查）。
+    ensureNmManifest()
     const info: NmBridgeInfo = bridge.info
     return {
       hostName: NM_HOST_NAME,
