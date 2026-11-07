@@ -157,6 +157,7 @@ defineExpose({ showAt, close })
     <div
       v-if="open"
       class="ctx-menu glass"
+      data-dialog="open"
       :style="{ left: pos.x + 'px', top: pos.y + 'px', minWidth: menuW + 'px' }"
       role="menu"
       @contextmenu.prevent

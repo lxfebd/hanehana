@@ -52,7 +52,7 @@ const groups = computed(() => [
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="sc-mask" @click.self="open = false">
+    <div v-if="open" class="sc-mask" data-dialog="open" @click.self="open = false">
       <div class="sc-panel glass" role="dialog" aria-modal="true" :aria-label="t('sc_title')">
         <header class="sc-head">
           <div class="sc-title">{{ t('sc_title') }}</div>

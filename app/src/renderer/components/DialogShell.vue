@@ -49,7 +49,7 @@ onMounted(() => {
 
 <template>
   <Teleport to="body">
-    <div v-if="open" class="ds-mask" @click.self="onMaskClick">
+    <div v-if="open" class="ds-mask" data-dialog="open" @click.self="onMaskClick">
       <div
         class="ds-panel glass"
         role="dialog"

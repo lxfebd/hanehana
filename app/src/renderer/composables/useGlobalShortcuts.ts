@@ -20,7 +20,8 @@
  *      （否则打字时按空格会启动游戏、按 1 会切页）——Ctrl 组合键除外。
  *   2. 焦点在 button 上不处理 Space（那是按钮本来的激活键，抢了会「点不动」）。
  *   3. 任何弹层打开时不处理页面级快捷键（Esc 交给弹层自己关）；
- *      帮助面板自身由 ShortcutHelp 的 watch(open) 注册一次并 stopPropagation。
+ *      自绘弹层（DialogShell/右键菜单/帮助面板）根节点带 data-dialog="open"，
+ *      anyDialogOpen() 统一认得；帮助面板没有自己的 keydown，Esc 由本文件 Escape 分支统一关。
  *   4. 多选模式下 Delete 才生效，避免库页误删单款。
  */
 import { onMounted, onUnmounted, ref } from 'vue'
@@ -39,7 +40,7 @@ function inEditable(el: Element | null): boolean {
   return (el as HTMLElement).isContentEditable === true
 }
 
-/** 有任意弹层开着吗（Modal/抽屉/自绘对话框统一认 .ant-modal-root 与 data-dialog）。 */
+/** 有任意弹层开着吗（antd Modal 的 .ant-modal-root + 自绘弹层的 [data-dialog="open"]）。 */
 function anyDialogOpen(): boolean {
   return !!document.querySelector('.ant-modal-root, [data-dialog="open"]')
 }
@@ -80,11 +81,19 @@ export function useGlobalShortcuts(): void {
       return
     }
 
-    // ---- 弹层开着：只让 Esc 过关（由弹层自身处理），其余一概不抢 ----
-    if (anyDialogOpen()) return
-
-    // ---- Esc：清搜索 → 退多选（两层退栈） ----
+    // ---- Esc：帮助面板优先由本文件关（ShortcutHelp 自己没有 keydown 监听）；
+    //      其次真实弹层交给弹层自身（DialogShell/右键菜单各自有 capture keydown）；
+    //      再清搜索 → 退多选（两层退栈）。
+    //      必须放在 anyDialogOpen 早退之前：sc-mask 虽带 data-dialog="open"，
+    //      但若被早退吞掉，Esc 就永远关不掉帮助面板。 ----
     if (e.key === 'Escape') {
+      if (shortcutHelpOpen.value) {
+        e.preventDefault()
+        e.stopPropagation()
+        shortcutHelpOpen.value = false
+        return
+      }
+      if (anyDialogOpen()) return // 弹层自身处理 Esc
       if (editable) return // 输入框里的 Esc 归输入框（比如清空正则切换）
       if (library.keyword) {
         e.preventDefault()
@@ -97,6 +106,9 @@ export function useGlobalShortcuts(): void {
       }
       return
     }
+
+    // ---- 弹层开着（含帮助面板，均带 data-dialog="open"）：其余页面级快捷键一律不抢 ----
+    if (anyDialogOpen() || shortcutHelpOpen.value) return
 
     // ---- F1：帮助面板（放在 F5 之前，两个都是功能键但语义不同） ----
     if (e.key === 'F1') {
