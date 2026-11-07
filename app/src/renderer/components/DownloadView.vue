@@ -15,6 +15,7 @@ import { matchesFilter, matchesQuery, rowName, rowState, sortRows, SORT_OPTIONS 
 import {
   downloads,
   removeTask,
+  refreshTasks,
   reportRejection,
   taskAction,
   batchEventVisible,
@@ -60,6 +61,15 @@ const visibleRows = computed(() =>
     downloads.taskSort,
   ),
 )
+
+/**
+ * 可见集指纹：RecycleScroller（vue-recycle-scroller）在 items 缩容时不会移除
+ * 已渲染的 item-view（筛选/搜索把 6 行筛成 1 行，DOM 里仍留 6 行陈旧行，
+ * 且可点击）——库页网格早用 :key 规避过（CoverGrid 的 filterFingerprint），
+ * 这两个列表照此办理：可见集一变就整体重挂，渲染永远是干净的新集合。
+ * 排序变化不改指纹，滚动位置不受影响。
+ */
+const visibleKey = computed(() => 'dl-' + visibleRows.value.map((r) => r.id).join('|'))
 
 const FILTERS: { key: string; labelKey: I18nKey }[] = [
   { key: 'all', labelKey: 'toolbar_all' },
@@ -135,7 +145,13 @@ function onAll(action: string): void {
   try {
     window.hh.actionAll(action as 'start' | 'pause' | 'clear-finished' | 'retry-failed').then(
       (res) => {
-        if (!res.ok) message.error(res.error)
+        if (!res.ok) {
+          message.error(res.error)
+          return
+        }
+        // actionAll 是同步 IPC（清空/重试/启停全量），没有引擎进度推送兜底，
+        // 不主动重拉的话「清空已完成」的行会一直赖在列表里（同 removeTask）。
+        void refreshTasks()
       },
       (e: unknown) => {
         reportRejection(e)
@@ -247,6 +263,7 @@ function onAll(action: string): void {
       <div class="dl-list">
         <RecycleScroller
           v-if="visibleRows.length > 0"
+          :key="visibleKey"
           class="dl-scroller"
           :items="visibleRows"
           :item-size="72"

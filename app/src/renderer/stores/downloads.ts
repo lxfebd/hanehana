@@ -126,8 +126,14 @@ export async function taskAction(id: string, action: 'start' | 'pause' | 'resume
 
 export async function removeTask(id: string, deleteFiles: boolean): Promise<void> {
   const r = await window.hh.removeTask(id, deleteFiles)
-  if (!r.ok) message.error(r.error)
-  else message.success(deleteFiles ? '任务与文件已删除' : '任务已移除（文件保留）')
+  if (!r.ok) {
+    message.error(r.error)
+    return
+  }
+  message.success(deleteFiles ? '任务与文件已删除' : '任务已移除（文件保留）')
+  // 删除没有任何推送兜底（没有引擎在推进度），不主动重拉的话被删的行
+  // 会一直留在列表里——用户刚看到「已移除」toast，行却还在，像没删掉。
+  void refreshTasks()
 }
 
 export async function openSettings(): Promise<void> {

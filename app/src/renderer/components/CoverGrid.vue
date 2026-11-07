@@ -366,6 +366,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
         行距只能靠 itemSize 让步，否则行会紧贴。 -->
     <RecycleScroller
       v-else
+      :key="'list-' + games.map((g) => g.id).join('|')"
       class="scroller"
       :items="games"
       :item-size="80"
