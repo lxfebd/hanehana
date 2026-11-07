@@ -125,6 +125,8 @@ export function crBundleNote(
 
 const CR_MAX_DEPTH = 8
 const CR_PAGE_SIZE = 500
+/** 列目录翻页上限：500/页 × 20 = 一万个文件，远超任何真实分享；防服务端异常。 */
+const CR_MAX_PAGES = 20
 const CR_MAX_FILES = 60
 
 interface CrEntry {
@@ -212,27 +214,41 @@ function reason(e: unknown): string {
   return /net::|ERR_|ECONN|ENOTFOUND|ETIMEDOUT|abort|超时|没有响应/i.test(msg) ? networkLayerHint(e) : msg
 }
 
-/** 列一个目录。uri 形如 cloudreve://OnPtr@share 或 ...@share/父目录名。 */
+/**
+ * 列一个目录（自动翻页）。uri 形如 cloudreve://OnPtr@share 或 ...@share/父目录名。
+ *
+ * 必须翻页：单页 page_size=500 只拿第一页的话，500+ 文件的大分享会被静默
+ * 少计——crBundleNote 的「共 N 个文件」和 missing 计数全部偏小，用户以为
+ * 全量到位了，解压才发现缺件（正是 crBundleNote 注释里说的那种吞信息）。
+ * 翻到「不满一页」为止；页数设上限防异常服务端永远返回满页。
+ */
 async function crList(uri: string): Promise<CrEntry[]> {
-  const r = await fetchText(`${CR_BASE}/file?uri=${encodeURIComponent(uri)}&page_size=${CR_PAGE_SIZE}`, {
-    headers: { accept: 'application/json' },
-  })
-  const why = httpFailureMessage(r)
-  if (why) throw new Error(`列目录 ${why}`)
-  const j = parseJson(r.text) as {
-    code?: number
-    msg?: string
-    data?: { files?: Array<Partial<CrEntry>> }
-  } | null
-  // 网关/风控经常拿 HTML 冒充 JSON，不点破的话用户只会看到「访问失败」
-  if (!j) throw new Error(`列目录没有返回 JSON（HTTP ${r.status}，${r.contentType || '未知类型'}）`)
-  if (j.code !== 0) throw new Error(j.msg ?? `code ${j.code} @ ${uri}`)
-  return (j.data?.files ?? []).map((f) => ({
-    type: f.type ?? 0,
-    name: f.name ?? '',
-    path: f.path ?? '',
-    size: f.size ?? 0,
-  }))
+  const out: CrEntry[] = []
+  for (let page = 1; page <= CR_MAX_PAGES; page++) {
+    const r = await fetchText(
+      `${CR_BASE}/file?uri=${encodeURIComponent(uri)}&page_size=${CR_PAGE_SIZE}&page=${page}`,
+      { headers: { accept: 'application/json' } },
+    )
+    const why = httpFailureMessage(r)
+    if (why) throw new Error(`列目录 ${why}`)
+    const j = parseJson(r.text) as {
+      code?: number
+      msg?: string
+      data?: { files?: Array<Partial<CrEntry>> }
+    } | null
+    // 网关/风控经常拿 HTML 冒充 JSON，不点破的话用户只会看到「访问失败」
+    if (!j) throw new Error(`列目录没有返回 JSON（HTTP ${r.status}，${r.contentType || '未知类型'}）`)
+    if (j.code !== 0) throw new Error(j.msg ?? `code ${j.code} @ ${uri}`)
+    const files = (j.data?.files ?? []).map((f) => ({
+      type: f.type ?? 0,
+      name: f.name ?? '',
+      path: f.path ?? '',
+      size: f.size ?? 0,
+    }))
+    out.push(...files)
+    if (files.length < CR_PAGE_SIZE) break
+  }
+  return out
 }
 
 /** 递归收集分享内所有文件（跳过目录），限深防止异常递归。 */
