@@ -1,5 +1,6 @@
 {
   "manifest_version": 3,
+  "minimum_chrome_version": "116",
   "name": "HaneHana 下载助手",
   "short_name": "HaneHana",
   "version": "0.2.21",

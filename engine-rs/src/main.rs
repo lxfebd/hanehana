@@ -240,6 +240,10 @@ impl Task {
     fn sidecar_path(&self) -> String {
         format!("{}.part.meta", self.dest)
     }
+    /// 边车的临时文件（写完 rename 前的形态）。写失败的遗留也在这里清掉。
+    fn sidecar_tmp_path(&self) -> String {
+        format!("{}.tmp", self.sidecar_path())
+    }
 
     fn build_segments(&mut self) {
         let n = self.threads.max(1);
@@ -1003,6 +1007,8 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
 async fn discard_progress(g: &mut Task) {
     let _ = tokio::fs::remove_file(&g.tmp_path()).await;
     let _ = tokio::fs::remove_file(&g.sidecar_path()).await;
+    // 边车 tmp 的遗留一并收掉：写失败的半截 tmp 不清会永远躺在下载目录里
+    let _ = tokio::fs::remove_file(g.sidecar_tmp_path()).await;
     g.stream_done = false;
     for s in &mut g.segments {
         s.downloaded = 0;
@@ -1052,6 +1058,7 @@ async fn finalize(g: &mut Task) -> Option<Value> {
     match tokio::fs::rename(&g.tmp_path(), &g.dest).await {
         Ok(()) => {
             let _ = tokio::fs::remove_file(&g.sidecar_path()).await;
+            let _ = tokio::fs::remove_file(g.sidecar_tmp_path()).await;
             Some(json!({"event":"done","total":g.total}))
         }
         // 单独一码而不是复用 io_code：`.part` 已经写满了，处置是「关掉占用它的程序

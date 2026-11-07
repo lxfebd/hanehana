@@ -350,6 +350,9 @@
         $('cookie-hint').textContent = S.cookieHintGranted
         saveCookieSetting(true)
       })
+        .catch(function () {
+          /* 弹窗可能在授权完成前就关了：元素已不在，忽略 */
+        })
       return
     }
 
@@ -361,6 +364,9 @@
       $('cookie-hint').textContent = S.cookieHintIdle
       saveCookieSetting(false)
     })
+      .catch(function () {
+        /* 同上：弹窗可能已关，元素已不在，忽略 */
+      })
   }
 
   /* ================= 初始化 ================= */
