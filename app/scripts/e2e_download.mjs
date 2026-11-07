@@ -349,6 +349,49 @@ async function main() {
     check('pause 后服务端不再吐字节', servedAfter - servedBefore === 0, `served ${servedBefore}→${servedAfter}`)
     check('pause 后 downloaded 不再增长', pausedDownAfter === pausedDown, `downloaded ${pausedDown}→${pausedDownAfter}`)
 
+    // 7b2. 暂停→继续：downloaded 必须接着 pause 前的值走，绝不能回跳。
+    //      这条路径以前从没被测过——而它正是 resume_ok 修复的验证点：
+    //      resume_ok 只在 probe 时求值一次，同进程内第二次 run（暂停→继续
+    //      正是最常用的一条）会把所有段清零、从 0 全量重下。e2e 以前只测了
+    //      「杀进程/重启后重新 probe」那条路（resume_ok 恰为 true，所以是好的），
+    //      盲区一直都在。
+    //      采样策略：恢复后 1.5s 内反复读 downloaded 取最小值——修复正常工作
+    //      时它只增不减；一旦回归（清零重下）最小值会掉到接近 0。
+    await evalJs(`(async () => (await window.hh.action('${pauseId}', 'resume')))()`)
+    await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        return stateOf(rows, pauseId) === 'downloading' ? true : null
+      },
+      15_000,
+      'resume 后回到 downloading',
+    )
+    let minAfterResume = Number.MAX_SAFE_INTEGER
+    for (let i = 0; i < 15; i++) {
+      const d = await evalJs(`(async () => {
+        const rows = await window.hh.listTasks()
+        const r = rows.find((x) => x.id === '${pauseId}')
+        return r?.snap?.downloaded ?? 0
+      })()`)
+      if (d < minAfterResume) minAfterResume = d
+      await wait(100)
+    }
+    check(
+      '暂停→继续后续传（downloaded 不回跳）',
+      minAfterResume >= pausedDown,
+      `paused=${pausedDown} → resume 后最小值=${minAfterResume}（回跳即 resume_ok 缺陷复现）`,
+    )
+    // 再停一次收尾：后面 7c 的 retry 语义是「从头重下」，需要一个确定状态
+    await evalJs(`(async () => (await window.hh.action('${pauseId}', 'pause')))()`)
+    await waitFor(
+      async () => {
+        const rows = await evalJs(`(async () => (await window.hh.listTasks()))()`)
+        return stateOf(rows, pauseId) === 'paused' ? true : null
+      },
+      15_000,
+      '复测后再次 paused',
+    )
+
     // 7c. retry 后 .part 不残留：pause 的任务删掉 .part/.part.meta 重启，
     //     但要注意 .part 是引擎进程持有的；直接断言文件不存在会撞上重下瞬间的
     //     再创建。改为断言「retry 后 downloaded 归零 + 重新从 0 开始下」，
