@@ -138,7 +138,8 @@ export function useGlobalShortcuts(): void {
     if (e.key === 'Delete') {
       if (ui.page === 'library' && library.selectMode && library.selection.length) {
         e.preventDefault()
-        void batchRemove(library.selection)
+        // 展开成普通数组再过 IPC：reactive 数组 Proxy 过不了结构化克隆（见 BatchEditOverlay 同款）
+        void batchRemove([...library.selection])
       }
       return
     }

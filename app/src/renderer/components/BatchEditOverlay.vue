@@ -87,9 +87,13 @@ async function removeSel(): Promise<void> {
     cancelText: t('common_cancel'),
     okButtonProps: { danger: true },
     onOk: async () => {
-      const ok = await batchRemove(sel.value)
+      // 必须展开成普通数组：sel.value 是 reactive 数组 Proxy，直接过 ipcRenderer.invoke
+      // 会被 Chromium 结构化克隆拒绝（"An object could not be cloned."），删除永远失败，
+      // store 回滚后用户只看到一串英文错 toast。
+      const ok = await batchRemove([...sel.value])
       message[ok ? 'success' : 'error'](
-        ok ? tf('batch_removed', { n: count.value }) : library.error || t('batch_remove_fail'),
+        // 用调用时捕获的 n：count 在删除后已被清空，再读会显示「已移除 0 款」
+        ok ? tf('batch_removed', { n }) : library.error || t('batch_remove_fail'),
       )
       emit('done')
     },
