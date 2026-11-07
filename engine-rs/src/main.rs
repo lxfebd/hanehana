@@ -1170,6 +1170,7 @@ async fn handle(
                 cancelled: Arc::new(AtomicBool::new(false)),
                 gen: 0,
                 last_sidecar: Instant::now(),
+                sidecar_lock: Arc::new(Mutex::new(())),
             };
             t.build_segments();
             let snap = t.snapshot();
@@ -1562,7 +1563,9 @@ async fn main() -> std::io::Result<()> {
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
-        if !stdout_alive.load(Ordering::Relaxed) break;
+        if !stdout_alive.load(Ordering::Relaxed) {
+            break;
+        }
         tokio::select! {
             line = read_stdin_line(&mut reader, &mut line_buf) => {
                 let line = match line {

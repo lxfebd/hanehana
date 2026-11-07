@@ -179,29 +179,32 @@ pub fn apply_custom_headers(map: &mut HeaderMap, headers: &BTreeMap<String, Stri
 /// 还带着 Range 头——注释里「只允许同样的 https 协议」并不是 limited() 的能力。
 /// https_only + reqwest 默认拒绝挡掉协议降级，这里补同协议的内网目标。
 fn blocked_redirect_target(url: &reqwest::Url) -> bool {
-    match url.host_str() {
-        Some(h) => match h.parse::<std::net::IpAddr>() {
-            Ok(std::net::IpAddr::V4(v4)) => {
-                let o = v4.octets();
-                v4.is_loopback()
-                    || v4.is_unspecified()
-                    || v4.is_broadcast()
-                    || o[0] == 10
-                    || (o[0] == 172 && (o[1] & 0xf0) == 16)
-                    || (o[0] == 192 && o[1] == 168)
-                    || (o[0] == 169 && o[1] == 254)
-                    || (o[0] == 100 && (o[1] & 0xc0) == 64)
-            }
-            Ok(std::net::IpAddr::V6(v6)) => {
-                let s = v6.segments();
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    || (s[0] & 0xfe00) == 0xfc00 // ULA fc00::/7
-                    || (s[0] & 0xffc0) == 0xfe80 // 链路本地 fe80::/10
-            }
-            Err(_) => false, // 域名：同步策略里无法解析，放行
-        },
-        None => true, // 没有 host（理论上）一律拦
+    // host_str() 对 IPv6 返回**带括号**的形式（[::1]），直接 parse::<IpAddr>() 会
+    // 失败并落进「放行」——IPv6 环回就这么漏了（单测实测抓到过）。先剥括号再解析。
+    let Some(h) = url.host_str() else {
+        return false; // 没有 host（理论上）一律拦
+    };
+    let bare = h.trim_start_matches('[').trim_end_matches(']');
+    match bare.parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(v4)) => {
+            let o = v4.octets();
+            v4.is_loopback()
+                || v4.is_unspecified()
+                || v4.is_broadcast()
+                || o[0] == 10
+                || (o[0] == 172 && (o[1] & 0xf0) == 16)
+                || (o[0] == 192 && o[1] == 168)
+                || (o[0] == 169 && o[1] == 254)
+                || (o[0] == 100 && (o[1] & 0xc0) == 64)
+        }
+        Ok(std::net::IpAddr::V6(v6)) => {
+            let s = v6.segments();
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (s[0] & 0xfe00) == 0xfc00 // ULA fc00::/7
+                || (s[0] & 0xffc0) == 0xfe80 // 链路本地 fe80::/10
+        }
+        Err(_) => false, // 域名：同步策略里无法解析，放行
     }
 }
 
