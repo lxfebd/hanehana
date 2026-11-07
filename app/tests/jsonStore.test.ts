@@ -129,3 +129,61 @@ test('自定义序列化函数生效', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+// ---- .bak 轮换 / 损坏恢复（M3：tasks.json 损坏不再静默清空）----
+
+test('写前轮换：.bak 永远是上一份好内容', () => {
+  const dir = tempDir()
+  try {
+    const file = join(dir, 'r.json')
+    const s = createJsonStore<{ n: number }>(file)
+    s.save({ n: 1 })
+    s.flush()
+    assert.equal(existsSync(`${file}.bak`), false, '首次写没有上一份，不该造出 .bak')
+    s.save({ n: 2 })
+    s.flush()
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { n: 2 })
+    assert.deepEqual(JSON.parse(readFileSync(`${file}.bak`, 'utf8')), { n: 1 }, '.bak 是上一版')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('load: 主文件损坏时从 .bak 恢复，并给坏文件改名留证', () => {
+  const dir = tempDir()
+  try {
+    const file = join(dir, 'keep.json')
+    const s = createJsonStore<{ n: number }>(file)
+    s.save({ n: 1 })
+    s.flush()
+    s.save({ n: 2 })
+    s.flush()
+    // 主文件写花（掉电/坏道），.bak 还是上一份好的
+    writeFileSync(file, '{"n":')
+    const got = s.load()
+    assert.deepEqual(got, { n: 1 }, '损坏主文件必须回落到 .bak 而不是 null')
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { n: 1 }, '恢复同时把主文件修回来')
+    const stamped = readdirSync(dir).filter((f) => f.startsWith('keep.json.corrupt-'))
+    assert.equal(stamped.length, 1, '坏文件要改名留证')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('load: 主文件缺失（写一半进程死）从 .bak 恢复', () => {
+  const dir = tempDir()
+  try {
+    const file = join(dir, 'half.json')
+    const s = createJsonStore<{ n: number }>(file)
+    s.save({ n: 1 })
+    s.flush()
+    s.save({ n: 2 })
+    s.flush()
+    // 模拟「rename 成 .bak 之后、新文件就位之前」进程被杀：主文件不在
+    rmSync(file, { force: true })
+    assert.deepEqual(s.load(), { n: 1 }, '主文件缺失要从 .bak 恢复')
+    assert.ok(existsSync(file), '恢复后主文件重新就位')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
