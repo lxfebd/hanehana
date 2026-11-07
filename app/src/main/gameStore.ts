@@ -80,13 +80,20 @@ export function loadGames(): Game[] {
   if (gamesLoaded) return games
   gamesLoaded = true
   migrateFromLegacyDir()
+  // 必须走 jsonStore.load()，不能自己 readFileSync + 回落 []：
+  // 写路径早就是 jsonStore（rotating .bak + fsync），可读路径一度是裸读——
+  // games.json 一坏（坏道/旧版半截写），整个游戏库静默消失，而上一份好的
+  // games.json.bak 就在旁边没人用（同 tasks.json 那条 M3）。load() 会把坏
+  // 文件改名留证（.corrupt-<ts>）并从 .bak 恢复。
+  const loaded = gamesStore.load()
+  games = Array.isArray(loaded) ? loaded : []
   try {
-    if (existsSync(gamesPath)) {
-      games = JSON.parse(readFileSync(gamesPath, 'utf8')) as Game[]
+    // 损坏留证还在 = 最近发生过一次恢复。像崩溃报告一样留着提醒，直到用户清理。
+    if (readdirSync(dataDir).some((f) => f.startsWith('games.json.corrupt-'))) {
+      console.error('[hanehana] games.json 曾损坏并从 .bak 恢复，坏文件已留证在数据目录')
     }
-  } catch (e) {
-    console.error('[hanehana] games.json 解析失败，按空库继续：', e)
-    games = []
+  } catch {
+    /* 列目录失败不影响加载结果 */
   }
   return games
 }

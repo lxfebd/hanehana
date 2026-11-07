@@ -8,7 +8,7 @@
  * 通知：检查出「新」作（id 不在上次 seen 里）时才弹系统通知，
  * 由 index.ts 注入带窗口激活的回调，避免主进程文件与 UI 纠缠。
  */
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, openSync, readFileSync, renameSync, writeSync, fsyncSync, closeSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { dataDir } from './store'
 import type { TrackCheckResult, TrackEntry, TrackHit } from '../shared/types'
@@ -30,22 +30,38 @@ let entries: TrackEntry[] | null = null
 
 export function loadTracking(): TrackEntry[] {
   if (entries) return entries
+  // 主文件坏了要能从上一份好的 .bak 恢复：订阅列表是用户一条条加的，
+  // 静默按空库继续 = 全部订阅无声消失（persist 的轮换见下）。
+  let raw: unknown = null
   try {
     if (existsSync(trackFile())) {
-      const data = JSON.parse(readFileSync(trackFile(), 'utf8')) as unknown
-      if (Array.isArray(data)) {
-        entries = data
-          .filter((x): x is TrackEntry => !!x && typeof x === 'object' && typeof (x as TrackEntry).keyword === 'string')
-          .map((e) => ({
-            id: typeof e.id === 'string' && e.id ? e.id : crypto.randomUUID(),
-            keyword: e.keyword.slice(0, 200),
-            lastCheck: typeof e.lastCheck === 'number' ? e.lastCheck : Date.now(),
-            seenIds: Array.isArray(e.seenIds)
-              ? e.seenIds.filter((x): x is string => typeof x === 'string').slice(0, 500)
-              : [],
-          }))
-        return entries
-      }
+      raw = JSON.parse(readFileSync(trackFile(), 'utf8')) as unknown
+    } else {
+      const bak = trackFile() + '.bak'
+      if (existsSync(bak)) raw = JSON.parse(readFileSync(bak, 'utf8')) as unknown
+    }
+  } catch {
+    raw = null
+    const bak = trackFile() + '.bak'
+    try {
+      if (existsSync(bak)) raw = JSON.parse(readFileSync(bak, 'utf8')) as unknown
+    } catch {
+      raw = null
+    }
+  }
+  try {
+    if (Array.isArray(raw)) {
+      entries = raw
+        .filter((x): x is TrackEntry => !!x && typeof x === 'object' && typeof (x as TrackEntry).keyword === 'string')
+        .map((e) => ({
+          id: typeof e.id === 'string' && e.id ? e.id : crypto.randomUUID(),
+          keyword: e.keyword.slice(0, 200),
+          lastCheck: typeof e.lastCheck === 'number' ? e.lastCheck : Date.now(),
+          seenIds: Array.isArray(e.seenIds)
+            ? e.seenIds.filter((x): x is string => typeof x === 'string').slice(0, 500)
+            : [],
+        }))
+      return entries
     }
     entries = []
   } catch {
@@ -56,8 +72,22 @@ export function loadTracking(): TrackEntry[] {
 
 function persist(): void {
   mkdirSync(dirname(trackFile()), { recursive: true })
+  // 与 jsonStore 同一套纪律：主文件先 rename 成 .bak（O(1) 元数据操作），
+  // tmp 写完 fsync 再 rename——不 fsync 的话掉电后新名字可能配着空/旧内容，
+  // 用户逐条加的订阅就这么没了；没有 .bak 的话一次损坏就整表清空。
+  try {
+    if (existsSync(trackFile())) renameSync(trackFile(), trackFile() + '.bak')
+  } catch {
+    /* 挪不走（占用中）不阻塞本次写：.bak 停留在上一版 */
+  }
   const tmp = trackFile() + '.tmp'
-  writeFileSync(tmp, JSON.stringify(entries ?? [], null, 2), 'utf8')
+  const fd = openSync(tmp, 'w', 0o600)
+  try {
+    writeSync(fd, Buffer.from(JSON.stringify(entries ?? [], null, 2), 'utf8'))
+    fsyncSync(fd)
+  } finally {
+    closeSync(fd)
+  }
   renameSync(tmp, trackFile())
 }
 
