@@ -1,11 +1,11 @@
-//! stdio 线协议：命令解析（`Cmd`）与一行 JSON 的读写。
+//! stdio 线协议：命令解析（`Cmd`）与一行 JSON 的读。
 //!
 //! 协议形状是整个引擎对外最稳定的契约：命令字段名的增减、`event` 事件的形状
 //! 都不能随实现随意改，所以把编解码集中在一个文件里，任何一侧变动都只看得到这里。
+//! （事件的**写**在 main.rs 的独立写任务里——主循环只入通道，绝不被管道背压卡住。）
 
 use serde::Deserialize;
-use serde_json::Value;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader, Stdout};
+use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[derive(Deserialize, Default)]
 pub struct Cmd {
@@ -29,11 +29,6 @@ pub struct Cmd {
     /// 完成后校验和，空 = 不校验（不产生任何额外磁盘读）。
     /// 形如 `"sha256:<hex>"` / `"sha1:<hex>"` / `"md5:<hex>"`，裸 64 位十六进制按 sha256 处理。
     #[serde(default)] pub checksum: String,
-}
-
-pub async fn emit_line(out: &mut tokio::io::BufWriter<Stdout>, v: Value) {
-    let _ = out.write_all((v.to_string() + "\n").as_bytes()).await;
-    let _ = out.flush().await;
 }
 
 /// Read one line from stdin into `buf`.

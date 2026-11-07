@@ -59,6 +59,7 @@
   - **协议噪音占用 error 语义**（`main.rs`）：bad_json / unknown_cmd 原发 `error` 事件，主进程把它当**本任务失败**——一条坏行就把健康下载打成 error。改发 `log` 事件（主进程 switch 的 default 正好忽略）。
   - **dest 纵深防御**（`main.rs`）：probe 时拒绝含 `..` 的路径与 Windows 保留设备名（CON/COM1/LPT9…，大小写不敏感）。
   - 新增两个纯函数单测（`dest_reject_reason` 9 例、`blocked_redirect_target` 14 例），随 cargo test 跑。
+  - **stdout 背压会反压 stdin，pause/stop 失效**（`main.rs` + `protocol.rs`，随 Rust 批**未编译**）：进度事件 10 条/秒，主进程一停读 stdout，64KiB 管道数秒就写满——引擎随即阻塞在 `emit_line` 的写里，主循环不再读 stdin，用户的 pause/stop 泡在管道里没人处理（观感「引擎卡死」）；stdout 断开时也只有 stdin EOF 才能退出。修为：stdout 改由**独立写任务**负责（`mpsc` 无序通道 + 单消费者 FIFO，「终态快照先于 done/error」的顺序因此保留），主循环只 `emit(&tx, v)` 入通道、永不被背压卡住；stdout 写失败置退出标志，主循环下一轮干净退出。`emit_line` 随之从 protocol.rs 移除。
 - **排队文件加上限与去重**（`main/nmBridge.ts`）：`nm-pending.jsonl` 此前只追加不设限——应用没开时反复投递（连点弹窗/右键）会让文件无限增长，而 `readNmPending` 启动时一次全量读进内存、每行还带着 Cookie/Referer。修为：同 URL 已排队就不再写（下载列表按 URL 判重，重复排队只是白跑）、行数上限 200、超出丢最旧的但保住刚投递的那条。新增单测 2 例（重复入队只留一行 / 205 行截到 200 且最新在最尾）。闸门：typecheck ✓、test 138/138、reg_all ALL PASS（8/32/23/35）。
 
 ### 验证

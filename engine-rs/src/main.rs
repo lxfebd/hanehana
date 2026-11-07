@@ -62,12 +62,12 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufReader, Stdout, stdin, stdout};
+use tokio::io::{AsyncSeekExt, AsyncWriteExt, BufReader, stdin, stdout};
 use tokio::sync::{Mutex, mpsc};
 
 use checksum::{Checksum, VerifyResult, parse_checksum, run_verify};
 use http::{FetchErr, check_ranges, error_event, fetch_and_write, fetch_unbounded, io_code, make_client, part_io_err, probe_total};
-use protocol::{Cmd, emit_line, read_stdin_line};
+use protocol::{Cmd, read_stdin_line};
 use segment::{Segment, recompute_segment};
 use state::Bucket;
 
@@ -148,6 +148,17 @@ fn dest_reject_reason(dest: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 发一条事件：只入通道、**绝不阻塞**。
+///
+/// stdout 的实际写由 main() 里的独立写任务负责。放在这里而不是直接写
+/// BufWriter：主进程停读 stdout 几秒就会写满 64KiB 管道，直接写会让
+/// on_tick 的进度推送卡在 write 上、主循环不再读 stdin——用户的
+/// pause/stop 命令泡在管道里没人处理，观感就是「引擎卡死」。入通道的
+/// 成本是一次内存拷贝，主循环永不被背压。
+async fn emit(tx: &mpsc::UnboundedSender<Value>, v: Value) {
+    let _ = tx.send(v);
 }
 
 struct Task {
@@ -1057,14 +1068,14 @@ async fn finalize(g: &mut Task) -> Option<Value> {
 async fn handle(
     cmd: Cmd,
     task: &mut Option<Arc<Mutex<Task>>>,
-    out: &mut tokio::io::BufWriter<Stdout>,
+    tx: &mpsc::UnboundedSender<Value>,
 ) {
     match cmd.cmd.as_str() {
         "probe" => {
             // 纵深防御：拒绝目录穿越（..）与 Windows 设备名。主进程是唯一写方，
             // 但 dest 一路从渲染层经 IPC 过来，不该假设它一定干净。
             if let Some(why) = dest_reject_reason(&cmd.dest) {
-                let _ = emit_line(out, error_event("invalid_dest", &why, &Value::Null)).await;
+                let _ = emit(&tx, error_event("invalid_dest", &why, &Value::Null)).await;
                 return;
             }
             // 换任务前先停掉旧任务：探测新 URL 时旧 worker 可能还在下载，
@@ -1085,13 +1096,13 @@ async fn handle(
             // 第一条应答的形状不能改：主进程靠 `state=="preparing"` 区分「还在探测」，
             // 且这条里的 total 是上一轮继承的旧值——任何依赖 total 的放行
             // 只能落在下面那条 `state == "idle"` 的完整快照上。
-            let _ = emit_line(out, json!({"event":"progress","data":{"state":"preparing"}})).await;
+            let _ = emit(&tx, json!({"event":"progress","data":{"state":"preparing"}})).await;
             // 校验和参数先解析：格式不对/算法不支持就当场报错，
             // 别等几十 GB 下完才说校不了。
             let checksum = match parse_checksum(&cmd.checksum) {
                 Ok(c) => c,
                 Err(e) => {
-                    let _ = emit_line(out, error_event("unsupported_checksum", &e, &Value::Null)).await;
+                    let _ = emit(&tx, error_event("unsupported_checksum", &e, &Value::Null)).await;
                     return;
                 }
             };
@@ -1101,14 +1112,14 @@ async fn handle(
                     // 代理串解析不了和「客户端根本没建起来」是两种病：前者用户能自己改，
                     // 后者是打包/环境问题。
                     let code = if e.contains("proxy") { "proxy_invalid" } else { "client_build_failed" };
-                    let _ = emit_line(out, error_event(code, &e, &Value::Null)).await;
+                    let _ = emit(&tx, error_event(code, &e, &Value::Null)).await;
                     return;
                 }
             };
             let probed = match probe_total(&client, &cmd.url).await {
                 Ok(t) => t,
                 Err(e) => {
-                    let _ = emit_line(out, error_event(e.code, &e.msg, &e.params)).await;
+                    let _ = emit(&tx, error_event(e.code, &e.msg, &e.params)).await;
                     return;
                 }
             };
@@ -1155,7 +1166,7 @@ async fn handle(
             };
             t.build_segments();
             let snap = t.snapshot();
-            let _ = emit_line(out, json!({"event":"progress","data":snap})).await;
+            let _ = emit(&tx, json!({"event":"progress","data":snap})).await;
             *task = Some(Arc::new(Mutex::new(t)));
         }
         "run" | "resume" => {
@@ -1169,7 +1180,7 @@ async fn handle(
                     match parse_checksum(&cmd.checksum) {
                         Ok(cs) => t.lock().await.checksum = cs,
                         Err(e) => {
-                            let _ = emit_line(out, error_event("unsupported_checksum", &e, &Value::Null))
+                            let _ = emit(&tx, error_event("unsupported_checksum", &e, &Value::Null))
                                 .await;
                             return;
                         }
@@ -1191,7 +1202,7 @@ async fn handle(
                             } else {
                                 "client_build_failed"
                             };
-                            let _ = emit_line(out, error_event(code, &e, &Value::Null)).await;
+                            let _ = emit(&tx, error_event(code, &e, &Value::Null)).await;
                             return;
                         }
                     }
@@ -1216,7 +1227,7 @@ async fn handle(
                         if dest_ok {
                             g.state = "done".into();
                             g.clear_error();
-                            let _ = emit_line(out, json!({"event":"done","total":g.total})).await;
+                            let _ = emit(&tx, json!({"event":"done","total":g.total})).await;
                             return;
                         }
                         // dest 不存在但 .part 完好（校验中被重启）：保留段进度，
@@ -1241,7 +1252,7 @@ async fn handle(
                     // 自己把偏移清零，所以这里不必再担心边车与文件不一致。
                     // 长度未知的任务里它只负责建文件，且绝不 set_len。
                     if let Err(e) = g.ensure_part().await {
-                        let _ = emit_line(out, error_event(e.code, &e.msg, &e.params)).await;
+                        let _ = emit(&tx, error_event(e.code, &e.msg, &e.params)).await;
                         return;
                     }
                     // 必须先换代、再清 pause：反过来的话，还在 park 的旧 worker
@@ -1254,7 +1265,7 @@ async fn handle(
                     gen = g.gen;
                 }
                 let snap = t.lock().await.snapshot();
-                let _ = emit_line(out, json!({"event":"progress","data":snap})).await;
+                let _ = emit(&tx, json!({"event":"progress","data":snap})).await;
                 spawn_workers(t.clone(), gen).await;
             }
         }
@@ -1276,7 +1287,7 @@ async fn handle(
                 // 而 worker 会在下一个 tick（≤100ms）内 drop 掉 in-flight 请求退出。
                 // 暂停后 tick 停止，必须 now 立即落盘（降频会漏掉最后 1 秒水位）。
                 g.save_sidecar_now();
-                let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
+                let _ = emit(&tx, json!({"event":"progress","data":g.snapshot()})).await;
             }
         }
         "stop" => {
@@ -1291,7 +1302,7 @@ async fn handle(
                 g.clear_error();
                 g.speed = 0.0;
                 discard_progress(&mut g).await;
-                let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
+                let _ = emit(&tx, json!({"event":"progress","data":g.snapshot()})).await;
             }
         }
         "set_threads" => {
@@ -1321,7 +1332,7 @@ async fn handle(
                         g.save_sidecar_now();
                     }
                 }
-                let _ = emit_line(out, json!({"event":"progress","data":g.snapshot()})).await;
+                let _ = emit(&tx, json!({"event":"progress","data":g.snapshot()})).await;
             }
         }
         "set_rate" => {
@@ -1334,20 +1345,20 @@ async fn handle(
                 if let Some(kbps) = kbps {
                     t.lock().await.set_rate(kbps).await;
                 }
-                let _ = emit_line(out, json!({"event":"progress","data":t.lock().await.snapshot()})).await;
+                let _ = emit(&tx, json!({"event":"progress","data":t.lock().await.snapshot()})).await;
             }
         }
         "stats" => {
             if let Some(t) = task.clone() {
-                let _ = emit_line(out, json!({"event":"progress","data":t.lock().await.snapshot()})).await;
+                let _ = emit(&tx, json!({"event":"progress","data":t.lock().await.snapshot()})).await;
             }
         }
         other => {
             // 协议层噪音走 log 事件：主进程的 switch 只认 progress/done/error，
             // error 会被当成本任务失败（一条坏行就把健康下载打成 error），
             // log 则被 default 忽略。
-            let _ = emit_line(
-                out,
+            let _ = emit(
+                &tx,
                 json!({"event":"log","message":format!("unknown cmd: {other}")}),
             )
             .await;
@@ -1363,7 +1374,7 @@ async fn handle(
 /// 落盘的任务记录里也已经是终态。
 async fn on_tick(
     t: &Arc<Mutex<Task>>,
-    out: &mut tokio::io::BufWriter<Stdout>,
+    tx: &mpsc::UnboundedSender<Value>,
     verify_rx: &mut Option<mpsc::UnboundedReceiver<VerifyResult>>,
     last_downloaded: &mut u64,
     last_speed_at: &mut Instant,
@@ -1402,9 +1413,9 @@ async fn on_tick(
             let snap = g.snapshot();
             drop(g);
             *last_speed_at = Instant::now();
-            emit_line(out, json!({"event":"progress","data":snap})).await;
+            emit(&tx, json!({"event":"progress","data":snap})).await;
             if let Some(m) = msg {
-                emit_line(out, m).await;
+                emit(&tx, m).await;
             }
         }
         return;
@@ -1441,9 +1452,9 @@ async fn on_tick(
             drop(g);
             *last_downloaded = st.1;
             *last_speed_at = Instant::now();
-            emit_line(out, json!({"event":"progress","data":snap})).await;
+            emit(&tx, json!({"event":"progress","data":snap})).await;
             if let Some(m) = msg {
-                emit_line(out, m).await;
+                emit(&tx, m).await;
             }
             return;
         }
@@ -1488,9 +1499,9 @@ async fn on_tick(
     *last_speed_at = Instant::now();
     let snap = g.snapshot();
     drop(g);
-    emit_line(out, json!({"event":"progress","data":snap})).await;
+    emit(&tx, json!({"event":"progress","data":snap})).await;
     if let Some(m) = finish_msg {
-        emit_line(out, m).await;
+        emit(&tx, m).await;
     }
 }
 
@@ -1519,11 +1530,32 @@ async fn main() -> std::io::Result<()> {
 
     let mut reader = BufReader::new(stdin());
     let mut line_buf: Vec<u8> = Vec::new();
-    let mut out = tokio::io::BufWriter::new(stdout());
+    // stdout 由独立写任务负责：主循环只往通道里发事件，绝不被管道背压阻塞
+    // （否则主进程停读 stdout 几秒，pause/stop 命令就没人处理）。通道是
+    // 无序 FIFO、单消费者，「终态快照先于 done/error」的顺序因此保留。
+    let (tx, mut event_rx) = mpsc::unbounded_channel::<Value>();
+    // stdout 断开（EPIPE/对端消失）时置位：主循环下一轮干净退出，
+    // 不再像以前那样只有 stdin EOF 才能结束。
+    let stdout_alive = Arc::new(AtomicBool::new(true));
+    {
+        let alive = stdout_alive.clone();
+        tokio::spawn(async move {
+            let mut out = tokio::io::BufWriter::new(stdout());
+            while let Some(v) = event_rx.recv().await {
+                if out.write_all((v.to_string() + "\n").as_bytes()).await.is_err()
+                    || out.flush().await.is_err()
+                {
+                    alive.store(false, Ordering::Relaxed);
+                    break;
+                }
+            }
+        });
+    }
     let mut tick = tokio::time::interval(PROGRESS_INTERVAL);
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
     loop {
+        if !stdout_alive.load(Ordering::Relaxed) break;
         tokio::select! {
             line = read_stdin_line(&mut reader, &mut line_buf) => {
                 let line = match line {
@@ -1538,8 +1570,7 @@ async fn main() -> std::io::Result<()> {
                             &format!("stdin read error: {e}"),
                             &json!({"os_error": raw}),
                         );
-                        let _ = out.write_all((msg.to_string() + "\n").as_bytes()).await;
-                        let _ = out.flush().await;
+                        let _ = tx.send(msg);
                         break;
                     }
                 };
@@ -1551,9 +1582,7 @@ async fn main() -> std::io::Result<()> {
                     Err(e) => {
                         // 协议层噪音走 log 事件（同 handle 的 unknown_cmd）：
                         // error 事件会被主进程当成本任务失败。
-                        let msg = json!({"event":"log","message":format!("bad json: {e}")});
-                        let _ = out.write_all((msg.to_string() + "\n").as_bytes()).await;
-                        let _ = out.flush().await;
+                        let _ = tx.send(json!({"event":"log","message":format!("bad json: {e}")}));
                         continue;
                     }
                 };
@@ -1562,11 +1591,11 @@ async fn main() -> std::io::Result<()> {
                 if matches!(cmd.cmd.as_str(), "probe" | "stop") {
                     verify_rx = None;
                 }
-                handle(cmd, &mut task, &mut out).await;
+                handle(cmd, &mut task, &tx).await;
             }
             _ = tick.tick() => {
                 if let Some(t) = &task {
-                    on_tick(t, &mut out, &mut verify_rx, &mut last_downloaded, &mut last_speed_at).await;
+                    on_tick(t, &tx, &mut verify_rx, &mut last_downloaded, &mut last_speed_at).await;
                 }
             }
         }
