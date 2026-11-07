@@ -2,7 +2,9 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
-## [Unreleased]
+## [0.2.22] - 2026-11-08
+
+> 一次「先用眼睛、再用工具、最后审查代码」的大版本维护发布：视觉走查 + 全功能 CDP 验收修掉 6 个真 bug；随后对整个代码库做了四轮静态审查（engine-rs / 主进程 46 文件 / 扩展与 native messaging 全链 / 站点适配器），修掉 1 个 critical（引擎暂停→继续会把已下进度全部清零重下）、2 个 high 与一批 medium/low；全部改动编译、单测（应用 138 + Rust 31+7）、回归闸门（8/32/23/35）绿后才入库。
 
 ### 新增
 
@@ -77,6 +79,10 @@
 - Rust：`cargo test --locked` 36 passed / 0 failed（原有 29 例 + 宿主中继新增 7 例：正常帧、杂字节前缀、分片到达、魔数跨片、超长帧丢弃、坏 JSON 不转发、Chrome 帧格式）；`cargo build --release --locked` OK（中继产物 394,752 字节）。`cargo fmt --check` 在本仓库**基线**上即为红（`src/checksum.rs:83` 等既有行不合 rustfmt，本项目 house style 是紧凑单行写法），本次新增代码单独过 rustfmt 干净，故未执行全量 `cargo fmt`（会重排无关代码）。
 - **真机端到端**（打包产物实跑，脚本不入库）：自扮一次浏览器——用扩展 origin 当 argv 拉起 `resources/fastdrop-nm-host.exe`，按 Chrome 线协议喂一帧（4 字节小端长度 + JSON），起假桥回应答：**14 项全过**。其中最关键的一条是「stdout 首字节即帧头（无 Electron 启动噪音）」——改造前这里多出 2 个字节 `0d0a`，Chrome 会把长度头读错，整条链路直接错位；改造后 stdout 只有合规帧。桥侧同时验到 origin、token 与 Cookie 透传，非法动作与陌生扩展都在进桥前被拒。本次补上的两条是「应答送达后中继自己退了（不靠 Chrome 关管道）」与「桌面端宿主没有残留进程」。
 - **真 Chrome 全链路**（Chrome 156.0.8078.74，隔离 profile + `--remote-debugging-port`，经 CDP `Extensions.loadUnpacked` 装扩展，`loadUnpacked` 返回的 ID 与钉死的 `jjoapnhpnedocdkfffpiccdehollooab` 一致）：从扩展弹窗页触发 `chrome.runtime.sendMessage({type:'hn.deliver'})` 真投递，扩展侧收到 `{"ok":true,"status":"engine",...}`，链路走完「扩展 → Chrome → 中继 exe → 桌面端宿主 → 本机桥 → 主应用建任务」全程。投递后 6 秒的进程快照只剩验收用的桌面端自身，**中继与宿主进程树零残留**。另外确证 Chrome 156 已不认 `--load-extension`（加 `--disable-features=DisableLoadExtensionCommandLineSwitch` 也无效），装扩展只能走 CDP `Extensions.loadUnpacked`。
+
+## [Unreleased]
+
+（下一批改动记在这里。）
 
 ## [0.2.21] - 2026-10-31
 
