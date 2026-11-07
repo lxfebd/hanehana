@@ -320,6 +320,12 @@ fn run() -> i32 {
     let mut out = std::io::stdout();
     // 应答转出去之后，给桌面端留 5 秒自己退；超时就强杀。
     let mut kill_at: Option<Instant> = None;
+    // 总截止（进入循环 30 秒）：kill_at 只在转出过至少一个应答之后才被赋值，
+    // 「桌面端一个帧都没产出」时 Timeout 分支永远等不到它——主线程会在
+    // recv_timeout 上无限自旋，中继不退、Chrome 的 sendNativeMessage 永不
+    // resolve，一整套进程树常驻。这是唯一「用户无感、无自愈」的失效模式，
+    // 必须有一个不看 kill_at 的无条件总闸。
+    let hard_deadline = Instant::now() + Duration::from_secs(30);
     loop {
         match rx_out.recv_timeout(Duration::from_millis(100)) {
             Ok(chunk) => {
@@ -354,6 +360,13 @@ fn run() -> i32 {
                         let _ = child.kill();
                         break;
                     }
+                }
+                if Instant::now() >= hard_deadline {
+                    eprintln!("[nm-host] 桌面端没有在总时限内应答，强杀");
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    emit_error_frame("桌面端没有在时限内应答");
+                    return 1;
                 }
             }
             // 桌面端的 stdout 收尾了 → 它退了。

@@ -91,6 +91,65 @@ static NEXT_TASK_ID: AtomicU64 = AtomicU64::new(1);
 /// 会把整段重叠区都当成已下载，凭空多出进度——这正是「中途改线程数导致文件损坏」的根因。
 /// 纯函数，便于单元测试。
 
+/// 边车落盘（阻塞侧，由 sidecar_lock 串行化）：tmp + fsync + rename。
+/// 每一步失败都留痕到 stderr——静默丢失边车等于崩溃后悄悄多重一份，
+/// 而排查时毫无线索。失败时清掉 tmp，不留残余文件。
+fn write_sidecar_blocking(path: &str, obj: &serde_json::Value) {
+    let tmp = format!("{path}.tmp");
+    let f = std::fs::File::create(&tmp);
+    let mut f = match f {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("[engine] 边车 tmp 创建失败 {tmp}: {e}");
+            return;
+        }
+    };
+    if let Err(e) = f.write_all(obj.to_string().as_bytes()) {
+        eprintln!("[engine] 边车写失败 {path}: {e}");
+        let _ = std::fs::remove_file(&tmp);
+        return;
+    }
+    if let Err(e) = f.sync_all() {
+        eprintln!("[engine] 边车 fsync 失败 {path}: {e}");
+    }
+    drop(f);
+    if let Err(e) = std::fs::rename(&tmp, path) {
+        eprintln!("[engine] 边车 rename 失败 {path}: {e}");
+        let _ = std::fs::remove_file(&tmp);
+    }
+}
+
+/// 拒绝明显不该落的 dest：目录穿越（`..`）与 Windows 保留设备名。
+/// 主进程是唯一写方，这是纵深防御——dest 一路从渲染层经 IPC 过来，
+/// 不该假设它一定干净。返回 None = 放行。
+fn dest_reject_reason(dest: &str) -> Option<String> {
+    if dest.trim().is_empty() {
+        return Some("dest is empty".into());
+    }
+    if dest.contains('\0') {
+        return Some("dest contains NUL".into());
+    }
+    for c in Path::new(dest).components() {
+        match c {
+            std::path::Component::ParentDir => return Some("dest contains ..".into()),
+            std::path::Component::Normal(s) => {
+                let up = s.to_string_lossy().to_ascii_uppercase();
+                let base = up.split('.').next().unwrap_or("");
+                let b = base.as_bytes();
+                let reserved = matches!(base, "CON" | "PRN" | "AUX" | "NUL")
+                    || (b.len() == 4
+                        && (b[..3].eq_ignore_ascii_case(b"COM") || b[..3].eq_ignore_ascii_case(b"LPT"))
+                        && b[3].is_ascii_digit());
+                if reserved {
+                    return Some(format!("dest uses a reserved device name: {base}"));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
 struct Task {
     url: String,
     dest: String,
@@ -140,6 +199,11 @@ struct Task {
     /// SIDECAR_INTERVAL 就跳过——进度水位允许最多滞后 1 秒，换取不把
     /// runtime 线程卡在 fsync 上。
     last_sidecar: Instant,
+    /// 边车写串行锁：save_sidecar（1 次/秒）与 save_sidecar_now（pause/stop/
+    /// set_threads/run/校验起点）会同时在场，共用同一个 `.tmp` 的话两个
+    /// spawn_blocking 会互相截断/覆盖——Windows 上 rename 不失效已开句柄，
+    /// 实时 `.part.meta` 可能被写成混合内容。锁包住 create→rename 全过程。
+    sidecar_lock: Arc<Mutex<()>>,
 }
 
 impl Task {
@@ -218,14 +282,10 @@ impl Task {
         self.last_sidecar = Instant::now();
         let obj = self.sidecar_json();
         let path = self.sidecar_path();
-        let tmp = format!("{path}.tmp");
-        let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(mut f) = std::fs::File::create(&tmp) {
-                if f.write_all(obj.to_string().as_bytes()).is_ok() {
-                    let _ = f.sync_all();
-                    let _ = std::fs::rename(&tmp, path);
-                }
-            }
+        let lock = self.sidecar_lock.clone();
+        tokio::spawn(async move {
+            let _g = lock.lock().await;
+            write_sidecar_blocking(&path, &obj);
         });
     }
 
@@ -235,14 +295,10 @@ impl Task {
     fn save_sidecar_now(&mut self) {
         let obj = self.sidecar_json();
         let path = self.sidecar_path();
-        let tmp = format!("{path}.tmp");
-        let _ = tokio::task::spawn_blocking(move || {
-            if let Ok(mut f) = std::fs::File::create(&tmp) {
-                if f.write_all(obj.to_string().as_bytes()).is_ok() {
-                    let _ = f.sync_all();
-                    let _ = std::fs::rename(&tmp, path);
-                }
-            }
+        let lock = self.sidecar_lock.clone();
+        tokio::spawn(async move {
+            let _g = lock.lock().await;
+            write_sidecar_blocking(&path, &obj);
         });
     }
 
@@ -305,6 +361,39 @@ impl Task {
         }
         let after = f.metadata().await.map(|m| m.len()).unwrap_or(0);
         drop(f);
+        // ---- resume_ok 刷新（critical 修复：同进程内第二次 run 不再清零）----
+        // resume_ok 原先只在 probe 时的 build_segments 里求值一次。同一引擎进程内
+        // 第二次 run（暂停→继续、引擎侧 fatal 后继续、校验中被再 run）时它还是
+        // probe 那一刻的值——而那一刻盘上通常还没有边车 → resume_ok=false。于是
+        // existed/before/after 全部满足却因它判 !intact，把已下进度全部清零、
+        // 边车覆写为零：最常见路径「暂停→继续」直接退化成全量重下（几十 GB 白下）。
+        // 边车每次 save 写的都是当前布局，所以这里按同一套判据从盘上重读重算。
+        // 守卫 `before == total`：文件被外部改短/换掉时 set_len 刚回填过，那种
+        // 「说下过了、文件里其实是空洞」的情况仍然走清零，不信任边车。
+        if !self.unknown_len && !self.resume_ok && existed && before == self.total {
+            if let Some(saved) = self.load_sidecar() {
+                let layout_ok = saved.get("url").and_then(|v| v.as_str()) == Some(self.url.as_str())
+                    && saved.get("total").and_then(|v| v.as_u64()) == Some(self.total)
+                    && saved.get("threads").and_then(|v| v.as_u64()) == Some(self.segments.len() as u64)
+                    && saved.get("part_len").and_then(|v| v.as_u64()) == Some(self.total);
+                if layout_ok {
+                    self.resume_ok = true;
+                    if let Some(segs) = saved.get("segments").and_then(|v| v.as_object()) {
+                        for s in &mut self.segments {
+                            let got = segs
+                                .get(&s.index.to_string())
+                                .and_then(|v| v.as_u64())
+                                .unwrap_or(0)
+                                .min(s.size());
+                            // 取较大者：边车只记 fsync 水位（≤ 本进程已写字节），
+                            // 刚写下的那截只在内存里——max 保证暂停→继续不丢进度。
+                            s.downloaded = s.downloaded.max(got);
+                            s.flushed = s.flushed.max(got).min(s.downloaded);
+                        }
+                    }
+                }
+            }
+        }
         // 「本来就存在」+「改长度前已经是 total」+「边车自己认这份布局」三条同时成立
         // 才叫完好。少了第三条就会盲信长度：`.part` 长度对得上、边车却是别的
         // url/线程数/未分配完整尺寸时留下的，偏移全是错的。
@@ -972,6 +1061,12 @@ async fn handle(
 ) {
     match cmd.cmd.as_str() {
         "probe" => {
+            // 纵深防御：拒绝目录穿越（..）与 Windows 设备名。主进程是唯一写方，
+            // 但 dest 一路从渲染层经 IPC 过来，不该假设它一定干净。
+            if let Some(why) = dest_reject_reason(&cmd.dest) {
+                let _ = emit_line(out, error_event("invalid_dest", &why, &Value::Null)).await;
+                return;
+            }
             // 换任务前先停掉旧任务：探测新 URL 时旧 worker 可能还在下载，
             // 不取消它就会白烧带宽、旧 `.part` 永不 finalize（新任务会覆盖
             // 同一个 task 槽，旧 Arc 的 worker 却还活着）。换代 + 置 cancelled
@@ -1248,9 +1343,12 @@ async fn handle(
             }
         }
         other => {
+            // 协议层噪音走 log 事件：主进程的 switch 只认 progress/done/error，
+            // error 会被当成本任务失败（一条坏行就把健康下载打成 error），
+            // log 则被 default 忽略。
             let _ = emit_line(
                 out,
-                error_event("unknown_cmd", &format!("unknown cmd: {other}"), &json!({"cmd": other})),
+                json!({"event":"log","message":format!("unknown cmd: {other}")}),
             )
             .await;
         }
@@ -1405,6 +1503,14 @@ async fn on_tick(
 /// 返回：`Ok(Some(line))` 有内容 / `Ok(None)` 干净 EOF / `Err` 真的 IO 读取出错。
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
+    // panic 兜底：tokio 任务内 panic 不会杀进程——worker 会静默死亡、段状态
+    // 永远卡在 "running"、任务永远 downloading，而下载中没有看门狗能发现它
+    // （engine.ts 的 60s 看门狗只覆盖 probe/run 阶段）。直接非零退出，让主进程
+    // 的「引擎进程意外退出自动重拉」接管（.part 与边车都还在）。
+    std::panic::set_hook(Box::new(|info| {
+        eprintln!("[engine] panic: {info}");
+        std::process::exit(101);
+    }));
     let mut task: Option<Arc<Mutex<Task>>> = None;
     let mut last_downloaded: u64 = 0;
     let mut last_speed_at = Instant::now();
@@ -1443,9 +1549,9 @@ async fn main() -> std::io::Result<()> {
                 let cmd = match serde_json::from_str::<Cmd>(&line) {
                     Ok(c) => c,
                     Err(e) => {
-                        // 参数里不带原始那一行：cmd 里的 url 可能带临时令牌，
-                        // 快照和界面都会拿到 params，别把它落到用户可见的地方。
-                        let msg = error_event("bad_json", &format!("bad json: {e}"), &Value::Null);
+                        // 协议层噪音走 log 事件（同 handle 的 unknown_cmd）：
+                        // error 事件会被主进程当成本任务失败。
+                        let msg = json!({"event":"log","message":format!("bad json: {e}")});
                         let _ = out.write_all((msg.to_string() + "\n").as_bytes()).await;
                         let _ = out.flush().await;
                         continue;
@@ -1484,6 +1590,20 @@ mod tests {
     const CHUNK: u64 = 64 * 1024;
     /// 同 `checksum::HASH_BUF`。
     const HASH_BUF: usize = 128 * 1024;
+
+    // ---- dest 纵深防御 ----
+
+    #[test]
+    fn dest_rejects_traversal_and_device_names() {
+        assert!(dest_reject_reason("").is_some(), "空 dest");
+        assert!(dest_reject_reason("   ").is_some(), "全空白 dest");
+        assert!(dest_reject_reason("D:/dl/../evil.zip").is_some(), ".. 穿越");
+        assert!(dest_reject_reason("D:/dl/CON").is_some(), "设备名");
+        assert!(dest_reject_reason("D:/dl/COM1.txt").is_some(), "带扩展名的设备名");
+        assert!(dest_reject_reason("dl/lpt9").is_some(), "设备名大小写不敏感");
+        assert!(dest_reject_reason("dl\0x").is_some(), "NUL");
+        assert!(dest_reject_reason("D:/下载/正常文件.zip").is_none(), "普通路径放行");
+    }
 
     // ---- Content-Range 解析（对应缺陷 2：旧 split('=') 死代码）----
     #[test]

@@ -49,6 +49,16 @@
   - **下载 dest 双写防护**（`main/manager.ts` + `main/store.ts`）：`uniquePath` 只查成品文件是否存在，而引擎先写 `dest.part`——「A 下载中（盘上还只有 a.zip.part）→ 添加同名新链接 B」会拿到同一个 dest，两个引擎进程对写同一份 `.part/.part.meta`（内容混合 / rename 后写错 inode）。修为 `.part`/`.part.meta` 一并算占用 + 新增进程内 dest 索引 `byDest`（补上「引擎 probe 期间盘上还没出现」的那段窗口）。CDP 实证（截图 `app/.shots/audit/93-unique-path.png`）：两个不同 URL 的同名任务分别落到 `same.zip` / `same (1).zip`；手工造 `.part` 占位后同名任务让位。
   - **配置的下载目录不存在时 dest 被当成文件路径**（`main/manager.ts`）：新装 / 自定义路径首次下载前盘上还没有那个目录，`isDirectory` 判不出来，dest 原样透传——引擎把目录名当文件写，下载必然失败。修为「rawDest 就是设置里的下载目录」时按目录补全文件名。
   - 其余小修：桥 token 比较改 `timingSafeEqual` + 长度预判、桥 `close()` 销毁已建 socket（`nmBridge.ts`）；排队推送按 url 去重 + 上限（`nmService.ts`，窗口重载不再重复弹同一条）；宿主 `writeFrame` 加 2s 写超时兜底（管道已断时写回调永不来，会挂死退出链，`nmHost.ts`）；宿主清单 32 位视图失败也进 errors、查状态时幂等自愈重写清单（搬家 / 升级后注册表指向不存在的 exe 这一最难自查的症状，`nmHostInstall.ts` + `nmService.ts`）；probe 看门狗 60s→120s（引擎探测最坏 70s：HEAD 40s + check_ranges 30s 串行，慢服务器被误判 engine_hang，`engine.ts`）；扩展超长 URL 明确拒绝而非静默截断（`background.js`，`S.errorUrlTooLong` 此前是死字符串）、`download` 属性支与路径支共用同一套文件名净化（`content.js`）。闸门：electron-vite build ✓、typecheck ✓、test 136/136、reg_all ALL PASS（32/23/35）。
+- **代码审查（引擎与主进程）修复·Rust 侧**（⚠️ **未在本机编译**：本机没有 cargo 工具链，改动只经过逐行类型自查；合入前必须在有 cargo 的环境跑 `cd engine-rs && cargo build --release --locked && cargo test`，并重新产出 `fastdrop-engine.exe` / `fastdrop-nm-host.exe` 才会生效）：
+  - **`resume_ok` 只在 probe 时求值一次，同进程内第二次 `run` 必把续传进度全部清零**（`engine-rs/src/main.rs` 的 `ensure_part`，**critical**）：暂停→继续（主进程被暂停 Ack 清看门狗后**复用**同一引擎进程）、引擎侧 fatal 后点「继续」、全部段下完校验中被再 run——三条最常见路径都命中「`existed/before/after` 全满足、唯独 `resume_ok` 还是 probe 那一刻的 false（那一刻盘上通常还没有边车）」，于是所有段 `downloaded/flushed` 归零 + 边车覆写为零，几十 GB 白下。修为按同一套判据在 `ensure_part` 里从盘上重读边车重算 `resume_ok`（边车每次 save 写的都是当前布局），恢复时与内存值取 max（边车只记 fsync 水位，本进程刚写下的那截只在内存）。守卫 `before == total`：文件被外部改短/换掉的情况仍走清零，不信任边车。e2e 未覆盖这条路径（只测了杀进程重启与 retry 从 0），补测要在有网环境做。
+  - **中继对「桌面端一个帧都没产出」没有总超时，投递永久挂死**（`engine-rs/src/bin/nm_host.rs`，**high**）：`kill_at` 只在转出过应答后才被赋值，桌面端启动被拖住/启动即挂时主线程在 `recv_timeout` 上无限自旋——中继不退、Chrome 的 `sendNativeMessage` 永不 resolve、一整套进程树常驻，用户完全无感且无自愈路径。修为进入循环即设 30s 硬截止，超时强杀 + `emit_error_frame("桌面端没有在时限内应答")` + 退出码 1。
+  - **重定向只限跳数不限主机（SSRF 面）**（`engine-rs/src/http.rs`）：`Policy::limited(10)` 允许跨主机跳转，https 源可被重定向到 `https://10.x` / `https://169.254.169.254`（云元数据端点）并带 Range 头；注释里「只允许同样的 https 协议」并不是它提供的能力（`https_only` 只约束初始 scheme）。修为自定义 policy：10 跳上限 + 拒绝 IP 字面量的环回/私网/链路本地/CGNAT/广播目标（域名无法在同步策略里解析，放行并在此声明）。
+  - **边车写入竞态**（`main.rs`）：`save_sidecar`（1 次/秒）与 `save_sidecar_now`（pause/stop/set_threads/run/校验起点）共用同一个 `.tmp` 且各自 detached spawn——Windows 上 rename 不失效已开句柄，实时 `.part.meta` 可能被写成混合内容。修为任务内 `sidecar_lock` 串行化 create→rename（`write_sidecar_blocking`），且每一步失败都 eprintln 留痕（此前全 `let _ =` 静默）。
+  - **panic 无兜底**（`main.rs`）：tokio 任务内 panic 不杀进程——worker 静默死亡、段永远卡 running、任务永远 downloading，而下载中没有看门狗能发现它。装 panic hook：留痕后 `process::exit(101)`，让主进程的「引擎意外退出自动重拉」接管（断点还在）。
+  - **stdin 巨行无上限**（`protocol.rs`）：`read_until` 对永不换行的流会无限增长；加 1 MiB 上限，超限截断（必然 bad json）并把残余读到行尾丢弃（不然残余会拼成下一条命令）。
+  - **协议噪音占用 error 语义**（`main.rs`）：bad_json / unknown_cmd 原发 `error` 事件，主进程把它当**本任务失败**——一条坏行就把健康下载打成 error。改发 `log` 事件（主进程 switch 的 default 正好忽略）。
+  - **dest 纵深防御**（`main.rs`）：probe 时拒绝含 `..` 的路径与 Windows 保留设备名（CON/COM1/LPT9…，大小写不敏感）。
+  - 新增两个纯函数单测（`dest_reject_reason` 9 例、`blocked_redirect_target` 14 例），随 cargo test 跑。
 
 ### 验证
 

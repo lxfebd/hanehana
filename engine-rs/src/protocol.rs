@@ -43,6 +43,10 @@ pub async fn emit_line(out: &mut tokio::io::BufWriter<Stdout>, v: Value) {
 /// 塞进一行坏字节，`main` 的 loop 就 `break`、进程安静 exit 0，协议里连一条 error 事件都没有。
 /// 现在非法字节被替换成 U+FFFD，交给 `serde_json` 报 bad json，进程照常存活。
 /// 返回：`Ok(Some(line))` 有内容 / `Ok(None)` 干净 EOF / `Err` 真的 IO 读取出错。
+/// 单行上限：调用方（主进程）只会发几十到几百字节的命令行。不设限的话，
+/// 一个永不换行的畸形字节流会把 `buf` 喂到爆内存（OOM 是整个引擎一起死）。
+const MAX_LINE: usize = 1024 * 1024;
+
 pub async fn read_stdin_line(
     reader: &mut BufReader<tokio::io::Stdin>,
     buf: &mut Vec<u8>,
@@ -51,6 +55,22 @@ pub async fn read_stdin_line(
     let n = reader.read_until(b'\n', buf).await?;
     if n == 0 {
         return Ok(None);
+    }
+    if buf.last() != Some(&b'\n') && buf.len() > MAX_LINE {
+        // 超限且还没到行尾：截到上限（这一行必然解析失败 → bad json），
+        // 残余字节继续读到行尾为止全部丢弃——不然残余会拼成下一行，
+        // 把一条命令切成两条。
+        buf.truncate(MAX_LINE);
+        loop {
+            let mut sink = Vec::new();
+            let m = reader.read_until(b'\n', &mut sink).await?;
+            if m == 0 {
+                return Ok(None);
+            }
+            if sink.last() == Some(&b'\n') {
+                break;
+            }
+        }
     }
     let s = String::from_utf8_lossy(buf);
     Ok(Some(s.trim().to_string()))

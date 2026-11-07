@@ -171,6 +171,40 @@ pub fn apply_custom_headers(map: &mut HeaderMap, headers: &BTreeMap<String, Stri
     }
 }
 
+/// 重定向目标拦截：只拦** IP 字面量**里的环回 / 私网 / 链路本地 / CGNAT /
+/// 广播（域名解析是异步的，sync 的 redirect policy 里做不了，只能放过域名）。
+///
+/// `Policy::limited(10)` 只限跳数、不限主机：https 下载源可以被重定向到
+/// `https://10.x` / `https://169.254.169.254`（云元数据端点）这类内网地址，
+/// 还带着 Range 头——注释里「只允许同样的 https 协议」并不是 limited() 的能力。
+/// https_only + reqwest 默认拒绝挡掉协议降级，这里补同协议的内网目标。
+fn blocked_redirect_target(url: &reqwest::Url) -> bool {
+    match url.host_str() {
+        Some(h) => match h.parse::<std::net::IpAddr>() {
+            Ok(std::net::IpAddr::V4(v4)) => {
+                let o = v4.octets();
+                v4.is_loopback()
+                    || v4.is_unspecified()
+                    || v4.is_broadcast()
+                    || o[0] == 10
+                    || (o[0] == 172 && (o[1] & 0xf0) == 16)
+                    || (o[0] == 192 && o[1] == 168)
+                    || (o[0] == 169 && o[1] == 254)
+                    || (o[0] == 100 && (o[1] & 0xc0) == 64)
+            }
+            Ok(std::net::IpAddr::V6(v6)) => {
+                let s = v6.segments();
+                v6.is_loopback()
+                    || v6.is_unspecified()
+                    || (s[0] & 0xfe00) == 0xfc00 // ULA fc00::/7
+                    || (s[0] & 0xffc0) == 0xfe80 // 链路本地 fe80::/10
+            }
+            Err(_) => false, // 域名：同步策略里无法解析，放行
+        },
+        None => true, // 没有 host（理论上）一律拦
+    }
+}
+
 /// 建 HTTP 客户端。`headers` 是调用方带来的自定义头（扩展投递的 Cookie/Referer 等），
 /// 和 User-Agent 一起作为**默认头**下发：探测（HEAD / 带 Range 的 GET）和真正下载
 /// （分段 GET）带的是同一组头，不会出现「探测能过、下载又 403」。
@@ -186,10 +220,18 @@ pub fn make_client(
         // 强制 https：下载源（含代理入口）都应是 https，放开明文会把
         // Range 请求原样暴露在网络上，也防服务端用重定向把请求降级到 http。
         .https_only(true)
-        // 默认重定向策略是「放行到任意主机」——一个 https 下载源可以把我们
-        // 重定向到内网/本地地址并带上 Range 头（SSRF 面）。限制为最多 10 跳、
-        // 且只允许同样的 https 协议（reqwest 对跨协议跳转默认已拒绝，这里显式化）。
-        .redirect(reqwest::redirect::Policy::limited(10));
+        // 自定义重定向策略：10 跳上限 + 拒绝内网/环回/链路本地目标（IP 字面量）。
+        // 默认的 limited(10) 不限主机——https 源可被重定向到 https://10.x、
+        // https://169.254.169.254（云元数据）并带着 Range 头，那是 SSRF 面。
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("too many redirects");
+            }
+            if blocked_redirect_target(attempt.url()) {
+                return attempt.error("redirect to a private or link-local address is not allowed");
+            }
+            attempt.follow()
+        }));
     // 代理串解析不了必须当场报错，不能 `if let Ok(..)` 静默跳过：跳过等于用户填了
     // 代理却一路直连，失败时他会去怀疑站点，而真正的原因是那行配置根本没生效。
     if !proxy.is_empty() {
@@ -456,7 +498,7 @@ pub async fn fetch_and_write(
     )
     .await?;
     let st = resp.status().as_u16();
-    if !(resp.status().is_success() || st == 206) {
+    if !resp.status().is_success() {
         let e = FetchErr::new("http_status", format!("http {st}")).with_params(json!({"status": st}));
         return Err(if is_fatal_status(st) { FetchErr { fatal: true, ..e } } else { e });
     }
@@ -639,6 +681,32 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    // ---- 重定向目标拦截（SSRF 面：https 源 → https 内网）----
+
+    #[test]
+    fn blocked_redirect_target_flags_private_and_loopback() {
+        let cases = [
+            ("https://10.1.2.3/x", true),
+            ("https://172.16.0.1/x", true),
+            ("https://172.31.255.255/x", true),
+            ("https://192.168.1.1/x", true),
+            ("https://169.254.169.254/latest/meta-data", true),
+            ("https://127.0.0.1/x", true),
+            ("https://0.0.0.0/x", true),
+            ("https://100.64.0.1/x", true), // CGNAT
+            ("https://[::1]/x", true),
+            ("https://[fe80::1]/x", true),
+            ("https://[fc00::1]/x", true),
+            ("https://172.32.0.1/x", false), // 172.32 是公网
+            ("https://93.184.216.34/x", false),
+            ("https://cdn.example.com/x", false), // 域名放行（同步策略里无法解析）
+        ];
+        for (u, want) in cases {
+            let url = reqwest::Url::parse(u).unwrap();
+            assert_eq!(blocked_redirect_target(&url), want, "{u}");
+        }
     }
 
     #[test]
