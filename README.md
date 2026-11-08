@@ -150,12 +150,15 @@ hanehana/
 │   ├── src/renderer/       Vue 3 界面：components / composables / stores / design / i18n
 │   ├── src/shared/         主进程与渲染层共享的类型、IPC 通道名、错误与格式化
 │   ├── extension/          浏览器扩展（MV3，投递下载链接；协议契约见 src/shared/nmProtocol.ts）
-│   ├── scripts/            门禁脚本（回归闸 / 打包 smoke / 图标生成）
+│   ├── scripts/            门禁脚本（回归闸 / 打包 smoke / 图标生成；out/ 与 .shots/ 为可再生存档， gitignore）
 │   ├── tests/              node:test 单元测试
 │   └── build/              图标素材（icon.ico / tray.png / 生成源图）
 ├── engine-rs/              Rust 下载引擎（tokio + reqwest，每任务一进程）+ 宿主中继 fastdrop-nm-host
+├── docs/assets/            界面预览等文档资产（README 引用的截图）
 ├── .github/workflows/      CI 守门 + tag 触发的 Release 发布
-└── LICENSE                 MIT
+├── CHANGELOG.md            版本变更（Keep a Changelog）
+├── RELEASE_NOTES-*.md      各版本发布说明（Release 页粘贴稿）
+└── 不要上传*/               本地暂存区（.gitignore 忽略）：临时脚本 / 取证截图等不入库材料
 ```
 
 ---
@@ -177,6 +180,10 @@ engine-rs (Rust)  ·  分段并发下载 + 校验，每任务一个子进程
 封面与缩略图通过自定义 `hh://` scheme 加载，避免 `file://` 越界；CSP 与 scheme 注册在主进程一次性接线。
 
 **数据目录**：`~/.hanehana`（`games.json` / `tasks.json` / `settings.json` / `covers/` / `thumbs/`），可用 `HANEHANA_DATA_DIR` 覆盖（测试与多开隔离用）。首启若检测到旧版 `%APPDATA%/hanehana` 游戏库会整体迁入；`HANEHANA_DATA_DIR` 指向隔离目录时不迁移，避免本机旧库渗进测试 seed。
+
+**存档耐久约定**：三类主存档（`games.json` / `tasks.json` / `tracking.json`）统一走 `jsonStore`——写前先把上一份好文件轮换成 `.bak`，新内容 fsync 后才 rename；主文件损坏时自动从 `.bak` 恢复并把坏文件留证为 `.corrupt-<时间戳>`。手动清理数据目录时，`.bak` 与 `.corrupt-*` 可一并删除。
+
+**扩展投递桥文件**：`nm-bridge.json`（桌面端↔中继的本地桥端口与令牌，随窗口启动/关闭生成与清理）、`nm-pending.jsonl`（应用未运行时的投递排队，上限 200 行、按 URL 去重，下次启动接手）。
 
 ---
 
@@ -231,6 +238,7 @@ cd app && npm run dist        # NSIS 安装包（--publish never，仅本地产�
 - [x] 同款多安装目录判重去重（扫描结果可一键补入）
 - [x] 真实 UI 走查验收（`regression:ui` / `regression:dupe`）
 - [x] 浏览器扩展投递下载链接（native messaging 通道）
+- [x] 代码质量：全库四轮静态审查（引擎 / 主进程 / 扩展 / 站点适配器） + Rust 编译与 38 例单测 + 引擎协议冒烟
 - [ ] 安装包代码签名
 
 ---
