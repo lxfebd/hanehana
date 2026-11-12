@@ -26,6 +26,14 @@ test('空输入返回 null', () => {
   assert.equal(explainError('', null, null), null)
 })
 
+test('https_required 码：本地判定的明文源，文案不得说「会自动重连」', () => {
+  // http 链接被引擎在建请求时就拒掉，一个字节都没发出去——
+  // 必须直说原因，不能给「网络传输中断 / 会自动重连」这种等待自愈的误导。
+  const e = explainError('URL scheme is not allowed', 'https_required', null)
+  assert.equal(e?.title, '这个下载源不支持安全连接')
+  assert.ok(!e?.advice.includes('重连'), '本地判定不可重试，文案不得提自动重连')
+})
+
 test('码优先：有稳定码就不去过原文规则', () => {
   // 原文看起来像「网络中断」，但码说 checksum_mismatch —— 必须听码的
   const e = explainError('network error', 'checksum_mismatch', null)

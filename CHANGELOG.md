@@ -82,6 +82,19 @@
 
 ## [Unreleased]
 
+> 修复了一个「闸门常年红着没人看见」的问题：2026-10-31 起的 nightly download 闸连续 11 次失败，而当天与之后的 CHANGELOG 都写着 ALL PASS——因为那些记录实际是 `--no-download` 跑出来的。这次把闸门本身修好，再让 `reg_all` 默认真的包含它。
+
+### 修复
+
+- **nightly download 闸连红 11 次：HTTPS-only 撞上明文 fixture**（`app/scripts/e2e_download.mjs` + `app/scripts/fixtures/` + `engine-rs/src/http.rs`）。`.github/workflows/visual.yml` 的 `download` job 自 2026-10-31（commit `0a1818a`）加入起从未绿过。根因是三段叠加：① e2e fixture 用 `node:http` 起**明文**文件服务器；② 引擎 `make_client()` 早在 2026-10-13（`3ee6f48`）就硬写了 `.https_only(true)`（防 Range 头明文外泄、防重定向降级到 http）；③ reqwest 在**建请求时**就拒掉 http URL，Display 是 `URL scheme is not allowed`，一个字节都没发出去。而 `req_code()` 的关键词分类里没有这个串，于是落兜底 `request_failed`，界面显示「网络传输中断 / 会自动重连」——重连一万次也不会把 http 变成 https。现在 fixture 改成真实 HTTPS 链路：一枚测试 CA + 由它签发的叶证书（`app/scripts/fixtures/`，生成命令写在 `e2e_server.cnf` 头部），引擎侧新增 `HANE_EXTRA_CA` —— **只追加信任根，不放松任何校验**（与「关校验开关」是两回事），生产不设该变量则行为与以前完全一致。实测 30/30 PASS（12 MiB 文件、4 线程分段、并发上限、pause 停流、暂停→继续不回跳、retry 归零重下、重启持久化），`npm run regression` 全链路 `REGRESSION ALL PASS`。
+  两个踩坑记录，都在 fixture 里留了注释：**第一版**想省事用一张自签 `CA:TRUE` 直接当服务端证书，rustls/webpki 拒绝以 `CaUsedAsEndEntity`——必须 CA 签叶证书两段；**第二版** CA 与叶证书 DN 相同（都是 `CN=127.0.0.1`），webpki 拿叶证书自身去匹配 issuer、用叶证书的公钥验自己的签名，报 `BadSignature`——CA 必须独立 CN。另外叶证书要交给服务端、CA 才交给 `HANE_EXTRA_CA`，弄反是 `UnknownIssuer`。
+- **http 链接的失败文案是误导的**（`engine-rs/src/http.rs` + `app/src/shared/errors.ts`）。`req_code()` 新增最高优先级分支，把 URL scheme 被拒单独归到稳定码 `https_required`（位于 proxy 分类之前）；同时修掉 `probe_total()` 把 HEAD 失败统一改写成 `server did not reply` 的旧行为——那会把 code/params 全丢掉，章节信息（比如 `no_reply` 的超时秒数）也跟着没了，现在原样上抛。文案侧 `https_required` 明说「该链接是 http 明文地址，引擎只接受 https」，且**刻意不提「自动重连」**：本地判定不可重试，说会自动重连只会让人干等。
+- **`reg_all` 的 `--no-download` 口径**（`app/scripts/reg_all.mjs`）：逃生阀保留（本机没编译 Rust 引擎或离线时仍能跑其余闸），但注释里写清它是「跳过真实下载链路」而非「已跑过」。历史 CHANGELOG 里那些 `reg_all ALL PASS` 大多是这个口径，别当成 download 闸真绿过。
+
+### 验证
+
+- `npm run regression`（typecheck + static + unit + i18n + layers + download）→ `REGRESSION ALL PASS`，download 30/30。
+
 （下一批改动记在这里。）
 
 ## [0.2.21] - 2026-10-31

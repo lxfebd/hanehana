@@ -38,6 +38,9 @@ const CHUNK_IDLE: Duration = Duration::from_secs(60);
 /// 而盘上其实还是 `set_len` 撑出来的空洞——续传跳过这段，成品就是一堆零字节。
 /// 64 MiB 是吞吐与「崩溃最多重下多少」的折中（1 GiB/s 下约 15 秒一次）。
 const FLUSH_BYTES: u64 = 64 * 1024 * 1024;
+/// 额外信任根的 PEM 文件路径（`NODE_EXTRA_CA_CERTS` 的同义变量）。
+/// 只给本机 e2e 闸用：fixture 用自签证书起 HTTPS，生产不设。
+const EXTRA_CA_ENV: &str = "HANE_EXTRA_CA";
 const USER_AGENT: &str = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 \
                           (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 /// 调用方指定的头里，这些不许生效：它们要么决定连接怎么建、报文怎么分帧
@@ -97,7 +100,13 @@ impl FetchErr {
 /// 代理填错必须报「代理没生效」，不能被笼统的「连不上服务器」盖掉。
 pub fn req_code(e: &reqwest::Error) -> &'static str {
     let s = req_err(e).to_lowercase();
-    if s.contains("proxy") {
+    // scheme 被拒是**本地**判定的，请求根本没发出去（`https_only` 在建请求时就
+    // 返回 `url_bad_scheme`）。它必须排在所有网络原因之前单独成码：混进兜底的
+    // `request_failed`，界面会报「网络传输中断 / 会自动重连」——而真相是这个源
+    // 是 http，重连一万次也不会变。原话是 "URL scheme is not allowed"。
+    if s.contains("url scheme") {
+        "https_required"
+    } else if s.contains("proxy") {
         "proxy_invalid"
     } else if s.contains("dns") || s.contains("lookup") || s.contains("name resolution") || s.contains("name does not resolve") {
         "dns"
@@ -217,24 +226,12 @@ pub fn make_client(
     user_agent: &str,
     headers: &BTreeMap<String, String>,
 ) -> Result<reqwest::Client, String> {
-    let mut b = reqwest::Client::builder()
-        .connect_timeout(CONNECT_TIMEOUT)
-        .http2_adaptive_window(true)
-        // 强制 https：下载源（含代理入口）都应是 https，放开明文会把
-        // Range 请求原样暴露在网络上，也防服务端用重定向把请求降级到 http。
-        .https_only(true)
-        // 自定义重定向策略：10 跳上限 + 拒绝内网/环回/链路本地目标（IP 字面量）。
-        // 默认的 limited(10) 不限主机——https 源可被重定向到 https://10.x、
-        // https://169.254.169.254（云元数据）并带着 Range 头，那是 SSRF 面。
-        .redirect(reqwest::redirect::Policy::custom(|attempt| {
-            if attempt.previous().len() >= 10 {
-                return attempt.error("too many redirects");
-            }
-            if blocked_redirect_target(attempt.url()) {
-                return attempt.error("redirect to a private or link-local address is not allowed");
-            }
-            attempt.follow()
-        }));
+    let mut b = base_client_builder()?;
+    // 额外信任根：只追加、不放松任何校验（`NODE_EXTRA_CA_CERTS` 同语义）。
+    // 生产不设这个变量 → 走公开根证书，行为与以前完全一致。
+    if let Some(path) = std::env::var_os(EXTRA_CA_ENV) {
+        b = add_extra_ca(b, &path)?;
+    }
     // 代理串解析不了必须当场报错，不能 `if let Ok(..)` 静默跳过：跳过等于用户填了
     // 代理却一路直连，失败时他会去怀疑站点，而真正的原因是那行配置根本没生效。
     if !proxy.is_empty() {
@@ -256,6 +253,63 @@ pub fn make_client(
     b.default_headers(h)
         .build()
         .map_err(|e| format!("http client build failed: {e}"))
+}
+
+/// 客户端里那些「不随调用方变」的部分：超时、强制 https、重定向策略。
+fn base_client_builder() -> Result<reqwest::ClientBuilder, String> {
+    Ok(reqwest::Client::builder()
+        .connect_timeout(CONNECT_TIMEOUT)
+        .http2_adaptive_window(true)
+        // 强制 https：下载源（含代理入口）都应是 https，放开明文会把
+        // Range 请求原样暴露在网络上，也防服务端用重定向把请求降级到 http。
+        .https_only(true)
+        // 自定义重定向策略：10 跳上限 + 拒绝内网/环回/链路本地目标（IP 字面量）。
+        // 默认的 limited(10) 不限主机——https 源可被重定向到 https://10.x、
+        // https://169.254.169.254（云元数据）并带着 Range 头，那是 SSRF 面。
+        .redirect(reqwest::redirect::Policy::custom(|attempt| {
+            if attempt.previous().len() >= 10 {
+                return attempt.error("too many redirects");
+            }
+            if blocked_redirect_target(attempt.url()) {
+                return attempt.error("redirect to a private or link-local address is not allowed");
+            }
+            attempt.follow()
+        })))
+}
+
+/// 把一份额外根证书追加进信任链。**只追加**：客户端仍按 rustls 默认规则校验
+/// 主机名/有效期/链，绝不出现「关校验」这种开关——那样一个环境变量就能把
+/// 整个下载链路的 TLS 保护抹平，等于给了一次 MITM 的机会。
+///
+/// 用途只有一个：本机 e2e 闸用自签证书起 HTTPS fixture（生产环境不设该变量）。
+/// 读不到/解析不了 → 直接报错而不是静默忽略：静默忽略会让 e2e 表现成
+/// 「证书校验失败」，排查时以为证书生成错了，其实是路径没传对。
+fn add_extra_ca(
+    b: reqwest::ClientBuilder,
+    path: &std::ffi::OsStr,
+) -> Result<reqwest::ClientBuilder, String> {
+    let pem = std::fs::read(path)
+        .map_err(|e| format!("extra CA read failed ({}): {e}", path.to_string_lossy()))?;
+    // `Certificate::from_pem` 只吃单张证书；一个文件里有多段 PEM 时逐段收。
+    let text = String::from_utf8_lossy(&pem);
+    let mut certs = Vec::new();
+    for chunk in text.split("-----END CERTIFICATE-----") {
+        if !chunk.contains("-----BEGIN CERTIFICATE-----") {
+            continue;
+        }
+        let one = format!("{chunk}-----END CERTIFICATE-----\n");
+        if let Ok(c) = reqwest::Certificate::from_pem(one.as_bytes()) {
+            certs.push(c);
+        }
+    }
+    if certs.is_empty() {
+        return Err(format!("extra CA has no usable certificate: {}", path.to_string_lossy()));
+    }
+    let mut b = b;
+    for c in certs {
+        b = b.add_root_certificate(c);
+    }
+    Ok(b)
 }
 
 /// reqwest 错误的 `to_string()` 只有最外层那句 `error sending request for url (...)`，
@@ -400,11 +454,14 @@ pub async fn probe_total(client: &reqwest::Client, url: &str) -> Result<Option<u
             None if !accepts_ranges_header(r.headers().get("Accept-Ranges")) => return Ok(None),
             None => {}
         },
-        // HEAD timed out: the host isn't going to answer a ranged GET either.
-        Err(FetchErr { fatal: false, code, .. }) => {
-            return Err(FetchErr::new(code, "server did not reply"))
-        }
-        // HEAD 被拒（403/405）或发送失败：给带区间的 GET 剩下的预算。
+        // HEAD 发不出去或超时：主机连 HEAD 都不答，带区间的 GET 也不会答，
+        // 不再烧剩下的预算重试。**原错误原样上抛**——这一支捕获的是任意非 fatal
+        // 失败（超时、连不上、http 源被本地拒），把 msg 统一改写成
+        // "server did not reply" 会让「这个源是 http」变成「服务器没回话」，
+        // 用户照着去查网络，而真相在链接协议上。code/params 也必须跟着原样走，
+        // no_reply 的 secs 参数就是在这里丢不得的。
+        Err(e) => return Err(e),
+        // HEAD 被拒（403/405）等确定性应答：给带区间的 GET 剩下的预算。
         _ => {}
     }
     let remaining = PROBE_TIMEOUT.saturating_sub(started.elapsed());
@@ -779,6 +836,22 @@ mod tests {
         let mut m = headers(&[("bad header", "x"), ("X-Bad", "line1\nline2")]);
         m.insert("Cookie".to_string(), "a=1".to_string());
         assert!(make_client("", "ua", &m).is_ok());
+    }
+
+    // ---- 错误归码：http 源必须独立成码 ----
+
+    /// `https_only(true)` 在**建请求**时就拒掉 http 链接，一个字节都没发出去。
+    /// 这条错误必须归到 `https_required`：若落进兜底的 `request_failed`，
+    /// 界面会报「网络传输中断 / 会自动重连」，而重连一万次也不会把 http 变成 https。
+    #[tokio::test]
+    async fn req_code_marks_http_scheme_rejection_as_https_required() {
+        let c = make_client("", "ua", &BTreeMap::new()).unwrap();
+        // 端口 1 不必监听：scheme 判定发生在任何 I/O 之前。
+        let e = c.head("http://127.0.0.1:1/src.bin").send().await.unwrap_err();
+        assert_eq!(req_code(&e), "https_required");
+        // 原文依据：reqwest 的 url_bad_scheme 文案（小写后必须还能认出来），
+        // 归码就是靠这句字符串——上游换了措辞这条测试会先炸，而不是静默错码。
+        assert!(req_err(&e).to_lowercase().contains("url scheme"), "{}", req_err(&e));
     }
 
     #[test]

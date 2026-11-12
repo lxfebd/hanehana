@@ -185,6 +185,13 @@ const RETRY_MIRROR = '换一个镜像重新下载；这条链接本身有问题�
  */
 const codeRules: Record<string, { title: string; advice: string }> = {
   // ---- 网络与地址 ----
+  // 这条是**本地**判定的：引擎只走 https，http 链接在建请求时就被拒了，一个字节
+  // 都没发出去。它不能被归到 request_failed——那句「会自动重连」是彻头彻尾的误导，
+  // 重连一万次也不会把 http 变成 https。
+  https_required: {
+    title: '这个下载源不支持安全连接',
+    advice: '该链接是 http 明文地址，引擎只接受 https。请回站点重新点一次下载，拿到 https 直链。',
+  },
   proxy_invalid: {
     title: '代理设置没能生效',
     advice: '打开设置 → 网络，检查代理地址（例：http://127.0.0.1:7890）。清空则跟随系统代理。',

@@ -1,0 +1,52 @@
+# e2e_download.mjs 的 HTTPS fixture 证书参数（一枚测试 CA + 一张由它签发的叶证书）。
+#
+# 为什么不直接自签一张：rustls/webpki 拒绝把 CA:TRUE 的证书当**服务端实体**用
+# （`CaUsedAsEndEntity`）——自签叶证书要么被拒，要么得关校验，后者不可接受。
+# 所以按真实链路来：CA 签叶证书，客户端只额外信任这枚 CA，校验规则一毫不松。
+#
+# 生成（在本目录执行，Git Bash 下必须走 -config：MSYS 会把 /CN=… 路径化）：
+#   openssl req -x509 -newkey rsa:2048 -sha256 -days 3650 -nodes \
+#     -config e2e_server.cnf -section ca_req -extensions ca_ext \
+#     -keyout e2e_ca_key.pem -out e2e_ca_cert.pem            # CA（注入引擎的那份）
+#
+# CA 的 CN 必须和叶证书不同（`HaneHana e2e CA` vs `127.0.0.1`）：两者 DN 相同时
+# webpki 会拿叶证书自身去匹配 issuer，用叶证书的公钥验叶证书的签名 →
+# `invalid peer certificate: BadSignature`。第一次就是这么栽的。
+#   openssl req -newkey rsa:2048 -nodes -config e2e_server.cnf \
+#     -keyout e2e_server_key.pem -out server.csr             # 叶证书 CSR
+#   openssl x509 -req -in server.csr -CA e2e_ca_cert.pem -CAkey e2e_ca_key.pem \
+#     -CAcreateserial -days 3650 -sha256 -extfile e2e_server.cnf -extensions leaf_ext \
+#     -out e2e_server_cert.pem && rm -f server.csr e2e_ca_cert.srl
+#
+# 证书是测试专用：只信 127.0.0.1/localhost，经 HANE_EXTRA_CA 注入引擎，
+# 不进系统信任库、不进安装包。
+[req]
+distinguished_name = dn
+prompt = no
+
+# 给 CA 用的 req 段：-section 选的是「装 distinguished_name 指针的那一段」，
+# 不是直接放 DN 字段的段。所以这里单独开一段指到 ca_dn。
+[ca_req]
+distinguished_name = ca_dn
+prompt = no
+
+[dn]
+CN = 127.0.0.1
+O = HaneHana e2e fixture
+
+# CA 用独立 subject，绝不能和叶证书撞 DN（原因见文件头）。
+[ca_dn]
+CN = HaneHana e2e CA
+O = HaneHana e2e fixture
+
+[ca_ext]
+subjectAltName = IP:127.0.0.1, DNS:localhost
+basicConstraints = critical, CA:TRUE
+keyUsage = critical, digitalSignature, keyCertSign
+extendedKeyUsage = serverAuth
+
+[leaf_ext]
+subjectAltName = IP:127.0.0.1, DNS:localhost
+basicConstraints = critical, CA:FALSE
+keyUsage = critical, digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth

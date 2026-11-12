@@ -1,12 +1,17 @@
 // 下载链路端到端验证（真实 Electron 窗口 + 真实 Rust 引擎）：
-// 1. 起本地 HTTP 文件服务器（固定大小随机文件）
-// 2. 拉起 Electron（HANEHANA_DEBUG_PORT=9223, HANEHANA_DATA_DIR=隔离目录）
+// 1. 起本地 **HTTPS** 文件服务器（固定大小随机文件，自签证书）
+// 2. 拉起 Electron（HANEHANA_DEBUG_PORT=9223, HANEHANA_DATA_DIR=隔离目录,
+//    HANE_EXTRA_CA=fixture 证书 → 引擎追加信任这根测试根）
 // 3. CDP 调 window.hh.addTask 建真实任务 → 轮询 listTasks 等 done
 // 4. 校验磁盘文件字节数与 md5 与源一致
 // 5. 再验证 removeTask 与状态持久化（重启后列表状态还在）
 //
+// 为什么必须是 HTTPS：引擎 `make_client` 强制 `.https_only(true)`（防 Range 头
+// 明文外泄 + 防重定向降级），http fixture 会在建请求时就被拒（url_bad_scheme），
+// 一个字节都发不出去——这正是 2026-10-31 起 nightly download 闸连红 11 次的根因。
+//
 // 用法：node scripts/e2e_download.mjs
-import { createServer } from 'node:http'
+import { createServer } from 'node:https'
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -19,6 +24,13 @@ const DEBUG_PORT = 9223
 const DATA_DIR = join(APP_ROOT, '.e2e-data')
 const DOWNLOAD_DIR = join(DATA_DIR, 'dl')
 const SRC_FILE = join(DATA_DIR, 'src.bin')
+// fixture 证书是 CA + 叶证书两段（见同目录 e2e_server.cnf 头部）：
+//   服务端拿叶证书（SAN=IP:127.0.0.1,DNS:localhost）；
+//   客户端经 HANE_EXTRA_CA 只**追加**信任那枚 CA——校验规则一毫不松。
+// 别把这两者弄反：注入叶证书 = 客户端不认签它的 CA → UnknownIssuer。
+const FIXTURE_CERT = join(here, 'fixtures', 'e2e_server_cert.pem')
+const FIXTURE_KEY = join(here, 'fixtures', 'e2e_server_key.pem')
+const FIXTURE_CA = join(here, 'fixtures', 'e2e_ca_cert.pem')
 
 // 12 MiB 随机文件，多线程分片下足够跑出真实分段
 const FILE_SIZE = 12 * 1024 * 1024
@@ -28,9 +40,15 @@ function md5(p) {
 }
 
 function startFileServer() {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
+    for (const p of [FIXTURE_CERT, FIXTURE_KEY, FIXTURE_CA]) {
+      if (!existsSync(p)) {
+        reject(new Error(`fixture 证书缺失：${p}（生成命令见 e2e_server.cnf 头部）`))
+        return
+      }
+    }
     const served = { bytes: 0 }
-    const srv = createServer((req, res) => {
+    const srv = createServer({ cert: readFileSync(FIXTURE_CERT), key: readFileSync(FIXTURE_KEY) }, (req, res) => {
       const file = SRC_FILE
       if (!existsSync(file)) {
         res.writeHead(404)
@@ -68,6 +86,7 @@ function startFileServer() {
     srv.listen(0, '127.0.0.1', () =>
       resolve({ port: srv.address().port, close: () => srv.close(), servedBytes: () => served.bytes }),
     )
+    srv.on('error', reject)
   })
 }
 
@@ -82,6 +101,9 @@ async function launchElectron() {
       ...process.env,
       HANEHANA_DEBUG_PORT: String(DEBUG_PORT),
       HANEHANA_DATA_DIR: DATA_DIR,
+      // 引擎由 Electron 主进程 spawn、默认继承环境 → 这里设一次就到引擎。
+      // 必须是 **CA**（不是服务端那张叶证书），否则引擎不认签发者 → UnknownIssuer。
+      HANE_EXTRA_CA: FIXTURE_CA,
       // 不设 HANEHANA_ROOT：enginePath() 用 dirname(cwd) 定位 engine-rs，
       // cwd=app 目录时正好落在仓库根的 engine-rs 下。
     },
@@ -201,7 +223,7 @@ async function main() {
     check('默认下载目录指向隔离目录 ok', setDir?.ok === true, JSON.stringify(setDir))
 
     // 1. 新建任务：加到隔离下载目录
-    const addUrl = `http://127.0.0.1:${srv.port}/src.bin`
+    const addUrl = `https://127.0.0.1:${srv.port}/src.bin`
     const addResult = await evalJs(`(async () => {
       const r = await window.hh.addTask({ url: '${addUrl}', dest: '${DOWNLOAD_DIR.replace(/\\/g, '\\\\')}', threads: 4, note: 'e2e' })
       return r
