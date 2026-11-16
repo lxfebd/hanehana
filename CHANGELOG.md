@@ -2,6 +2,28 @@
 
 本文件记录 HaneHana 的版本变更。格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循语义化版本。
 
+## [Unreleased]
+
+### 修复
+
+- **引擎 stdin 半行被静默丢弃**（`engine-rs/src/main.rs`）：stdin 读取原先放在 `select!` 里与 100ms tick 抢，而 `read_until` 不是 cancel-safe —— tick 先到时，已读进缓冲的半行被下一轮 `clear()` 蒸发，剩余字节拼成新行 → `bad json` → pause/stop 命令静默丢失（界面表现为「点了没反应」）。改为独立 reader 任务独占 stdin，主循环只收整行；`cargo test` 32+7 通过，下载 e2e 30/30（含暂停→继续不回跳）。
+- **`will-navigate` 放行所有 `file:`**（`app/src/main/index.ts`）：渲染层一次 XSS 就能把整窗导航到任意本地 HTML，而那页同样拿得到 preload 暴露的 `window.hh`。白名单收窄到打包入口 `index.html` 的精确路径。
+- **`Ipc.OpenDir` 可执行任意程序**（`app/src/main/games.ts`）：`shell.openPath` 对 exe 是「运行」，而 `OpenDir` 是 IPC 面、此前没有任何路径闸门。补目录判定，非目录直接拒绝。
+- **写盘失败会崩掉主进程**（`app/src/main/jsonStore.ts`）：合并写定时器与 `flush()` 里的 `writeNow` 没有 try/catch，磁盘满 / 被杀软占用时异常冒成 `uncaughtException`（窗口与下载列表全没）。现在捕获后保留 `dirty+pending` 重试并记日志。
+
+### 变更
+
+- **正则搜索不再逐条编译**（`app/src/renderer/stores/library.ts`）：`matchSearch` 原先对每款游戏 `new RegExp`，万级库每次键入编译上万次；改为 `filteredGames` 编译一次后传入。
+- **列表视图 key 提到 computed**（`app/src/renderer/components/CoverGrid.vue`）：原写在模板表达式里，每次重渲染（hover / 滚动 / 定时刷新）都全库 `join('|')` 一遍。
+
+### 测试与闸门
+
+- **21 个验证脚本不再 fail-open**（`app/scripts/verify_*.mjs`）：断言失败原只打印计数、从不设置退出码，`npm run regression` 红了也返回 0。现在失败当场置 `process.exitCode = 1`（早退路径同样覆盖）。
+- **`e2e_dupe_ui.mjs` 恒绿修复**：末尾写死 `process.exit(0)` 吞掉了所有 FAIL；并把「扫描浮层 dupe 区块 / 行 / 按钮」补成真断言。
+- **`ui_scrape_walkthrough.mjs` 补断言**：此前全程只有 log、没有一条断言却被当回归闸；新增「候选卡 ≥1」「应用后元数据真的落库」两条。
+- **`reg_all.mjs` 逃生阀语义**：`--no-layers` / `--no-download` 跳过步骤时打印 `REGRESSION PARTIAL PASS` 并以 exit 3 结束（此前的 ALL PASS + exit 0 会把「跳过」记成「绿」）。
+- **CI 补层叠闸**（`.github/workflows/ci.yml`）：PR 增加 `regression:layers`。
+- **发版前置闸**（`.github/workflows/release.yml`）：新增 tag 与 `app/package.json` 版本一致性校验，并补跑 `npm test` + `regression:static`。
 ## [0.2.22] - 2026-11-08
 
 > 一次「先用眼睛、再用工具、最后审查代码」的大版本维护发布：视觉走查 + 全功能 CDP 验收修掉 6 个真 bug；随后对整个代码库做了四轮静态审查（engine-rs / 主进程 46 文件 / 扩展与 native messaging 全链 / 站点适配器），修掉 1 个 critical（引擎暂停→继续会把已下进度全部清零重下）、2 个 high 与一批 medium/low；全部改动编译、单测（应用 138 + Rust 31+7）、回归闸门（8/32/23/35）绿后才入库。
