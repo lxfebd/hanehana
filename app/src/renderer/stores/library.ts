@@ -189,16 +189,13 @@ const FIELD_PREFIXES: Record<string, FieldKey> = {
 function matchSearch(
   s: { title: string; raw: string; native: string; tags: string; extra: string; dev: string; series: string },
   kw: string,
+  re: RegExp | null,
 ): boolean {
   const fields = [s.title, s.raw, s.native, s.tags, s.extra, s.dev, s.series]
-  // 正则模式：不加任何前缀包裹，直接编译
+  // 正则模式：正则由 filteredGames 编译一次后传进来（原先在这里逐条 new RegExp，
+  // 万级库每键入一次就编译上万次，输入明显掉帧）。编译失败时 re 为 null → 全部不命中。
   if (library.searchRegex) {
-    try {
-      const re = new RegExp(kw, 'i')
-      return fields.some((f) => re.test(f))
-    } catch {
-      return false
-    }
+    return re ? fields.some((f) => re.test(f)) : false
   }
   // 字段前缀：`tag:xxx` → 只在 tags 里找
   const fm = /^(tag|dev|dev_|series|ser|name|title|orig|native):(.*)$/.exec(kw)
@@ -221,6 +218,18 @@ export const filteredGames = computed(() => {
   const smart = library.smartList
   const meta = library.metaKey
   const metaV = library.metaValue
+  // 正则模式只在过滤启动时编译一次：语法错误 → regexBroken，整条过滤返回空集
+  // （与原先「每条游戏各自 catch 后返回 false」等价，但只付出一次编译代价）。
+  const regexMode = library.searchRegex
+  let re: RegExp | null = null
+  let regexBroken = false
+  if (kw && regexMode) {
+    try {
+      re = new RegExp(kw, 'i')
+    } catch {
+      regexBroken = true
+    }
+  }
   const out = library.games.filter((g, i) => {
     if (cat && !g.categories.includes(cat)) return false
     if (fav && !g.favorite) return false
@@ -230,9 +239,10 @@ export const filteredGames = computed(() => {
       if (meta === 'developer' && g.developer !== metaV) return false
     }
     if (!kw) return true
+    if (regexBroken) return false
     const s = idx[i]
     if (!s) return false
-    return matchSearch(s, kw)
+    return matchSearch(s, kw, re)
   })
   // 「最近玩过」必须按 lastPlayed 倒序——智能列表默认只过滤不排序，
   // 而「最近」的语义全在顺序上（混在入库顺序里等于没有这个列表）。

@@ -115,6 +115,12 @@ const filterFingerprint = computed(
     `${debouncedKeyword.value}|${library.categoryFilter}|${library.favOnly}|${library.smartList}|${library.metaKey}:${library.metaValue}`,
 )
 
+/** 列表视图的集合指纹：列表复用同一个 items 数组，逐项 id 变化（批量移除、重命名不改集合）
+ *  也必须换 key，所以这里用全量 id 串而不是 filterFingerprint。
+ *  必须放 computed 里：写在模板表达式上时，每次重渲染（hover / 滚动 / 定时刷新）都全库
+ *  join 一遍（万级库 ≈ 每次几十 KB 字符串），虚滚动下这是热路径。 */
+const listKey = computed(() => 'list-' + games.value.map((g) => g.id).join('|'))
+
 /** 网格 wrapper 宽度 = cols*200 - 16，居中留白 */
 const gridWrapperW = computed(() => `${cols.value * 200 - 16}px`)
 
@@ -366,7 +372,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
         行距只能靠 itemSize 让步，否则行会紧贴。 -->
     <RecycleScroller
       v-else
-      :key="'list-' + games.map((g) => g.id).join('|')"
+      :key="listKey"
       class="scroller"
       :items="games"
       :item-size="80"

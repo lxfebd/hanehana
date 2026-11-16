@@ -1536,8 +1536,23 @@ async fn main() -> std::io::Result<()> {
     // 后台校验结果的通道。None = 没有正在等的校验。
     let mut verify_rx: Option<mpsc::UnboundedReceiver<VerifyResult>> = None;
 
-    let mut reader = BufReader::new(stdin());
-    let mut line_buf: Vec<u8> = Vec::new();
+    // stdin 读取必须独占一个任务：`read_until` 不是 cancel-safe，把它放在 select!
+    // 里会被每 PROGRESS_INTERVAL 的 tick 抢占——已从管道读进 line_buf 的半行被下一轮
+    // `buf.clear()` 蒸发，剩余字节拼成新的一行 → bad json → 命令静默丢失
+    // （pause/stop 丢一条 = 界面「点了没反应」）。独立任务独占 stdin，主循环只收整行。
+    let (line_tx, mut line_rx) = mpsc::channel::<Result<Option<String>, std::io::Error>>(8);
+    tokio::spawn(async move {
+        let mut reader = BufReader::new(stdin());
+        let mut buf: Vec<u8> = Vec::new();
+        loop {
+            let r = read_stdin_line(&mut reader, &mut buf).await;
+            // EOF / 读错都只发一次，发完读任务结束（主循环收到后直接退出）
+            let last = !matches!(&r, Ok(Some(_)));
+            if line_tx.send(r).await.is_err() || last {
+                break;
+            }
+        }
+    });
     // stdout 由独立写任务负责：主循环只往通道里发事件，绝不被管道背压阻塞
     // （否则主进程停读 stdout 几秒，pause/stop 命令就没人处理）。通道是
     // 无序 FIFO、单消费者，「终态快照先于 done/error」的顺序因此保留。
@@ -1567,13 +1582,15 @@ async fn main() -> std::io::Result<()> {
             break;
         }
         tokio::select! {
-            line = read_stdin_line(&mut reader, &mut line_buf) => {
-                let line = match line {
-                    Ok(Some(t)) => t,
+            got = line_rx.recv() => {
+                let line = match got {
+                    // 读任务已经结束（它自己的 EOF / Err 那一条已经发过）
+                    None => break,
+                    Some(Ok(Some(t))) => t,
                     // 干净 EOF：Electron 关掉了 stdin，正常退出。
-                    Ok(None) => break,
+                    Some(Ok(None)) => break,
                     // 真的读不出来（IO Err）：退出前先吐一条 error 事件，别静默消失。
-                    Err(e) => {
+                    Some(Err(e)) => {
                         let raw = e.raw_os_error();
                         let msg = error_event(
                             "stdin_read_error",

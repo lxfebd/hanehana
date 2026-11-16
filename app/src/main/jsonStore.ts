@@ -138,7 +138,18 @@ export function createJsonStore<T>(file: string, serialize?: (_v: T) => string, 
         dirty = false
         const v = pending
         pending = undefined
-        if (v !== undefined) writeNow(v)
+        if (v !== undefined) {
+          // 写盘失败（磁盘满 / 被杀软占用 / 权限）不能让异常从定时器里冒成
+          // uncaughtException——那会直接崩掉整个主进程（下载列表、窗口全没）。
+          // 写失败就保留 dirty + pending，下一次 save/flush 重试这份内容。
+          try {
+            writeNow(v)
+          } catch (err) {
+            dirty = true
+            pending = v
+            console.error('[jsonStore] 写入失败，保留待写内容重试', file, err)
+          }
+        }
       }, delay)
     },
     flush(): boolean {
@@ -150,7 +161,15 @@ export function createJsonStore<T>(file: string, serialize?: (_v: T) => string, 
       dirty = false
       const v = pending
       pending = undefined
-      if (v !== undefined) writeNow(v)
+      if (v !== undefined) {
+        try {
+          writeNow(v)
+        } catch (err) {
+          dirty = true
+          pending = v
+          console.error('[jsonStore] flush 写入失败', file, err)
+        }
+      }
       return true
     },
   }

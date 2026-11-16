@@ -267,12 +267,21 @@ function createWindow(): void {
   // 拦截。这里只放打包入口（file:// 的 index.html）与 dev server
   // （localhost/127.0.0.1 的 Vite），其余导航一律阻止。webview 内的站点
   // 页签导航是功能语义，不在这里、由各自 WebContents 自行驱动。
+  // file: 只放行打包入口这一份 html。原先 file: 全放行，等于把
+  // 「渲染层 XSS → window.location 带去任意本地 html」这条链留着——那个本地页
+  // 同样拿得到 preload 暴露的 window.hh，白名单形同虚设。
+  const entryHtml = join(here, '../renderer/index.html')
+  const samePath = (a: string, b: string): boolean =>
+    a.replace(/\//g, '\\').toLowerCase() === b.replace(/\//g, '\\').toLowerCase()
   win.webContents.on('will-navigate', (e, url) => {
     try {
       const u = new URL(url)
+      if (u.protocol === 'file:') {
+        if (!samePath(fileURLToPath(u), entryHtml)) e.preventDefault()
+        return
+      }
       const devHost = u.hostname === 'localhost' || u.hostname === '127.0.0.1'
-      const ok = u.protocol === 'file:' || ((u.protocol === 'http:' || u.protocol === 'https:') && devHost)
-      if (!ok) e.preventDefault()
+      if (!((u.protocol === 'http:' || u.protocol === 'https:') && devHost)) e.preventDefault()
     } catch {
       e.preventDefault()
     }

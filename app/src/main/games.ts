@@ -6,7 +6,7 @@
  * ReinaManager）通用的「进程驻留计时」做法，不依赖游戏自报。
  */
 import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { basename, dirname } from 'node:path'
 import { shell } from 'electron'
 import { addGames, findGameByExe, getGame, getGames, removeGame, updateGame } from './gameStore'
@@ -224,6 +224,14 @@ export function handleBatchRemove(ids: string[]): BatchResult {
  */
 export async function handleOpenDir(dir: string): Promise<string> {
   if (!existsSync(dir)) return `目录不存在（${dir}），游戏可能已被移动或删除`
+  // 只接受目录：shell.openPath 对可执行文件是「运行」而不是「打开」，
+  // 而 OpenDir 是 IPC 面，渲染层能把任意路径喂进来（OpenTaskFile 有
+  // isDestAllowed 闸门，这里此前什么都没有）——一份 XSS 就能变成任意程序执行。
+  try {
+    if (!statSync(dir).isDirectory()) return `不是目录（${dir}）`
+  } catch {
+    return `目录不可访问（${dir}）`
+  }
   const why = await shell.openPath(dir)
   return why
 }
