@@ -18,6 +18,7 @@
 ### 变更
 
 - **游戏站从「更多」提为侧栏一级入口**（`app/src/renderer/components/NavSidebar.vue`）：它是真页面（内嵌 webview 的站点浏览），却藏在左下角「更多」收纳菜单里——新用户根本找不到，也就无从使用。现在紧挨「下载任务」排开（浏览站点 → 投递下载是同一件事），图标/文案/页签状态沿用原条目，「更多」不再重复放同一条（剩下统计/全屏/添加/Steam）。闸门同步：`verify_gamesites` 改点一级入口，`verify_ui_layers` 的 games 页面标记改走普通 nav。实测：侧栏顺序「首页/全部游戏/收藏夹/下载任务/游戏站/扫描导入/设置/更多」，点「游戏站」后 `.games` 与 webview 都挂载、该条变 active，「更多」菜单里只剩 4 条。
+- **左侧导航可收起成图标条（56px ⇄ 144px）**（`NavSidebar.vue` + `stores/ui.ts` + i18n）：下载站这类宽内容页被 144px 侧栏占掉整窗约 10.5% 的面积（1280×802 窗里 144×750，游戏站 webview 只剩 853px 宽）。侧栏顶部新增「收起/展开」按钮：收起成 56px 图标条后 webview 立刻多出 88px（实测 853→941）；标签隐藏（每条带 title 提示）、计数降级为小徽章、「更多」菜单照常向右弹出不裁。两层弹性：① 用户手点（写 localStorage `hh.nav.rail`，重启不丢）；② 窗口 ≤860px 自动收 —— 由当前宽度派生，拉宽自动回来，不是一次性开关。`verify_gamesites` 新增 5 条断言（默认展开 144 / 收起 56 标签隐藏 / webview 多出 ≥80px / 再点复原），4→9 全绿；另把层叠闸「切换:页名」标记超时后重点一次再判（高负载/4K 视口下偶发标记迟到，单独复现切页 260ms 就位且布局断言全程通过，连续两次超时才红、重试留 [retry] 日志）。
 - **正则搜索不再逐条编译**（`app/src/renderer/stores/library.ts`）：`matchSearch` 原先对每款游戏 `new RegExp`，万级库每次键入编译上万次；改为 `filteredGames` 编译一次后传入。
 - **列表视图 key 提到 computed**（`app/src/renderer/components/CoverGrid.vue`）：原写在模板表达式里，每次重渲染（hover / 滚动 / 定时刷新）都全库 `join('|')` 一遍。
 - **下载线程数绝对上限 64**（`engine-rs/src/main.rs`）：`threads` 原先只按 `total / MIN_SEGMENT` 夹，10 GB 传 1024 就是 4 万段 / 4 万个 `.part` 句柄 / 4 万条连接；`run` 与 `set_threads` 两处都夹到 64。
