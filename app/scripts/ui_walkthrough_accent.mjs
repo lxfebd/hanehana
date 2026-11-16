@@ -14,6 +14,7 @@ import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { waitFor, tryWaitFor } from './lib/waitFor.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
@@ -96,21 +97,18 @@ const ACC_VARS = `JSON.stringify({
 /** 打开设置→外观，返回是否成功 */
 async function openAppearance(app) {
   await app.ev(`(() => { const n = document.querySelectorAll('.nav-item'); [...n].find(x => /设置/.test(x.textContent))?.click(); return !!n.length })()`)
-  await sleep(700)
-  const ok = await app.ev(`!!document.querySelector('.accent-row')`)
-  if (!ok) {
+  // 等 accent 区真的挂上（原来固定 700ms ×2）；不在首 tab 就点一下再等。
+  await tryWaitFor(() => app.ev('!!document.querySelector(".accent-row")'), { timeoutMs: 5000, label: '设置→外观 accent-row 出现' })
+  if (!(await app.ev('!!document.querySelector(".accent-row")'))) {
     // 外观可能在第二个 tab
     await app.ev(`(() => { const t = [...document.querySelectorAll('.ant-tabs-tab')].find(x => /外观/.test(x.textContent)); t?.click(); return !!t })()`)
-    await sleep(700)
+    await tryWaitFor(() => app.ev('!!document.querySelector(".accent-row")'), { timeoutMs: 5000, label: '切外观 tab 后 accent-row 出现' })
   }
   return app.ev(`!!document.querySelector('.accent-row')`)
 }
 
 const a = await launch()
-for (let i = 0; i < 60; i++) {
-  if (await a.ev('!!(window.hh && document.querySelector(".cover-card"))')) break
-  await sleep(300)
-}
+await waitFor(() => a.ev('!!(window.hh && document.querySelector(".app-shell"))'), { timeoutMs: 30000, label: '实例 a 启动完成（hh + 外壳）' })
 console.log('==== 自定义主题色（accent）UI 走查 ====')
 
 console.log('== A 主题色区 ==')
@@ -125,13 +123,14 @@ pass('A3 老文件无 theme_accent → accent 用套件值', !!before.accent, `a
 
 console.log('== B 点预设（玫瑰 #F43F5E）==')
 await a.ev(`(() => { const c = [...document.querySelectorAll('.accent-chip')].find(x => /玫瑰/.test(x.textContent)); c?.click(); return !!c })()`)
-await sleep(400)
+await tryWaitFor(() => a.ev('!!document.querySelector(".dlg-foot")'), { timeoutMs: 3000, label: '点色卡后对话框仍在（草稿态）' })
 // 与设置页其余项同一语义：色卡只改草稿，保存才生效（dirty 角标提示未保存）
 const dirtyBefore = await a.ev(`(() => { const b = document.querySelector('.dlg-foot'); return !!b && /保存/.test(b.textContent) })()`)
 pass('B1 点色卡后对话框仍在可保存态', dirtyBefore)
 
 await a.ev(`(() => { const b = [...document.querySelectorAll('.dlg-foot button, .dlg-foot .ant-btn')].find(x => /保存/.test(x.textContent)); b?.click(); return !!b })()`)
-await sleep(1200) // 保存 + IPC 落盘 + 渲染同步
+// 等保存真正生效：accent 变成玫瑰色（原固定 1200ms；读 CSS 变量前必须已生效）
+await waitFor(() => a.ev('(() => getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toUpperCase() === "#F43F5E")()'), { timeoutMs: 8000, label: '保存玫瑰后 accent 生效' })
 const rose = JSON.parse(await a.ev(ACC_VARS))
 pass('B2 保存后 CSS 变量变 #F43F5E', rose.accent.toUpperCase() === '#F43F5E', `accent=${rose.accent}`)
 pass('B3 派生键 accentBg 同步', rose.bg.includes('244, 63, 94') || rose.bg.includes('244,63,94'), `bg=${rose.bg}`)
@@ -143,12 +142,9 @@ pass('B4 settings.json theme_accent=#F43F5E',
 
 console.log('== C 重启后持久化 ==')
 a.kill()
-await sleep(1200)
+await sleep(1200) // taskkill 异步退出：给上一实例收尸的缓冲，不是等页面状态
 const b = await launch()
-for (let i = 0; i < 60; i++) {
-  if (await b.ev('!!(window.hh && document.querySelector(".cover-card"))')) break
-  await sleep(300)
-}
+await waitFor(() => b.ev('!!(window.hh && document.querySelector(".app-shell"))'), { timeoutMs: 30000, label: '实例 b 启动完成（hh + 外壳）' })
 const after = JSON.parse(await b.ev(ACC_VARS))
 pass('C1 重启后 accent 仍 #F43F5E', after.accent.toUpperCase() === '#F43F5E', `accent=${after.accent}`)
 pass('C2 派生键仍在', after.ring.includes('244,') || after.ring.includes('244, 63, 94'), `ring=${after.ring}`)
@@ -170,7 +166,8 @@ for (const c of ACCENT_CASES) {
   const clicked = await b.ev(`(() => { const x = [...document.querySelectorAll('.accent-chip')].find(el => el.textContent.includes(${JSON.stringify(c.label)})); if(!x) return false; x.click(); return true })()`)
   await sleep(250)
   await b.ev(`(() => { const btn = [...document.querySelectorAll('.dlg-foot button, .dlg-foot .ant-btn')].find(x => /保存/.test(x.textContent)); btn?.click(); return !!btn })()`)
-  await sleep(1000)
+  // 等保存生效：accent 变成该预设色（原固定 1000ms）
+  await waitFor(() => b.ev('(() => getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toUpperCase() === "' + c.hex + '")()'), { timeoutMs: 8000, label: 'D ' + c.label + ' 保存后 accent 生效 ' + c.hex })
   const vars = JSON.parse(await b.ev(ACC_VARS))
   const json = JSON.parse(readFileSync(join(DATA_DIR, 'settings.json'), 'utf8')).theme_accent
   pass(`D ${c.label}：CSS 变量 = ${c.hex}`, vars.accent.toUpperCase() === c.hex, `css=${vars.accent} clicked=${clicked}`)
@@ -181,9 +178,9 @@ await b.shot('2_accent_presets.png')
 console.log('== E 跟随主题（复位）==')
 await openAppearance(b)
 await b.ev(`(() => { const x = [...document.querySelectorAll('.accent-chip')].find(el => /跟随主题/.test(el.textContent)); x?.click(); return !!x })()`)
-await sleep(250)
 await b.ev(`(() => { const btn = [...document.querySelectorAll('.dlg-foot button, .dlg-foot .ant-btn')].find(x => /保存/.test(x.textContent)); btn?.click(); return !!btn })()`)
-await sleep(1000)
+  // 等保存生效：accent 回到套件值（星海浅色 #5FA8C4；原固定 1000ms）
+  await waitFor(() => b.ev('(() => getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toUpperCase() === "#5FA8C4")()'), { timeoutMs: 8000, label: '跟随主题后 accent 回到套件值' })
 const reset = JSON.parse(await b.ev(ACC_VARS))
 const resetJson = JSON.parse(readFileSync(join(DATA_DIR, 'settings.json'), 'utf8')).theme_accent
 pass('E1 跟随主题：settings.json theme_accent 为空串', resetJson === '', `json=${JSON.stringify(resetJson)}`)
@@ -191,17 +188,14 @@ pass('E2 跟随主题：CSS accent 回到套件值（星海）', reset.accent.to
 
 console.log('== F 与主题风格解耦（第三实例重启后）==')
 b.kill()
-await sleep(1500)
+await sleep(1500) // taskkill 异步退出：给上一实例收尸的缓冲，不是等页面状态
 const c = await launch()
-for (let i = 0; i < 60; i++) {
-  if (await c.ev('!!(window.hh && document.querySelector(".cover-card"))')) break
-  await sleep(300)
-}
+await waitFor(() => c.ev('!!(window.hh && document.querySelector(".app-shell"))'), { timeoutMs: 30000, label: '实例 c 启动完成（hh + 外壳）' })
 await openAppearance(c)
 await c.ev(`(() => { const x = [...document.querySelectorAll('.preset-card')].find(el => /影院/.test(el.textContent)); x?.click(); return !!x })()`)
-await sleep(400)
 await c.ev(`(() => { const btn = [...document.querySelectorAll('.dlg-foot button, .dlg-foot .ant-btn')].find(x => /保存/.test(x.textContent)); btn?.click(); return !!btn })()`)
-await sleep(1200)
+// 等保存生效：跟随主题下切影院 → accent 应变影院暖金 #D8B36A（原固定 400+1200ms）
+await waitFor(() => c.ev('(() => getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toUpperCase() === "#D8B36A")()'), { timeoutMs: 8000, label: '切影院后 accent 生效' })
 const decoupled = JSON.parse(await c.ev(ACC_VARS))
 const decoupledJson = JSON.parse(readFileSync(join(DATA_DIR, 'settings.json'), 'utf8')).theme_preset
 const decoupledAccent = JSON.parse(readFileSync(join(DATA_DIR, 'settings.json'), 'utf8')).theme_accent

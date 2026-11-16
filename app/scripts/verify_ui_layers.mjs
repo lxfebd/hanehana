@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { waitFor, tryWaitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = process.cwd()
 const PORT = await pickFreePort()
@@ -36,6 +37,7 @@ for (let i = 0; i < 5; i++) {
     rmSync(DATA_DIR, { recursive: true, force: true })
     break
   } catch {
+    // 数据目录被上一轮进程占用的重试退避（不是等页面状态）
     await new Promise((r) => setTimeout(r, 800))
   }
 }
@@ -107,7 +109,8 @@ const PROBE = `(sel) => {
       inCard: !!top.closest('.cover-card'),
     })
   }
-  return { found: true, rect: [r.left, r.top, r.width, r.height].map(Math.round), total: pts.length, badCount: bad.length, bad: bad.slice(0, 5) }
+  const cs = getComputedStyle(el)
+  return { found: true, rect: [r.left, r.top, r.width, r.height].map(Math.round), total: pts.length, badCount: bad.length, bad: bad.slice(0, 5), dbg: { pe: cs.pointerEvents, vis: cs.visibility, op: cs.opacity } }
 }`
 
 // 布局探针：横向溢出 + 封面卡片两两重叠（错位）检查。
@@ -171,7 +174,8 @@ const PAGE_PROBE = `() => {
 
 async function main() {
   const wsUrl = await getWsUrl()
-  await sleep(2500)
+  // DevTools 已在监听 ⇒ /json 立刻可取。原来这里固定等 2500ms 是纯白等；
+  // 下面 /json 的循环本身是「取不到就再试」的条件等待，不是固定 sleep。
   const port = (wsUrl.match(/:(\d+)\//) || [])[1]
   let pageJson = null
   for (let i = 0; i < 20 && !pageJson; i++) {
@@ -227,6 +231,7 @@ async function main() {
     await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
     await send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', clickCount: 1 })
     await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
+    // 鼠标事件派发后让渲染落一帧（事件已送达，没有可轮询的状态）
     await sleep(200)
   }
   const moveAway = () => send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 8, y: 8 })
@@ -234,13 +239,14 @@ async function main() {
     for (const type of ['keyDown', 'keyUp']) {
       await send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 })
     }
-    await sleep(250)
+    await sleep(250) // Escape 键派发后的关层过渡收尾（动画时长，不是等状态）
   }
   const pressQ = async () => {
     for (const type of ['keyDown', 'keyUp']) {
       await send('Input.dispatchKeyEvent', { type, key: '?', code: 'Slash', windowsVirtualKeyCode: 191, nativeVirtualKeyCode: 191, text: '?' })
     }
-    await sleep(400)
+    // 原来是固定 400ms：慢机上按下 '?' 后浮层还没挂上，紧接着的探针就红。
+    await tryWaitFor(() => ev('!!document.querySelector(".sc-panel")'), { timeoutMs: 3000, label: '快捷键帮助浮层出现' })
   }
 
   try {
@@ -256,8 +262,39 @@ async function main() {
         console.log('  [FAIL] ' + n + (x ? '  ' + x : ''))
       }
     }
+    /** 浮层入场过渡落定：透明度回到 1 + 祖先链上没有 Vue 过渡类，且该状态连续稳定 300ms。
+     * 实测 aside-enter-from/active 在元素出现后 ~50ms 才加上，只看一眼会漏过那个窗口
+     * （然后 elementFromPoint 在整个过渡期命中浮层背后，看起来像「全被盖住」）。
+     * 这里等的是动画时长，状态判据仍由后面的 ck 负责。 */
+    const settleOverlay = async (sel, label) => {
+      const expr =
+        '(() => { const el = document.querySelector(' + JSON.stringify(sel) + '); if (!el) return false; if (Number(getComputedStyle(el).opacity) < 1) return false; for (let n = el, i = 0; n && n.classList && i < 6; n = n.parentElement, i++) { if ([...n.classList].some((c) => c.endsWith("-enter-active") || c.endsWith("-leave-active") || c.endsWith("-enter-from"))) return false } return true })()'
+      const t0 = Date.now()
+      let steadySince = 0
+      for (;;) {
+        const ok = (await ev(expr)) === true
+        if (!ok) steadySince = 0
+        else if (!steadySince) steadySince = Date.now()
+        else if (Date.now() - steadySince >= 300) return true
+        if (Date.now() - t0 > 5000) {
+          console.log('  [warn] 入场过渡 5s 内未落定，按超时继续：' + label)
+          return false
+        }
+        await sleep(100) // 轮询间隔，不是等状态
+      }
+    }
     const scenario = async (tag, name, sel, alwaysShot) => {
-      await sleep(500)
+      // 等浮层真的出现（原来是固定 500ms）：超时仍按「浮层未出现」红，
+      // 但错误里带 label 与最后一次探针取值，能直接看出是没渲染还是探针跑早了。
+      await tryWaitFor(
+        async () => {
+          const q = await probe(sel)
+          return !!(q && q.found)
+        },
+        { timeoutMs: 8000, intervalMs: 100, label: tag + ' ' + name + ' 浮层出现 ' + sel },
+      )
+      // 入场过渡期间 elementFromPoint 会命中浮层背后（探针表现为「全被盖住」，其实只是还在动画里）。
+      await settleOverlay(sel, tag + ' ' + name + ' 入场过渡结束')
       await moveAway()
       const p = await probe(sel)
       const ok = !!(p && p.found && !p.tiny && p.badCount === 0)
@@ -270,7 +307,7 @@ async function main() {
         ck(tag + ' ' + name, false, '浮层尺寸异常: ' + JSON.stringify(p.rect))
         return false
       }
-      ck(tag + ' ' + name, p.badCount === 0, '被盖住采样 ' + p.badCount + '/' + p.total + ' rect=' + JSON.stringify(p.rect) + ' bad=' + JSON.stringify(p.bad))
+      ck(tag + ' ' + name, p.badCount === 0, '被盖住采样 ' + p.badCount + '/' + p.total + ' rect=' + JSON.stringify(p.rect) + ' bad=' + JSON.stringify(p.bad) + ' dbg=' + JSON.stringify(p.dbg))
       return p.badCount === 0
     }
     const gotoLibrary = async () => {
@@ -279,30 +316,46 @@ async function main() {
         `(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')||(x.textContent||'').includes('Library')); if(!b) return 'no-entry'; b.click(); return 'ok' })()`,
       )
       if (hit !== 'ok') return false
-      for (let i = 0; i < 24; i++) {
-        if ((await ev('!!document.querySelector(".cover-card")')) === true) return true
-        await sleep(500)
-      }
-      return false
+      return (await tryWaitFor(() => ev('!!document.querySelector(".cover-card")'), {
+        timeoutMs: 12000,
+        label: '库页封面墙出现（.cover-card）',
+      })) === true
     }
     const goPage = async (nav, more) => {
       if (more) {
         await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
-        await sleep(450)
+        // 等「更多」菜单挂上，而不是固定 450ms 后去点菜单项
+        await tryWaitFor(() => ev('!!document.querySelector(".more-menu")'), { timeoutMs: 3000, label: '侧栏更多菜单打开' })
         await ev(`(() => { const items=[...document.querySelectorAll('.more-menu .nav-item')]; const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
-        await sleep(250)
+        await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 3000, label: '更多菜单关闭（切页点击已生效）' })
         await esc()
-        await sleep(400)
+        await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 2000, label: '更多菜单收起' })
       } else {
         await ev(`(() => { const items=[...document.querySelectorAll('.sidebar .nav-item')].filter(x=>!x.closest('.more-menu')); const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
       }
     }
-    const waitMarker = async (marker, tries = 24) => {
-      for (let i = 0; i < tries; i++) {
-        if ((await ev('!!document.querySelector(' + JSON.stringify(marker) + ')')) === true) return true
-        await sleep(500)
+    const waitMarker = async (marker, timeoutMs = 12000) => {
+      return (await tryWaitFor(() => ev('!!document.querySelector(' + JSON.stringify(marker) + ')'), {
+        timeoutMs,
+        label: '页标记出现 ' + marker,
+      })) === true
+    }
+    /** 布局探针要等页面渲染落定：重排中 ev 可能抛或返回 __err。
+     * 用条件等待代替「固定 600ms 再探 + 探到 __err 再固定 800ms 重试」。
+     * 超时返回 null，交给后面的断言红（日志里带 label 说明在等什么）。 */
+    const probeStable = async (expr, label) => {
+      try {
+        return await waitFor(
+          async () => {
+            const q = await ev(expr)
+            return q && !q.__err ? q : null
+          },
+          { timeoutMs: 8000, label },
+        )
+      } catch (err) {
+        console.log('  [warn] ' + err.message)
+        return null
       }
-      return false
     }
     /** 等应用真的启动完（hello 到手 + 外壳已挂载）。
      * 重载后固定 sleep(3000) 在高负载/4K 下不够——闸门后面第一步点击就落在半启动的页上，
@@ -329,24 +382,13 @@ async function main() {
       // ---- 全页面布局扫描：每个视口下切到每页，断言横向溢出/主列重叠/空白右栏/卡片重叠 ----
       for (const p of PAGES) {
         await goPage(p.nav, p.more)
-        let ready = await waitMarker(p.marker)
-        if (!ready) {
-          // 高负载 / 4K 视口下偶发「点了但标记迟迟不出现」（单独复现时切页 260ms 就位，
-          // 且同一次运行里所有布局断言仍然通过）——不是渲染错，是探针的时序假设太紧。
-          // 重点一次并再等 12s；真回归会在两次都超时后才红，且日志里看得到「重点一次」。
-          console.log('  [retry] ' + tag + ' 切换:' + p.name + ' 标记 ' + p.marker + ' 首个 12s 未出现，重点一次')
-          await goPage(p.nav, p.more)
-          ready = await waitMarker(p.marker, 48)
-        }
-        ck(tag + ' 切换:' + p.name, ready === true, '标记 ' + p.marker + ' 连续两次超时')
-        await sleep(600)
+        // 只等一次、且等够 24s。原来「首个 12s 未出现就重点一次」是把偶发超时洗成绿：
+        // 既掩盖真回归，又让闸门实际点了两次而没人看得见（waitBoot 修掉时序根因后不再需要）。
+        const ready = await waitMarker(p.marker, 24000)
+        ck(tag + ' 切换:' + p.name, ready === true, '标记 ' + p.marker + ' 24s 内未出现')
         await moveAway()
-        await sleep(200)
-        let L = await ev('(' + PAGE_PROBE + ')()')
-        if (L && L.__err) {
-          await sleep(800)
-          L = await ev('(' + PAGE_PROBE + ')()')
-        }
+        await sleep(200) // 鼠标移开是给 :hover 退场用的，没有稳定判据可轮询
+        const L = await probeStable('(' + PAGE_PROBE + ')()', tag + ' ' + p.name + ' 布局探针')
         const f0 = fail
         ck(tag + ' ' + p.name + ' 无横向溢出', !!L && (L.overflow || []).length === 0, JSON.stringify(L && L.overflow))
         ck(tag + ' ' + p.name + ' 主列互不重叠', !!L && L.colOverlap === 0, 'colOverlap=' + (L && L.colOverlap))
@@ -357,19 +399,18 @@ async function main() {
 
       ck(tag + ' 进入库页', (await gotoLibrary()) === true)
       await ev('document.querySelector(".cover-card")?.scrollIntoView({ block: "center" })')
-      await sleep(600)
+      const wallReady = (await tryWaitFor(() => ev('!!document.querySelector(".cover-card")'), {
+        timeoutMs: 8000,
+        label: tag + ' 封面墙就绪（.cover-card）',
+      })) === true
       await moveAway()
-      await sleep(200)
-      ck(tag + ' 封面墙就绪', (await ev('!!document.querySelector(".cover-card")')) === true)
+      await sleep(200) // 鼠标移开后 :hover 退场，无稳定判据
+      ck(tag + ' 封面墙就绪', wallReady)
       // B4：右栏永远有内容——库页未选中应显示动态流而非空白。
       // 右栏宽度是弹性的（App.vue .aside 的 clamp，400 → 300），窄窗不再自动收成
       // 28px 竖条；.aside.collapsed 只在用户手动点「收成竖条」时出现。
       ck(tag + ' 库页右栏非空白', (await ev(`(() => { const a = document.querySelector('.aside'); if (!a) return false; if (a.classList.contains('collapsed')) return true; return !!a.querySelector('.activity-feed, .detail-panel') })()`)) === true)
-      let L = await ev('(' + LAYOUT_PROBE + ')()')
-      if (L && L.__err) {
-        await sleep(800)
-        L = await ev('(' + LAYOUT_PROBE + ')()')
-      }
+      const L = await probeStable('(' + LAYOUT_PROBE + ')()', tag + ' 库页布局探针')
       ck(tag + ' 无横向溢出', !!L && (L.overflow || []).length === 0, JSON.stringify(L && L.overflow))
       ck(tag + ' 封面卡片互不重叠', !!L && L.cardOverlap === 0, 'overlapPairs=' + (L && L.cardOverlap) + ' cards=' + (L && L.cardCount) + ' vw=' + (L && L.vw) + 'x' + (L && L.vh))
       const always = tag === '1440x900'
@@ -378,19 +419,19 @@ async function main() {
       await ev(`(() => { const c = document.querySelector('.cover-card'); if (!c) return 'no-card'; const r = c.getBoundingClientRect(); c.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: r.left + r.width/2, clientY: r.top + r.height/2, button: 2 })); return 'ok' })()`)
       await scenario(tag, '右键菜单 ctx-menu', '.ctx-menu', always)
       await esc()
-      await sleep(300)
+      await tryWaitFor(() => ev('!document.querySelector(".ctx-menu")'), { timeoutMs: 2000, label: tag + ' 右键菜单收起' })
 
       // ---- 2. 导出下拉 .export-menu（absolute，锚在 .toolbar 内 —— 覆盖高发区）----
       await ev(`(() => { const b = document.querySelector('.export-wrap button'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await scenario(tag, '导出下拉 export-menu', '.export-menu', always)
       await ev(`(() => { const b = document.querySelector('.export-wrap button'); if (b) { b.click(); return 'ok' } return 'no' })()`)
-      await sleep(300)
+      await tryWaitFor(() => ev('!document.querySelector(".export-menu")'), { timeoutMs: 2000, label: tag + ' 导出下拉收起' })
 
       // ---- 3. 侧栏"更多"菜单 .more-menu ----
       await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await scenario(tag, '侧栏更多菜单 more-menu', '.more-menu', always)
       await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
-      await sleep(300)
+      await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 2000, label: tag + ' 侧栏更多菜单收起' })
 
       // ---- 4. 设置对话框 .ds-panel（DialogShell, Teleport body, modal 层）----
       // 设置的唯一入口在左侧栏底部（带文字的 nav-item）——右上角那颗圆钮（.tb-round）
@@ -398,41 +439,55 @@ async function main() {
       await ev(`(() => { const b = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('设置') || (x.textContent||'').includes('Settings')); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await scenario(tag, '设置对话框 ds-panel', '.ds-panel', always)
       await esc()
-      await sleep(300)
+      await tryWaitFor(() => ev('!document.querySelector(".ds-panel")'), { timeoutMs: 2000, label: tag + ' 设置对话框收起' })
 
       // ---- 5. 快捷键帮助 .sc-panel（Teleport body, modal 层）----
       await esc()
       await pressQ()
       await scenario(tag, '快捷键帮助 sc-panel', '.sc-panel', always)
       await ev('document.querySelector(".sc-close")?.click(); true')
-      await sleep(300)
+      await tryWaitFor(() => ev('!document.querySelector(".sc-panel")'), { timeoutMs: 2000, label: tag + ' 快捷键帮助收起' })
 
       // ---- 6. 详情整页展开 .detail-panel.is-expanded（fixed, overlay 层）----
       await ev(`(() => { const c = document.querySelector('.cover-card'); if (!c) return 'no-card'; c.click(); return 'ok' })()`)
-      await sleep(700)
+      await tryWaitFor(() => ev('!!document.querySelector(".detail-panel")'), { timeoutMs: 8000, label: tag + ' 详情面板打开' })
       // 右栏是弹性的：窄窗下详情面板本来就在（已经没有 matchMedia 自动收起这回事）。
       // 若此前被手动收起过，.detail-collapsed 展开钮兑底点一次——有就点，没有就跳过。
       await ev(`(() => { const b = document.querySelector('.detail-collapsed'); if (b) { b.click(); return 'uncollapse' } return 'no' })()`)
-      await sleep(700)
-      ck(tag + ' 详情面板出现', (await ev('!!document.querySelector(".detail-panel")')) === true)
+      const panelReady = (await tryWaitFor(() => ev('!!document.querySelector(".detail-panel")'), {
+        timeoutMs: 8000,
+        label: tag + ' 详情面板出现（.detail-panel）',
+      })) === true
+      ck(tag + ' 详情面板出现', panelReady === true)
       await ev(`(() => { const b = document.querySelector('.dp-head-actions .dp-icon-btn[aria-pressed]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
-      await sleep(500)
-      ck(tag + ' 详情进入整页', (await ev('!!document.querySelector(".detail-panel.is-expanded")')) === true)
+      const expanded = (await tryWaitFor(() => ev('!!document.querySelector(".detail-panel.is-expanded")'), {
+        timeoutMs: 8000,
+        label: tag + ' 详情进入整页（is-expanded）',
+      })) === true
+      ck(tag + ' 详情进入整页', expanded === true)
       await scenario(tag, '详情整页 is-expanded', '.detail-panel.is-expanded', always)
       await ev(`(() => { const b = document.querySelector('.dp-head-actions .dp-icon-btn[aria-pressed]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
-      await sleep(400)
+      await tryWaitFor(() => ev('!document.querySelector(".detail-panel.is-expanded")'), { timeoutMs: 5000, label: tag + ' 详情退出整页' })
 
       // ---- 7. 批量编辑浮条 .batch-overlay（absolute, popover 层，在 .cover-wrap 内）----
       await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-pressed') !== null) && ((x.title || '') + (x.textContent || '')).includes('多选')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-      await sleep(400)
+      // 等多选按钮真的切到按下态（不新增断言：拿不到就照旧往下走，只是不再白等 400ms）
+      await tryWaitFor(
+        () => ev('(() => { const b = [...document.querySelectorAll("button")].find(x => x.getAttribute("aria-pressed") === "true"); return !!b })()'),
+        { timeoutMs: 5000, label: tag + ' 多选模式按下态' },
+      )
       const rects = JSON.parse(
         await ev(`JSON.stringify([...document.querySelectorAll('.cover-card')].slice(0, 2).map(c => { const r = c.getBoundingClientRect(); return { x: r.x + r.width/2, y: r.y + r.height/2 } }))`),
       )
       for (const rc of rects) await clickAt(rc.x, rc.y)
-      await sleep(700)
+      // 等「选中数 = 点过的卡片数」这个数量变化，而不是固定 700ms。
+      await tryWaitFor(() => ev('document.querySelectorAll(".cover-card.checked").length >= ' + rects.length), {
+        timeoutMs: 6000,
+        label: tag + ' 多选计数到位',
+      })
       await scenario(tag, '批量编辑浮条 batch-overlay', '.batch-overlay', always)
       await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-pressed') !== null) && ((x.title || '') + (x.textContent || '')).includes('多选')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-      await sleep(300)
+      await tryWaitFor(() => ev('!document.querySelector(".cover-card.checked")'), { timeoutMs: 3000, label: tag + ' 退出多选' })
     }
 
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')

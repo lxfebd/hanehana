@@ -5,6 +5,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
+import { waitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = join(process.cwd())
 const PORT = await pickFreePort()
@@ -14,6 +15,7 @@ for (let i = 0; i < 5; i++) {
     rmSync(DATA_DIR, { recursive: true, force: true })
     break
   } catch {
+    // 数据目录被上一轮进程占用的重试退避（不是等页面状态）
     await new Promise((r) => setTimeout(r, 800))
   }
 }
@@ -72,7 +74,7 @@ function connectWs(url) {
 }
 async function main() {
   const wsUrl = await getWsUrl()
-  await new Promise((r) => setTimeout(r, 2500))
+  // DevTools 已在监听 ⇒ /json 立刻可取；下面 /json 循环本身就是条件等待。原来固定 2500ms 是白等。
   const port = (wsUrl.match(/:(\d+)\//) || [])[1]
   let pageJson = null
   for (let i = 0; i < 20 && !pageJson; i++) {
@@ -125,12 +127,8 @@ async function main() {
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }
-    for (let i = 0; i < 20; i++) {
-      const e = await ev('!!window.hh')
-      if (e) break
-      await new Promise((r) => setTimeout(r, 500))
-    }
-    await new Promise((r) => setTimeout(r, 800))
+    // 等预置 API 挂上（原来固定轮询 + 再等 800ms）
+    await waitFor(() => ev('!!window.hh'), { timeoutMs: 20000, label: '预置 API window.hh 就绪' })
     console.log('== 搜索 CLANNAD ==')
     const search = await ev(`window.hh.scrapeSearch('CLANNAD')`)
     const results = search?.results ?? []
@@ -143,22 +141,30 @@ async function main() {
     console.log('  候选封面:', String(vndb.coverUrl || '').slice(0, 60))
     const applied = await ev(`window.hh.scrapeApply('g-aspect-1', ${JSON.stringify(vndb)})`)
     ck('刮削应用 ok', applied?.ok === true, JSON.stringify(applied))
-    await new Promise((r) => setTimeout(r, 3000))
+    // 等封面/缩略图真的落库（原来固定 3000ms）：落库是异步的，慢机上 3s 不够。
+    await waitFor(
+      () => ev('window.hh.listGames().then(gs => { const g = gs.find(x => x.id === "g-aspect-1"); return !!(g && g.coverPath && g.thumbPath) })'),
+      { timeoutMs: 20000, label: '刮削落库（coverPath + thumbPath）' },
+    )
     const back = await ev(`window.hh.listGames()`)
     const g = Array.isArray(back) ? back.find((x) => x.id === 'g-aspect-1') : null
     ck('coverPath 落库', !!g?.coverPath && existsSync(g.coverPath), g?.coverPath || '')
     ck('thumbPath 落库', !!g?.thumbPath && existsSync(g.thumbPath), g?.thumbPath || '')
     // 刷新封面墙并等 img 渲染
     await ev(`window.location.reload()`)
-    await new Promise((r) => setTimeout(r, 3500))
+    // 等应用真的起来（原固定 3500ms：慢机上不够，快机上白等）
+    await waitFor(() => ev('!!(window.hh && document.querySelector(".app-shell"))'), { timeoutMs: 30000, label: '重载后应用就绪（hh + .app-shell）' })
     // B8：启动页是 home，封面墙在游戏库页——先点「全部游戏」
+    // 等侧栏导航挂上再点（重载后侧栏晚于 hh 出现；固定等待换成条件等待）
+    await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
     await ev(`(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')); if(b){b.click();return 'ok'} return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 900))
-    for (let i = 0; i < 20; i++) {
-      const loaded = await ev(`(() => { const img = document.querySelector('.cover-thumb img'); return !!(img && img.complete && img.naturalWidth > 0) })()`)
-      if (loaded) break
-      await new Promise((r) => setTimeout(r, 500))
-    }
+    // 首跑偶发 2 红（封面图渲染 {"has":false} / w=undefined）就是断在这里：缩略图还没生成或还没挂上
+    // img 就断言了。改成两级条件等待：先等 img 元素出现，再等它解码完成（naturalWidth > 0）。
+    await waitFor(() => ev('!!document.querySelector(".cover-thumb img")'), { timeoutMs: 15000, label: '封面墙缩略图 img 出现（.cover-thumb img）' })
+    await waitFor(
+      () => ev('(() => { const img = document.querySelector(".cover-thumb img"); return !!(img && img.complete && img.naturalWidth > 0) })()'),
+      { timeoutMs: 20000, label: '封面缩略图解码完成（naturalWidth > 0）' },
+    )
     const img = JSON.parse(
       await ev(`JSON.stringify((() => { const img = document.querySelector('.cover-thumb img'); if (!img) return { has: false }; return { has: true, w: img.naturalWidth, h: img.naturalHeight } })())`),
     )

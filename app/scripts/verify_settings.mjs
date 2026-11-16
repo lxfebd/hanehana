@@ -127,7 +127,8 @@ async function main() {
     ck('设置对话框打开', dlg.dlg === true, 'dlg=' + dlg.dlg)
     ck('页签 ≥ 7（下载/通知/网络/外观/备份/工具/新作/关于）', (dlg.tabs || []).length >= 7, 'tabs=' + JSON.stringify(dlg.tabs))
     // 切到外观页 → 主题卡
-    await ev(`(() => { const t = [...document.querySelectorAll('.ant-tabs-tab')].find(x => (x.textContent||'').includes('外观')); if (t) { t.click(); return 'ok' } return 'no' })()`)
+    // 与上面「设置」入口一致：中文文案 + 英文兜底（英文界面下只认中文会假红）
+    await ev(`(() => { const t = [...document.querySelectorAll('.ant-tabs-tab')].find(x => (x.textContent||'').includes('外观') || (x.textContent||'').includes('Appearance')); if (t) { t.click(); return 'ok' } return 'no' })()`)
     await new Promise((r) => setTimeout(r, 600))
     const ui = JSON.parse(
       await ev(`JSON.stringify((() => ({

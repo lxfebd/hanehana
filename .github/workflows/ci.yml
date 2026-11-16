@@ -1,6 +1,6 @@
 # 守门三件套：clone 可构建 + 类型零错 + Rust 单测真的被跑。
-# 任何一项红 = 合入阻断。e2e 不在这里跑（需 HTTPS fixture 与真实引擎，另列 workflow 或本地）；
-# CDP 真机闸里耗时可接受的那部分（static / layers）已进来。
+# 任何一项红 = 合入阻断。下载 e2e（HTTPS fixture + 真实引擎）也进来了，排在 cargo build 之后（引擎产物就位才起得来）；
+# static / layers / 下载 e2e 都在 PR 主链路里。
 name: CI
 
 on:
@@ -76,3 +76,12 @@ jobs:
       - name: cargo build release (引擎产物存在性)
         working-directory: engine-rs
         run: cargo build --release --locked
+
+      # 下载 e2e（30 条）：HTTPS fixture + 真实引擎全链路。必须排在 cargo build 之后——
+      # enginePath() 找的就是 engine-rs/target/release，引擎不在时这条只会红在「找不到引擎」上。
+      # 此前 PR 主链路只跑 static + layers，下载回归出问题合进来线上不拦。
+      - name: regression download (e2e, CDP + HTTPS fixture + real engine)
+        working-directory: app
+        run: npm run regression:download
+        env:
+          PYTHONIOENCODING: utf-8

@@ -9,6 +9,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
+import { waitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = join(process.cwd())
 const PORT = await pickFreePort()
@@ -18,6 +19,7 @@ for (let i = 0; i < 5; i++) {
     rmSync(DATA_DIR, { recursive: true, force: true })
     break
   } catch {
+    // 数据目录被上一轮进程占用的重试退避（不是等页面状态）
     await new Promise((r) => setTimeout(r, 800))
   }
 }
@@ -60,7 +62,7 @@ function connectWs(url) {
 }
 async function main() {
   const wsUrl = await getWsUrl()
-  await new Promise((r) => setTimeout(r, 2500))
+  // DevTools 已在监听 ⇒ /json 立刻可取；下面 /json 循环本身就是条件等待。原来固定 2500ms 是白等。
   const port = (wsUrl.match(/:(\d+)\//) || [])[1]
   let pageJson = null
   for (let i = 0; i < 20 && !pageJson; i++) {
@@ -113,19 +115,30 @@ async function main() {
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }
+    /** 布局读数落定：连续两次读数相同才算稳（视口宽度到位 ≠ 重排完成，
+     * 中间会读到 394 这种中间值）。轮询间隔不是等状态。 */
+    const waitStable = async (read, label, tries = 20) => {
+      let prev = null
+      for (let i = 0; i < tries; i++) {
+        const cur = await read()
+        if (cur !== undefined && cur !== null && cur === prev) return cur
+        prev = cur
+        await new Promise((r) => setTimeout(r, 150))
+      }
+      console.log('  [warn] 布局读数未落定：' + label)
+      return prev
+    }
     // 启动页现在是 home 仪表盘（B8）——封面墙/详情在库页，先导航过去
+    // 先等应用就绪（原来这里是固定 2500ms）：慢机上侧栏还没渲染就点导航，
+    // 会拿到 'no'，接着在整个 15s 里等封面墙——那是时序假红，不是产品问题。
+    await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
     const nav = await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
     if (nav !== 'ok') console.log('  [warn] 未能导航到库页：', nav)
-    await new Promise((r) => setTimeout(r, 800))
-    for (let i = 0; i < 20; i++) {
-      const e = await ev('!!document.querySelector(".cover-card")')
-      if (e) break
-      await new Promise((r) => setTimeout(r, 500))
-    }
-    await new Promise((r) => setTimeout(r, 1000))
+    // 切页后等封面墙真的渲染（固定 800+1000ms 和手拉循环都换成条件等待）
+    await waitFor(() => ev('!!document.querySelector(".cover-card")'), { timeoutMs: 15000, label: '库页封面墙出现（.cover-card）' })
     // 选中第一个封面 → 详情面板出现
     await ev(`(() => { const c = document.querySelector('.cover-card'); if (c) { c.click(); return 'ok' } return 'no-card' })()`)
-    await new Promise((r) => setTimeout(r, 900))
+    await waitFor(() => ev('!!document.querySelector(".detail-panel")'), { timeoutMs: 8000, label: '选中后详情面板出现' })
     const st = JSON.parse(
       await ev(`JSON.stringify((() => {
         const panel = document.querySelector('.detail-panel')
@@ -192,7 +205,7 @@ async function main() {
       inp.dispatchEvent(new Event('input', { bubbles: true }))
       return 'typed'
     })()`)
-    await new Promise((r) => setTimeout(r, 400))
+    await waitFor(() => ev('!!document.querySelector(".dp-tags-none")'), { timeoutMs: 5000, label: '标签搜索空态出现（无匹配）' })
     const tagFiltered = await ev(`(() => {
       const none = document.querySelector('.dp-tags-none')
       const chips = document.querySelectorAll('.dp-tags-chips .tag-chip').length
@@ -206,7 +219,7 @@ async function main() {
       if (inp) { inp.value = ''; inp.dispatchEvent(new Event('input', { bubbles: true })); return 'cleared-by-input' }
       return 'no-clear'
     })()`)
-    await new Promise((r) => setTimeout(r, 400))
+    await waitFor(() => ev('document.querySelectorAll(".dp-tags-chips .tag-chip").length >= 1'), { timeoutMs: 5000, label: '清除搜索后 chip 恢复' })
     const tagRestored = await ev(`(() => ({ chips: document.querySelectorAll('.dp-tags-chips .tag-chip').length, none: !!document.querySelector('.dp-tags-none') }))()`)
     ck('清除搜索后 chip 恢复', tagRestored && tagRestored.chips >= 1 && tagRestored.none === false, JSON.stringify(tagRestored))
 
@@ -228,12 +241,12 @@ async function main() {
     ck('收藏按钮存在', st.favBtn, 'fav=' + st.favText)
     // ---- 交互：区间切换后副行/曲线仍在 ----
     await ev(`(() => { const c=[...document.querySelectorAll('.pc-range .range-chip')].find(x=>(x.textContent||'').trim()==='全部'||(x.textContent||'').trim()==='ALL'); if(c){c.click();return 'ok'} return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 600))
+    await waitFor(() => ev('(() => { const s = (document.querySelector(".pc-range-sub")||{}).textContent||""; return !!s && s.includes("–") })()'), { timeoutMs: 5000, label: 'ALL 区间副行更新' })
     const afterRange = await ev(`(() => ({ sub: (document.querySelector('.pc-range-sub')||{}).textContent||'', svg: !!document.querySelector('.play-chart svg') }))()`)
     ck('切到 ALL 区间后副行更新且曲线仍在', afterRange && afterRange.svg === true && (afterRange.sub || '').includes('–'), JSON.stringify(afterRange))
     // ---- 交互：切到简介页（BBCode 清洗后的正文）----
     await ev(`(() => { const t=[...document.querySelectorAll('.dp-tab')].find(x=>(x.textContent||'').includes('简介')||(x.textContent||'').includes('Introduction')); if(t){t.click();return 'ok'} return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 600))
+    await waitFor(() => ev('!!document.querySelector(".desc")'), { timeoutMs: 5000, label: '简介页正文出现' })
     const intro = await ev(`(() => {
       const d = document.querySelector('.desc')
       const txt = d ? d.textContent : ''
@@ -243,7 +256,7 @@ async function main() {
     ck('简介无 BBCode 残留（对基准的优势项）', !intro || intro.bb === false, JSON.stringify(intro && intro.text))
     // ---- 交互：切到存档页（备份开关 + 记录入口）----
     await ev(`(() => { const t=[...document.querySelectorAll('.dp-tab')].find(x=>(x.textContent||'').includes('存档')||(x.textContent||'').includes('Save')); if(t){t.click();return 'ok'} return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 500))
+    await waitFor(() => ev('!!document.querySelector(".dp-switch input[type=checkbox]")'), { timeoutMs: 5000, label: '存档页渲染（备份开关）' })
     const saves = await ev(`(() => ({ switch: !!document.querySelector('.dp-switch input[type=checkbox]'), btn: !![...document.querySelectorAll('.dp-pane-btn')].find(b=>(b.textContent||'').includes('备份')) }))()`)
     ck('存档页有备份开关与记录入口', saves && saves.switch === true && saves.btn === true, JSON.stringify(saves))
     // ---- 收藏切换交互：点收藏 → 文案翻转 ----
@@ -252,7 +265,11 @@ async function main() {
     // 要验的是「点了文案就翻面」这个交互本身，所以先读初始态再比翻转。
     const favBefore = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
     await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 800))
+    // 等文案真的翻转（乐观更新生效）再回读，原来固定 800ms
+    await waitFor(
+      () => ev('(() => { const b = [...document.querySelectorAll(".fav-btn")].find(x => (x.textContent||"").includes("收藏")); return b ? b.textContent.trim() : "" })()').then((t) => !!t && t !== favBefore),
+      { timeoutMs: 5000, label: '收藏按钮文案翻转' },
+    )
     const favAfter = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
     ck(
       '收藏切换交互正常（文案翻转 = 乐观更新生效）',
@@ -267,7 +284,8 @@ async function main() {
     )
     ck('默认窗口右栏宽 = token（400，设计稿口径）', baseW === 400, 'w=' + baseW)
     await send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 800, deviceScaleFactor: 1, mobile: false })
-    await new Promise((r) => setTimeout(r, 700))
+    await waitFor(() => ev('window.innerWidth === 1000'), { timeoutMs: 5000, label: '窄窗 1000 视口重排生效' })
+    await waitStable(() => ev('Math.round(document.querySelector(".aside").getBoundingClientRect().width)'), '窄窗下右栏宽度落定')
     const flexRaw = await ev(`(() => {
       const aside = document.querySelector('.aside')
       const content = document.querySelector('.content')
@@ -302,7 +320,8 @@ async function main() {
     // 次按钮不再靠 @container 340px 阈值换排：标签放不下就折行，判据是「不叠字/不被裁」。
     ck('窄窗次按钮不叠字（标签折行或单行放得下）', !!fx && fx.btnClip === false, 'actsH=' + (fx && fx.actsH) + ' clip=' + (fx && fx.btnClip))
     await send('Emulation.clearDeviceMetricsOverride')
-    await new Promise((r) => setTimeout(r, 700))
+    await waitFor(() => ev('window.innerWidth !== 1000'), { timeoutMs: 5000, label: '恢复视口重排生效' })
+    await waitStable(() => ev('Math.round(document.querySelector(".aside").getBoundingClientRect().width)'), '恢复窗口后右栏宽度落定')
     const back = JSON.parse(
       (await ev(`(() => { const a = document.querySelector('.aside'); return JSON.stringify({ w: Math.round(a.getBoundingClientRect().width), iw: innerWidth }) })()`)) || '{}',
     )

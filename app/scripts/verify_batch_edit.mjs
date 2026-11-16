@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
+import { waitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = join(process.cwd())
 const PORT = await pickFreePort()
@@ -13,6 +14,7 @@ for (let i = 0; i < 5; i++) {
     rmSync(DATA_DIR, { recursive: true, force: true })
     break
   } catch {
+    // 数据目录被上一轮进程占用的重试退避（不是等页面状态）
     await new Promise((r) => setTimeout(r, 800))
   }
 }
@@ -55,7 +57,7 @@ function connectWs(url) {
 }
 async function main() {
   const wsUrl = await getWsUrl()
-  await new Promise((r) => setTimeout(r, 2500))
+  // DevTools 已在监听 ⇒ /json 立刻可取；下面 /json 循环本身就是条件等待。原来固定 2500ms 是白等。
   const port = (wsUrl.match(/:(\d+)\//) || [])[1]
   let pageJson = null
   for (let i = 0; i < 20 && !pageJson; i++) {
@@ -109,33 +111,32 @@ async function main() {
       }
     }
     // 启动页现在是 home 仪表盘（B8）——封面墙/工具栏在库页，先导航过去
+    // 先等应用就绪（原来这里是固定 2500ms）：慢机上侧栏还没渲染就点导航会拿到 'no'。
+    await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
     await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 800))
-    for (let i = 0; i < 20; i++) {
-      const e = await ev('!!document.querySelector(".cover-card")')
-      if (e) break
-      await new Promise((r) => setTimeout(r, 500))
-    }
-    await new Promise((r) => setTimeout(r, 800))
+    // 切页后等封面墙真的渲染（固定 800+800ms 和手拉循环都换成条件等待）
+    await waitFor(() => ev('!!document.querySelector(".cover-card")'), { timeoutMs: 15000, label: '库页封面墙出现（.cover-card）' })
     // 首屏被页头 + KPI 条 + hero + 续读条占满：先滚到封面墙再点选
     // （CDP 鼠标移到视口外的卡片上 = 什么都没点到）。
     await ev(`(() => { document.querySelector('.cover-card')?.scrollIntoView({ block: 'center' }); return true })()`)
-    await new Promise((r) => setTimeout(r, 600))
+    // 等滚动真正落位（卡片中心进视口）再取坐标点击：CDP 点视口外等于没点
+    await waitFor(() => ev('(() => { const c = document.querySelector(".cover-card"); if (!c) return false; const r = c.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight })()'), { timeoutMs: 5000, label: '封面墙滚动落位' })
     // 进入多选模式。按**文案**定位而不是 aria-pressed（toolbar 里多个 toggle
     // 都带 aria-pressed，取「第一个 aria-pressed」会命中正则搜索）。
     const multi = await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-pressed') !== null) && ((x.title || '') + (x.textContent || '')).includes('多选')); if (b) { b.click(); return 'ok' } return 'no-multi-btn' })()`)
     ck('进入多选模式', multi === 'ok', 'multi=' + multi)
-    await new Promise((r) => setTimeout(r, 500))
+    await waitFor(() => ev('(() => { const b = [...document.querySelectorAll("button")].find(x => x.getAttribute("aria-pressed") === "true"); return !!b })()'), { timeoutMs: 5000, label: '多选按钮进入按下态' })
     // 选 2 款（CDP 完整鼠标序列：moved → pressed → released，点击卡片中心）
     const cardRects = await ev(`JSON.stringify([...document.querySelectorAll('.cover-card')].slice(0, 2).map(c => { const r = c.getBoundingClientRect(); return { x: r.x + r.width/2, y: r.y + r.height/2 } }))`)
     const rects = JSON.parse(cardRects)
-    for (const rc of rects) {
+    for (let i = 0; i < rects.length; i++) {
+      const rc = rects[i]
       await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: rc.x, y: rc.y })
       await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: rc.x, y: rc.y, button: 'left', clickCount: 1 })
       await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: rc.x, y: rc.y, button: 'left', clickCount: 1 })
-      await new Promise((r) => setTimeout(r, 250))
+      // 每点一张就等「选中数 = 已点数」到位（原来固定 250ms + 800ms 两层白等）
+      await waitFor(() => ev('document.querySelectorAll(".cover-card.checked").length >= ' + (i + 1)), { timeoutMs: 5000, label: '第 ' + (i + 1) + ' 张卡进入选中态' })
     }
-    await new Promise((r) => setTimeout(r, 800))
     const st = JSON.parse(
       await ev(`JSON.stringify((() => {
         const panel = document.querySelector('.batch-overlay')
@@ -152,7 +153,8 @@ async function main() {
     ck('两张卡呈选中态', st.sel >= 2, 'sel=' + st.sel)
     // 点收藏 → 回读两款都收藏
     await ev(`(() => { const b = [...document.querySelectorAll('.batch-panel button')].find(x => (x.textContent||'').includes('收藏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-    await new Promise((r) => setTimeout(r, 900))
+    // 等批量收藏真正落到数据层（乐观更新 + IPC 回读），原来固定 900ms
+    await waitFor(() => ev('window.hh.listGames().then(gs => gs.filter(g => g.favorite).length >= 2)'), { timeoutMs: 8000, label: '批量收藏落库（favorite ≥ 2）' })
     // Runtime.evaluate 顶层不能用 await（awaitPromise 只消化返回的 promise）——用 .then 链
     const favsExpr = `window.hh.listGames().then(gs => JSON.stringify(gs.filter(g => g.favorite).length))`
     const favs = await ev(favsExpr)

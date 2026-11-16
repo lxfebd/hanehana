@@ -12,6 +12,7 @@ import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
+import { waitFor as libWaitFor } from './lib/waitFor.mjs'
 import { deflateSync } from 'node:zlib'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -176,13 +177,9 @@ async function launchApp() {
     writeFileSync(join(SHOTS2, name), Buffer.from(m.result.data, 'base64'))
     console.log('[shot]', name)
   }
-  const waitFor = async (cond, what, tries = 60) => {
-    for (let i = 0; i < tries; i++) {
-      if (await ev(cond)) return true
-      await sleep(300)
-    }
-    throw new Error('timeout waiting: ' + what + ' | stderr: ' + stderr.slice(-200))
-  }
+  // 委托公共 lib 的条件轮询（见 lib/waitFor.mjs）：超时报错带 label 与最后一次取值，
+  // 不再是本文件私有的手拉循环（行为不变：300ms 轮询、60 次 = 18s 上限）。
+  const waitFor = (cond, what, tries = 60) => libWaitFor(() => ev(cond), { timeoutMs: tries * 300, intervalMs: 300, label: what })
   await send('Page.enable')
   const kill = () => {
     try {
@@ -272,7 +269,7 @@ await app1.shot('A2_hero_geometry.png')
 // ---- E：书架板（B8：封面墙在库页——先导航） ----
 console.log('== E：书架板（库页） ==')
 await navLibrary(app1)
-await sleep(800)
+await app1.waitFor('!!document.querySelector(".cover-card")', '库页封面墙出现')
 const coverCards = await app1.ev(`document.querySelectorAll('.cover-card').length`)
 const shelves = await app1.ev(`document.querySelectorAll('.cover-card .cover-shelf').length`)
 pass('每张封面卡下有书架板', coverCards > 0 && shelves === coverCards, `cards=${coverCards} shelves=${shelves}`)
@@ -281,11 +278,12 @@ await app1.shot('E_grid_shelf.png')
 // ---- B：最近在玩分支（库页取消收藏 → 回首页看 hero 重算） ----
 console.log('== B：最近在玩分支 ==')
 await app1.ev(`(() => { const c=[...document.querySelectorAll('.cover-card')].find(x=>(x.textContent||'').includes('ATRI')); if(c){c.click();return 'selected'} return 'not found' })()`)
-await sleep(500)
+await app1.waitFor('!!document.querySelector(".fav-btn")', '选中卡后收藏按钮出现')
 await app1.ev(`(() => { const b=[...document.querySelectorAll('.fav-btn')][0]; if(b){b.click();return 'unfav clicked'} return 'no fav-btn' })()`)
-await sleep(700)
+// 等取消收藏真正落到数据层（乐观更新 + 回读），原来固定 700ms
+await app1.waitFor('window.hh.listGames().then(gs => gs.filter(g => g.favorite).length === 0)', '取消收藏落库（favorite=0）')
 await navHome(app1)
-await sleep(700)
+await app1.waitFor('!!document.querySelector(".hero")', '回首页 hero 重算出现')
 const b = JSON.parse(await app1.ev(heroStateExpr()))
 pass('hero 仍渲染（取消收藏不改"上次玩过"地位，仍 ATRI）', b.hero && b.title === 'ATRI', `title=${b.title}`)
 pass('kicker 仍为继续游玩', b.tag === '继续游玩' || b.tag === 'Continue Game', `tag=${b.tag}`)
@@ -298,13 +296,13 @@ console.log('  初始 accent =', accentBefore, '(starnight 默认)')
 
 // 打开设置对话框（侧栏 nav-item 上的设置按钮，文本=nav_settings）
 await app1.ev(`(() => { const b=[...document.querySelectorAll('.nav-item')].find(x=>(x.textContent||'').includes('设置')||(x.textContent||'').includes('Settings')); if(b){b.click();return 'nav clicked'} return 'nav miss' })()`)
-await sleep(600)
+await app1.waitFor('!!document.querySelector(".dlg-foot")', '设置对话框打开')
 console.log('  设置对话框开？', await app1.ev(`!!document.querySelector('.dlg-foot')`))
 console.log('  标签页列表：', await app1.ev(`[...document.querySelectorAll('.ant-tabs-tab')].map(x=>x.textContent.trim()).join(',')`))
 console.log('  primary 按钮：', await app1.ev(`[...document.querySelectorAll('.ant-btn-primary')].map(x=>x.textContent.trim()).join(',')`))
 // 切到「外观」标签页
 const tabRes = await app1.ev(`(() => { const t=[...document.querySelectorAll('.ant-tabs-tab')].find(x=>(x.textContent||'').includes('外观')||(x.textContent||'').includes('Appearance')); if(t){t.click();return 'tab clicked'} return 'tab miss' })()`)
-await sleep(500)
+await app1.waitFor('document.querySelectorAll(".preset-card").length === 5', '外观主题卡 5 张就位')
 console.log('  切外观标签：', tabRes, '| preset-card 数=', await app1.ev(`document.querySelectorAll('.preset-card').length`))
 
 // 主题卡片预览断言：每张 preset-card 下都有 .preset-preview 且渲染了氛围渐变背景
@@ -345,12 +343,16 @@ const PRESET_ACCENT = {
 for (const label of ['影院', '极光']) {
   // 每次先重新打开设置（保存后对话框会关闭）+ 切到外观标签
   await openSettingsDialog()
-  await sleep(500)
+  await app1.waitFor('!!document.querySelector(".dlg-foot")', '设置对话框打开')
   await openAppearanceTab()
-  await sleep(400)
+  await app1.waitFor('document.querySelectorAll(".preset-card").length === 5', '外观主题卡 5 张就位')
   const pick = await applyPreset(label)
   const sv = await clickSave()
-  await sleep(900)
+  // 等保存生效：accent 变成该主题按当前深浅模式的期望色（原固定 900ms）
+  await app1.waitFor(
+    '(function () { var m = document.documentElement.dataset.theme; var t = ' + JSON.stringify(PRESET_ACCENT[label]) + '; var e = t[m] || t.dark; return getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === e.toLowerCase() })()',
+    '切' + label + '后 accent 生效',
+  )
   const mode = await app1.ev(`document.documentElement.dataset.theme`)
   const expectAccentHex = PRESET_ACCENT[label][mode] ?? PRESET_ACCENT[label].dark
   const accent = await app1.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
@@ -361,7 +363,7 @@ console.log('  html[data-theme] =', await app1.ev(`document.documentElement.data
 console.log('  html color-scheme =', await app1.ev(`document.documentElement.style.colorScheme`))
 
 app1.kill()
-await sleep(1000)
+await sleep(1000) // taskkill 异步退出：给上一实例收尸的缓冲，不是等页面状态
 
 // ============================================================ 阶段1.5：主题持久化（重启后保持）
 // D 最后切的是极光（循环末轮）→ settings.json 里 theme_preset=aurora。
@@ -370,7 +372,11 @@ console.log('==== 阶段1.5：主题持久化（重启保持） ====')
 const app1b = await launchApp()
 // B8：启动页 = home，hero 就在启动页（cover grid 在库页，本阶段不需要）
 await app1b.waitFor('!!(window.hh && document.querySelector(".hero"))', 'app1b + hero (home)')
-await sleep(700)
+// 等重启后的主题真的应用（accent = 极光按当前深浅模式的期望值），原固定 700ms
+await app1b.waitFor(
+  '(function () { var m = document.documentElement.dataset.theme; var t = ' + JSON.stringify(PRESET_ACCENT['极光']) + '; var e = t[m] || t.dark; return getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === e.toLowerCase() })()',
+  '重启后主题持久化（accent 已应用）',
+)
 const restartMode = await app1b.ev(`document.documentElement.dataset.theme`)
 const expectRestartAccent = (PRESET_ACCENT['极光'][restartMode] ?? PRESET_ACCENT['极光'].dark).toLowerCase()
 const accentAfterRestart = await app1b.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
@@ -385,14 +391,14 @@ await app1b.shot('F_theme_persist_restart.png')
 // ---- 浅色模式验证（极光浅色）：设置→外观→切"浅色"radio→保存 ----
 console.log('== D2：极光浅色模式 ==')
 await app1b.ev(`(() => { const b=[...document.querySelectorAll('.nav-item')].find(x=>(x.textContent||'').includes('设置')||(x.textContent||'').includes('Settings')); if(b){b.click();return 'nav clicked'} return 'nav miss' })()`)
-await sleep(500)
+await app1b.waitFor('!!document.querySelector(".dlg-foot")', '设置对话框打开')
 await app1b.ev(`(() => { const t=[...document.querySelectorAll('.ant-tabs-tab')].find(x=>(x.textContent||'').includes('外观')||(x.textContent||'').includes('Appearance')); if(t){t.click();return 'tab clicked'} return 'tab miss' })()`)
-await sleep(400)
+await app1b.waitFor('document.querySelectorAll(".preset-card").length === 5', '外观主题卡 5 张就位')
 // 点"浅色" radio（Radio.Button → .ant-radio-button-wrapper）
 const lightRes = await app1b.ev(`(() => { const r=[...document.querySelectorAll('.ant-radio-button-wrapper')].find(x=>(x.textContent||'').includes('浅色')||(x.textContent||'').includes('Light')); if(!r) return 'no-light-radio'; r.click(); return 'light radio clicked' })()`)
-await sleep(300)
 const svRes = await app1b.ev(`(() => { const sv=document.querySelector('.dlg-foot .ant-btn-primary'); if(!sv) return 'no-save-btn'; sv.click(); return 'save clicked' })()`)
-await sleep(900)
+// 等保存生效：极光浅色 accent = #3E6FB0（原固定 300+900ms）
+await app1b.waitFor('getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === "#3e6fb0"', '切浅色后 accent 生效')
 const lightAccent = await app1b.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
 const lightTheme = await app1b.ev(`document.documentElement.dataset.theme`)
 // 极光浅色 accent = AURORA_LIGHT.accent = '#3E6FB0'
@@ -402,14 +408,14 @@ const lr = JSON.parse(await app1b.ev(heroStateExpr()))
 pass('浅色下 hero 仍正常渲染', lr.hero && lr.coverLoaded, `hero=${lr.hero}`)
 await app1b.shot('D2_aurora_light.png')
 app1b.kill()
-await sleep(1000)
+await sleep(1000) // taskkill 异步退出：给上一实例收尸的缓冲，不是等页面状态
 
 // ============================================================ 阶段2
 console.log('==== 阶段2：全无封面库 → 空态 ====')
 seedPhase2()
 const app2 = await launchApp()
 await app2.waitFor('!!(window.hh)', 'app2 boot')
-await sleep(500)
+await app2.waitFor('!!document.querySelector(".app-shell")', 'app2 外壳挂载')
 // B8：hero 的判定在首页（无封面候选 → hero 不渲染，出 .hero-empty 文案）
 const c = JSON.parse(await app2.ev(heroStateExpr()))
 pass('全无封面时 hero 不渲染', !c.hero, JSON.stringify(c))
@@ -419,7 +425,7 @@ await app2.waitFor('!!document.querySelector(".cover-card")', 'app2 cover grid')
 pass('封面网格仍在渲染', (await app2.ev(`document.querySelectorAll('.cover-card').length`)) === 2)
 await app2.shot('C_hero_hidden_empty.png')
 app2.kill()
-await sleep(1000)
+await sleep(1000) // taskkill 异步退出：给上一实例收尸的缓冲，不是等页面状态
 
 // ============================================================ 阶段3：窄窗响应式（hero 720px 折叠分支）
 // B8 新结构的 @media (max-width: 720px)：封面列收窄到 150px（仍竖版比例）、
@@ -441,7 +447,8 @@ await app3.send('Emulation.setDeviceMetricsOverride', {
   deviceScaleFactor: 1,
   mobile: false,
 })
-await sleep(600)
+// 等压窄视口真正重排（innerWidth 到位再读几何），原固定 600ms
+await app3.waitFor('window.innerWidth === 720', '压窄视口 720 生效')
 // 读取折叠后的 hero 状态：整卡在视口内、封面列压缩且保持竖版
 const narrow = JSON.parse(await app3.ev(`JSON.stringify((() => {
   const h = document.querySelector('.hero')
@@ -467,6 +474,6 @@ await app3.shot('G_hero_narrow_720.png')
 await app3.send('Emulation.clearDeviceMetricsOverride')
 await sleep(300)
 app3.kill()
-await sleep(1000)
+await sleep(1000) // taskkill 异步退出：给上一实例收尸的缓冲，不是等页面状态
 
 console.log('done')
