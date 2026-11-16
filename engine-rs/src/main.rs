@@ -72,6 +72,10 @@ use segment::{Segment, recompute_segment};
 use state::Bucket;
 
 const MIN_SEGMENT: u64 = 256 * 1024;
+/// 线程数绝对上限。`threads` 原先只按 `total / MIN_SEGMENT` 夹：10 GB 传 1024
+/// 就是 4 万段 / 4 万个文件句柄 / 4 万条连接（每段一个 .part 句柄），句柄耗尽
+/// 只是时间问题。64 对百兆宽带已经奢侈，再高是排队不是加速。
+const MAX_THREADS: usize = 64;
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
 /// 边车（`.part.meta`）写入的最小间隔：on_tick 每 100ms 走一次，而 save_sidecar
 /// 是阻塞的 std::fs 写 + fsync + rename，10 次/秒会把 runtime 线程卡在磁盘上、
@@ -621,6 +625,12 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                     if cancelled.load(Ordering::Relaxed) {
                         return;
                     }
+                    // 换代（run/probe 用新 gen 顶替本任务）后旧代必须立刻停手：旧实现只在
+                    // 写进度时比对 gen，fetch 循环照跑到段尾，两代 worker 会同时往同一区间
+                    // 写盘；Windows 上旧句柄未关还会让 finalize 的 rename 撞共享冲突。
+                    if task.lock().await.gen != gen {
+                        return;
+                    }
                     let live = counter.load(Ordering::Relaxed);
                     if live > done {
                         interval_bytes += live - done;
@@ -667,6 +677,11 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
             }
         }
 
+        // 旧代的 fetch 可能在这一代被顶替后才返回：结果作废，不能拿旧代的进度
+        // 去改新代的段状态（那会把新代刚写的水位往回拉）。
+        if task.lock().await.gen != gen {
+            return;
+        }
         // fetch 结束后可能还没走到下一个 tick，先把计数器的终值折进 `done`。
         // 否则下一轮会按旧的 `from` 重新请求同一段，把同一段写两遍。
         let final_live = counter.load(Ordering::Relaxed);
@@ -1138,7 +1153,7 @@ async fn handle(
                 None => (0u64, false),
             };
             let threads = if ranges_ok {
-                cmd.threads.max(1).min((total / MIN_SEGMENT).max(1) as usize)
+                cmd.threads.max(1).min((total / MIN_SEGMENT).max(1) as usize).min(MAX_THREADS)
             } else {
                 1
             };
@@ -1266,8 +1281,15 @@ async fn handle(
                     // 必须先换代、再清 pause：反过来的话，还在 park 的旧 worker
                     // 会把 pause 清掉当成自己该继续跑，和新 worker 一起写同一段。
                     g.gen += 1;
-                    g.cancelled.store(false, Ordering::Relaxed);
-                    g.paused.store(false, Ordering::Relaxed);
+                    // 旧代 worker 手里是旧的 Arc：先把它置真（旧代下一个 tick 立即退），
+                    // 再给新代换全新的 Arc。共享同一个 Arc 的话，run 必须把 cancelled
+                    // 清回 false 新 worker 才能跑，这同时等于替旧代放行——快速 pause→run
+                    // 就会出现两代同时写同一区间。paused 同理（旧代必须继续 park，
+                    // 看到 cancelled 后干净退出）。
+                    let old_cancelled =
+                        std::mem::replace(&mut g.cancelled, Arc::new(AtomicBool::new(false)));
+                    old_cancelled.store(true, Ordering::Relaxed);
+                    g.paused = Arc::new(AtomicBool::new(false));
                     g.state = "downloading".into();
                     g.clear_error();
                     gen = g.gen;
@@ -1317,7 +1339,7 @@ async fn handle(
             if let Some(t) = task.clone() {
                 let mut g = t.lock().await;
                 if g.total > 0 && g.ranges_ok && !g.unknown_len && g.state != "downloading" {
-                    let new_n = cmd.n.max(1).min((g.total / MIN_SEGMENT).max(1) as usize);
+                    let new_n = cmd.n.max(1).min((g.total / MIN_SEGMENT).max(1) as usize).min(MAX_THREADS);
                     if new_n != g.threads {
                         // 先记下老布局，重切之后按「老段真正下载的字节区间」和新段求交集
                         // 重新摊回进度，否则换线程数会把已下载的量算错（虚高或清零）。
