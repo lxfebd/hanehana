@@ -284,6 +284,11 @@ async function main() {
         docSW: document.documentElement.scrollWidth,
         panelOverX: panel ? panel.scrollWidth - panel.clientWidth : -1,
         actsH: acts ? Math.round(acts.getBoundingClientRect().height) : -1,
+        btnClip: [...document.querySelectorAll('.ghost-btn')].some(
+          (b) => b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1,
+        ),
+        panelFromAside:
+          Math.round(panel.getBoundingClientRect().width) === Math.round(a.width),
       })
     })()`)
     const fx = flexRaw ? JSON.parse(flexRaw) : null
@@ -291,7 +296,11 @@ async function main() {
     ck('窄窗右栏不越出窗口（「只露一半」的回归靶）', !!fx && fx.asideRight <= fx.iw && fx.docSW <= fx.iw + 1, JSON.stringify(fx))
     ck('窄窗中栏保留可用宽度（不被右栏挤没）', !!fx && fx.contentW >= 420, 'content=' + (fx && fx.contentW))
     ck('窄窗面板内部无横向溢出', !!fx && fx.panelOverX === 0, 'overX=' + (fx && fx.panelOverX))
-    ck('窄窗次按钮自动换行（容器查询生效）', !!fx && fx.actsH > 50, 'actsH=' + (fx && fx.actsH))
+    // 面板宽度只有一个权威：抽屉里的面板宽 = .aside 宽（组件自己不写 width）。
+    // 以前这里只能验「没越界」，因为宽度由父级覆盖回 100%；现在是同一件事。
+    ck('面板宽度由右栏给（组件不再自带 token 宽）', !!fx && fx.panelFromAside === true, JSON.stringify(fx))
+    // 次按钮不再靠 @container 340px 阈值换排：标签放不下就折行，判据是「不叠字/不被裁」。
+    ck('窄窗次按钮不叠字（标签折行或单行放得下）', !!fx && fx.btnClip === false, 'actsH=' + (fx && fx.actsH) + ' clip=' + (fx && fx.btnClip))
     await send('Emulation.clearDeviceMetricsOverride')
     await new Promise((r) => setTimeout(r, 700))
     const back = JSON.parse(

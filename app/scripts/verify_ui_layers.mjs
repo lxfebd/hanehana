@@ -300,13 +300,26 @@ async function main() {
       }
       return false
     }
+    /** 等应用真的启动完（hello 到手 + 外壳已挂载）。
+     * 重载后固定 sleep(3000) 在高负载/4K 下不够——闸门后面第一步点击就落在半启动的页上，
+     * 表现成「点了但标记 12s 不出现」，也就是此前被当成产品假红的那批。 */
+    const waitBoot = async (ms) => {
+      const t0 = Date.now()
+      for (;;) {
+        const ok = await ev('!!window.hh && !!document.querySelector(".app-shell")')
+        if (ok === true) return Date.now() - t0
+        if (Date.now() - t0 > ms) return -1
+        await sleep(100)
+      }
+    }
 
     for (const [w, h] of SIZES) {
       const tag = w + 'x' + h
       console.log('\n===== 视口 ' + tag + ' =====')
       await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false })
       await send('Page.reload', { ignoreCache: true })
-      await sleep(3000)
+      const bootMs = await waitBoot(60000)
+      if (bootMs < 0) console.log('  [warn] ' + tag + ' 启动等待超时（60s）')
       await send('Emulation.setDeviceMetricsOverride', { width: w, height: h, deviceScaleFactor: 1, mobile: false })
       await sleep(500)
       // ---- 全页面布局扫描：每个视口下切到每页，断言横向溢出/主列重叠/空白右栏/卡片重叠 ----

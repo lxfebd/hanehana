@@ -305,11 +305,10 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
 
 <style scoped>
 .detail-panel {
-  width: var(--hh-layout-detail-w);
-  /* 容器查询的容器：右栏宽度是弹性的（App.vue .aside 的 clamp，400 → 300），
-     面板内按 400 排的行需要知道「我现在多宽」才好换排法，见文件末的 @container。 */
-  container-type: inline-size;
-  container-name: detail;
+  /* 宽度不在这里定：抽屉态由 .aside 的宽度决定（flex 列宽默认 stretch），
+     整页态由下面的 .is-expanded 用 inset 决定。组件里写 token 宽度 = 和父级
+     抬权（历史上就靠 App.vue 的 `.aside > .detail { width: 100% }` 覆盖回来），
+     一个数字两个地方说 = 迟早打架。 */
   position: relative;
   overflow-y: auto;
   padding: 12px;
@@ -412,36 +411,37 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
 .ghost-btn {
   flex: 1;
   min-width: 0;
-  height: 36px;
+  /* 高度默认 36（与原来一致）；标签折行时自己长高，不靠宽度阈值。 */
+  min-height: 36px;
+  padding: 0 6px;
   border-radius: var(--hh-radius-md);
   border: 1px solid var(--hh-color-border-ghost-soft);
   background: var(--hh-color-surface-soft);
   color: var(--hh-color-text-strong);
   font-size: var(--hh-font-body-size);
+  line-height: 1.25;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  /* 不换行：四个标签里最长的 4 汉字 + 图标在四等分按钮里放得下。 */
-  white-space: nowrap;
+  /* 不写 white-space:nowrap：放不下就折行（此前靠 @container 340px 阈值推算字宽，
+     英文 locale / 大字号一变就失效）。 */
+  white-space: normal;
+  text-align: center;
   transition: background var(--hh-motion-med);
 }
 .ghost-btn:hover {
   background: var(--hh-color-surface-hover-soft);
 }
-/* 窄口径（右栏被 clamp 收到 ~300）：四个 ghost 按钮一行放不下（图标 + 不换行的
-   4 汉字 ≈ 72px/颗，四颗 312px）。放不下就会出现两颗按钮字叠在一起——
-   按容器宽度换成 2×2，而不是让字溢出到邻居身上。
-   阈值按内容盒（400 宽的面板内容盒 363px）取 340：默认尺寸下一行四颗不变。 */
-@container detail (max-width: 340px) {
-  .actions-sub {
-    flex-wrap: wrap;
-  }
-  .ghost-btn {
-    flex: 1 1 calc(50% - 4px);
-  }
+.ghost-btn .nav-ic,
+.ghost-btn svg {
+  /* 图标不跟着文字折行 */
+  flex: none;
 }
+/* （此处曾有 @container detail (max-width: 340px) 把四个 ghost 按钮换成 2×2。
+   它靠「四个汉字 ≈ 72px/颗」反推阈值，换 locale / 字号就失效；现在按钮标签
+   直接允许折行，不再需要任何宽度阈值。 */
 
 /* ============ 分栏容器 ============ */
 /* 抽屉态：两层容器都不参与布局（display:contents），孩子直接落到面板的

@@ -468,7 +468,9 @@ async function submitAddTask(input: {
   /* 右栏是弹性的，不是死咬一个数：窗口往窄里拖时它跟着收（400 → 300），
      而不是占着 400 把中栏挤成一条缝（实测 800 宽时右栏占满一半，中栏只剩 232）。
      三档：上限 = token（宽窗与设计稿逐像素一致）｜32vw = 跟着窗口走｜300 下限
-     （300 时中栏仍留得住两列封面）。低于下限再窄就交给「收成竖条」那条路。 */
+     （300 时中栏仍留得住两列封面）。低于下限再窄就交给「收成竖条」那条路。
+     宽度只有这一个权威：面板组件自己不写 width（见 .aside > .detail 的注释），
+     内部行用 flex/grid 自适应，没有任何按字宽反推的阈值。 */
   width: clamp(300px, 32vw, var(--hh-layout-detail-w));
   /* 宽度由上面这行说了算：ActivityFeed 根的 flex:1 会把 width 顶掉（flex-basis 0 + grow），
      实测 361 token 被撑成 557，主列被挤到 555。flex:none 让 clamp 宽度真正生效，
@@ -485,20 +487,13 @@ async function submitAddTask(input: {
   width: 28px;
 }
 .aside > .detail {
-  width: 100%;
+  /* 宽度交给 flex 的 cross-axis stretch，高度交给 flex:1；这里不再声明 width，
+     也不再声明 position——两个都跟组件内的 .detail-panel / .is-expanded 抢同一
+     个属性。以前为了把面板从「组件内的 token 宽 + relative」拽回来，这里要多
+     一条 .aside > .detail.is-expanded 覆盖（见下方已删的那段注释）；现在组件
+     自己不写宽度不写定位，覆盖自然不需要了。 */
   flex: 1;
-  position: relative;
   min-height: 0;
-}
-/* 详情整页展开：这一条必须写在 App.vue 里，而不是在组件内加大特异性。
-   .aside > .detail（含 scoped 属性 = 0,3,0）与组件内 .detail-panel.is-expanded
-   （同为 0,3,0）打平，产物里 App 的样式排在组件样式之后——面板虽然拿到了
-   position:fixed，又被宽高/定位拽回抽屉尺寸（实测 rect 400x748、
-   computed position=relative）。在这里显式让位。 */
-.aside > .detail.is-expanded {
-  width: auto;
-  flex: none;
-  position: fixed;
 }
 
 /* 右栏空态占位（收起时 Transition 里的第三个分支）：占满宽度保持结构，

@@ -19,11 +19,14 @@
 
 - **游戏站从「更多」提为侧栏一级入口**（`app/src/renderer/components/NavSidebar.vue`）：它是真页面（内嵌 webview 的站点浏览），却藏在左下角「更多」收纳菜单里——新用户根本找不到，也就无从使用。现在紧挨「下载任务」排开（浏览站点 → 投递下载是同一件事），图标/文案/页签状态沿用原条目，「更多」不再重复放同一条（剩下统计/全屏/添加/Steam）。闸门同步：`verify_gamesites` 改点一级入口，`verify_ui_layers` 的 games 页面标记改走普通 nav。实测：侧栏顺序「首页/全部游戏/收藏夹/下载任务/游戏站/扫描导入/设置/更多」，点「游戏站」后 `.games` 与 webview 都挂载、该条变 active，「更多」菜单里只剩 4 条。
 - **左侧导航可收起成图标条（56px ⇄ 144px）**（`NavSidebar.vue` + `stores/ui.ts` + i18n）：下载站这类宽内容页被 144px 侧栏占掉整窗约 10.5% 的面积（1280×802 窗里 144×750，游戏站 webview 只剩 853px 宽）。侧栏顶部新增「收起/展开」按钮：收起成 56px 图标条后 webview 立刻多出 88px（实测 853→941）；标签隐藏（每条带 title 提示）、计数降级为小徽章、「更多」菜单照常向右弹出不裁。两层弹性：① 用户手点（写 localStorage `hh.nav.rail`，重启不丢）；② 窗口 ≤860px 自动收 —— 由当前宽度派生，拉宽自动回来，不是一次性开关。`verify_gamesites` 新增 5 条断言（默认展开 144 / 收起 56 标签隐藏 / webview 多出 ≥80px / 再点复原），4→9 全绿；另把层叠闸「切换:页名」标记超时后重点一次再判（高负载/4K 视口下偶发标记迟到，单独复现切页 260ms 就位且布局断言全程通过，连续两次超时才红、重试留 [retry] 日志）。
+- **右栏宽度收口到单一权威 + 删掉按字宽反推的阈值**（`DetailPanel.vue` + `App.vue`）：审计发现同一个宽度有 4 个权威（`.aside` 的 clamp、`App.vue` 的 `.aside > .detail { width:100% }`、组件内 `width: var(--hh-layout-detail-w)`、以及整页态的固定定位覆盖），整页展开还得靠 App 里一条更高特异性规则拽回来。现在组件不写 width / 不写 position：抽屉宽由 flex 的 stretch 给、整页态只用自己那条 `position:fixed + inset`，App 的 `.aside > .detail.is-expanded` 覆盖删除。上一条里的「@container 340px 换 2×2」也随之删掉——那是按「四个汉字 ≈ 72px」反推的阈值，换 locale/字号就失效；改用 `min-height:36px + white-space:normal` 让标签自己折行。实测：抽屉 400/352/320/300 处处与 `.aside` 同宽且无越界；整页 12..1268 铺满、Esc 回 400；次按钮在 ≥1000 仍是一行 36px（设计稿口径），900/800 折两行、全程无裁切（`scrollWidth/scrollHeight` 均未超出）。`verify_detail_panel` 加一条「面板宽 = 右栏宽」，34→35。
 - **正则搜索不再逐条编译**（`app/src/renderer/stores/library.ts`）：`matchSearch` 原先对每款游戏 `new RegExp`，万级库每次键入编译上万次；改为 `filteredGames` 编译一次后传入。
 - **列表视图 key 提到 computed**（`app/src/renderer/components/CoverGrid.vue`）：原写在模板表达式里，每次重渲染（hover / 滚动 / 定时刷新）都全库 `join('|')` 一遍。
 - **下载线程数绝对上限 64**（`engine-rs/src/main.rs`）：`threads` 原先只按 `total / MIN_SEGMENT` 夹，10 GB 传 1024 就是 4 万段 / 4 万个 `.part` 句柄 / 4 万条连接；`run` 与 `set_threads` 两处都夹到 64。
 
 ### 测试与闸门
+
+- **层叠闸改为等启动就绪**（`app/scripts/verify_ui_layers.mjs`）：每个视口 `Page.reload` 后固定 `sleep(3000)`，高负载/4K 下后续点击会落在半启动的页面上，表现为「点了但标记 12s 不出现」——这正是此前需要「重点一次」的真因。改为 `waitBoot(60s)` 轮询 `window.hh + .app-shell`，超时才 warn；全视口 10 个尺寸 350/0 通过，无 `[retry]`、无 `[warn]`。
 
 - **21 个验证脚本不再 fail-open**（`app/scripts/verify_*.mjs`）：断言失败原只打印计数、从不设置退出码，`npm run regression` 红了也返回 0。现在失败当场置 `process.exitCode = 1`（早退路径同样覆盖）。
 - **`e2e_dupe_ui.mjs` 恒绿修复**：末尾写死 `process.exit(0)` 吞掉了所有 FAIL；并把「扫描浮层 dupe 区块 / 行 / 按钮」补成真断言。
