@@ -13,6 +13,7 @@
 - **引擎换代停不住旧代 worker**（`engine-rs/src/main.rs`）：`run` 换代时把共享的 `cancelled` 清回 false 新 worker 才能跑，这同时等于替旧代放行；旧代只在写进度时比对 gen，fetch 循环照跑到段尾 —— 快速 pause→run 会出现两代 worker 同时写同一区间，Windows 上旧句柄未关还会让 `finalize` 的 rename 撞共享冲突。现在换代时对旧 Arc 置真并换全新 Arc，worker 在 tick 与 fetch 返回处都比对 gen，不一致立即退出。
 - **游玩会话被 400ms 合并窗口覆盖**（`app/src/main/store.ts` + `jsonStore.ts`）：`appendPlaySessions` 原走「load（读盘）→ 合并 → save」，读不到合并窗口里的 pending；两次追加撞进同一窗口时前一批整份丢失。`jsonStore` 新增 `update(fn)`（有待写内容以它为准），追加改走它；补一条「两次 update 不许丢」的单测。
 - **窗口拖窄时右侧栏不是弹性的**（`app/src/renderer/App.vue` + `composables/useBoot.ts` + `DetailPanel.vue` + `DetailBanner.vue`）：右栏死咬 token 的 400px 不放，窗口从 1280 拖到 800 时它一路占掉半个窗口、中栏只剩 232px；而拖过 1100px 那条线时 matchMedia 一刀把右栏收成 28px 竖条，拉宽也不自动恢复。改为 `clamp(300px, 32vw, var(--hh-layout-detail-w))`：默认 1280 窗下仍是 400（与设计稿逐像素一致），拖窄时跟着收（1200→384、1000→320、800→300），永不越界也不挤没中栏（最小窗下中栏仍有 332px）；删掉那条只收不还的 matchMedia 自动收起（用户手点的「收成竖条」仍保留）。面板内配套：四个 ghost 按钮窄口径按容器查询换 2×2（不再压字），banner 的发行/评分/收藏胶囊换行（不再被右边界切 14px）、原生名就地省略号。新闸：`verify_detail_panel` 新增 7 条弹性断言（默认 400 / 窄窗 <400 且 ≥280 / 不越界 / 中栏 ≥420 / 面板内无横向溢出 / 按钮换行 / 恢复后回到 400），27→34 全绿；`regression:layers:all` 10 个视口 350/350 全绿。
+- **设置按钮重复**（`app/src/renderer/App.vue`）：同一个「打开设置」在两个常驻位置各有一个入口——顶栏右上角圆钮（`.tb-round`）和左侧栏底部带文字的「设置」。掤掉右上角那颗（那里本来就是原生窗口按钮的地盘），唯一入口留在左侧栏工具区（与「扫描导入 / 更多」同区、带文字）；顺手移除随之无用的 `Settings` 图标与 `openSettings` 引入、`.tb-round` / `.titlebar-right` 样式，`verify_ui_layers` 改为点侧栏「设置」开对话框。实测：`.tb-round` = 0、`.titlebar-right` = 0、侧栏「设置」= 1，点开后 `.ds-panel[role=dialog]` 9 个页签齐。
 
 ### 变更
 

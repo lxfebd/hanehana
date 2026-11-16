@@ -368,7 +368,9 @@ async function main() {
       await sleep(300)
 
       // ---- 4. 设置对话框 .ds-panel（DialogShell, Teleport body, modal 层）----
-      await ev(`(() => { const b = document.querySelector('.tb-round'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      // 设置的唯一入口在左侧栏底部（带文字的 nav-item）——右上角那颗圆钮（.tb-round）
+      // 已撤：它和侧栏入口是同一个动作，两个常驻入口就是重复。
+      await ev(`(() => { const b = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('设置') || (x.textContent||'').includes('Settings')); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await scenario(tag, '设置对话框 ds-panel', '.ds-panel', always)
       await esc()
       await sleep(300)

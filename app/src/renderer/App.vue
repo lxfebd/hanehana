@@ -2,10 +2,10 @@
 import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
 import { App as AntApp, ConfigProvider } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
-import { X, ChevronLeft, Plus, ScanSearch, Settings } from 'lucide-vue-next'
+import { X, ChevronLeft, Plus, ScanSearch } from 'lucide-vue-next'
 import { antdTheme } from './design/antdTheme'
 import { filteredGames, library, selectedGame, thumbUrl } from './stores/library'
-import { addTask, downloads, openSettings } from './stores/downloads'
+import { addTask, downloads } from './stores/downloads'
 import { ui } from './stores/ui'
 import { t, tf } from './i18n'
 import { useBoot } from './composables/useBoot'
@@ -138,9 +138,11 @@ async function submitAddTask(input: {
     <AntApp>
       <div class="app-shell">
         <div class="app-bg" :style="{ backgroundImage: appBgImage }" aria-hidden="true"></div>
-        <!-- 顶栏（对标基准 home.png 顶部）：返回箭头 + 圆头像 + 应用名 + BETA
-             芯片 + 右侧圆形设置钮。版本号收进头像/芯片的 title，不放正文——
-             基准顶栏没有版本号，这是「一模一样」与「信息可见」的折中。 -->
+        <!-- 顶栏（对标基准 home.png 顶部）：返回箭头 + 圆头像 + 应用名 + BETA 芯片。
+             版本号收进头像/芯片的 title，不放正文——基准顶栏没有版本号，
+             这是「一模一样」与「信息可见」的折中。
+             设置不再放右上角圆钮：左侧栏底部已有带文字的「设置」入口，
+             同一动作两个常驻入口就是重复（用户实测：右上一个左下一个）。 -->
         <header class="titlebar">
           <button
             class="tb-icon no-drag"
@@ -154,17 +156,6 @@ async function submitAddTask(input: {
           <span class="tb-avatar no-drag" :title="bootInfo" aria-hidden="true">羽</span>
           <span class="tb-name no-drag">{{ t('app_logo') }}</span>
           <span class="tb-beta no-drag" :title="bootInfo">BETA</span>
-          <div class="titlebar-right no-drag">
-            <button
-              class="tb-round"
-              type="button"
-              :title="t('app_prefs')"
-              :aria-label="t('app_prefs')"
-              @click="openSettings()"
-            >
-              <Settings :size="15" />
-            </button>
-          </div>
         </header>
 
         <div class="layout">
@@ -398,37 +389,14 @@ async function submitAddTask(input: {
   font-weight: 700;
   letter-spacing: 0.5px;
 }
-.titlebar-right {
-  flex: 1;
-  display: flex;
-  justify-content: flex-end;
-}
 @media (max-width: 700px) {
-  /* 极窄窗收起应用名/BETA 芯片，给右上角设置钮和原生 overlay（关闭按钮）留出空间，
-     避免标题栏左侧固定宽度把设置钮挤出可视区 */
+  /* 极窄窗收起应用名/BETA 芯片，给右上角原生 overlay（最小化/最大化/关闭）留出空间，
+     避免标题栏左侧固定宽度把窗口按钮挤出可视区 */
   .tb-name,
   .tb-beta {
     display: none;
   }
 }
-.tb-round {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1px solid var(--hh-color-float-border);
-  border-radius: var(--hh-radius-pill);
-  background: var(--hh-color-panel-glass);
-  color: var(--hh-color-text-mid-high);
-  cursor: pointer;
-  transition: background var(--hh-motion-med);
-}
-.tb-round:hover {
-  background: var(--hh-color-surface-hover);
-  color: var(--hh-color-text-glow);
-}
-
 .layout {
   flex: 1;
   display: flex;
