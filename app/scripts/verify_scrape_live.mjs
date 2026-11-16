@@ -99,7 +99,7 @@ async function main() {
       const dt = Date.now() - t0
       if (r?.__err) {
         console.log(`=== ${title} EVAL-ERR: ${r.__err}`)
-        fail++
+        fail++; process.exitCode = 1
         continue
       }
       const results = r?.results ?? []
@@ -116,7 +116,7 @@ async function main() {
       const ok = results.length > 0 && Object.keys(bySrc).length >= 1
       if (ok) pass++
       else {
-        fail++
+        fail++; process.exitCode = 1
         console.log(`   ✖ 无结果（warnings=${JSON.stringify(warnings)})`)
       }
     }

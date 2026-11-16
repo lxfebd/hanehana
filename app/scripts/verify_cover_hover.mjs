@@ -102,7 +102,7 @@ async function main() {
         pass++
         console.log('  [PASS] ' + n)
       } else {
-        fail++
+        fail++; process.exitCode = 1
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }

@@ -33,7 +33,7 @@ async function main() {
   const ev = async (expr) => { const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true }); if (r.result?.exceptionDetails) return { __err: String(r.result.exceptionDetails.exception?.description ?? '') }; return r.result?.result?.value }
   try {
     let pass = 0, fail = 0
-    const ck = (n, c, x = '') => { if (c) { pass++; console.log('  [PASS] ' + n) } else { fail++; console.log('  [FAIL] ' + n + ' ' + (x || '')) } }
+    const ck = (n, c, x = '') => { if (c) { pass++; console.log('  [PASS] ' + n) } else { fail++; process.exitCode = 1; console.log('  [FAIL] ' + n + ' ' + (x || '')) } }
     // 等 hero 渲染
     for (let i = 0; i < 20; i++) { const h = await ev('!!document.querySelector(".hero")'); if (h) break; await new Promise((r) => setTimeout(r, 500)) }
     await new Promise((r) => setTimeout(r, 1500))

@@ -21,6 +21,16 @@ jobs:
       # electron-builder 不用本地 tag 也能把 draft 建在版本 tag 上，发布由下方步骤负责。
       - uses: actions/checkout@v4
 
+      # tag 与 package.json 版本必须一致：打错 tag 会发一个「标 vX 装 Y」的包，
+      # autoUpdater 的 latest.yml 跟着错，用户永远升不上去。
+      - name: tag 与 package.json 版本一致性
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart('v')
+          $ver = (Get-Content app/package.json -Raw | ConvertFrom-Json).version
+          if ($tag -ne $ver) { Write-Error "tag=v$tag != package.json version=$ver"; exit 1 }
+          Write-Host "tag/version 一致：$ver"
+
       - uses: actions/setup-node@v4
         with:
           # 与 ci.yml 同步：Electron 44 要求 Node >= 22.12
@@ -40,6 +50,20 @@ jobs:
       - name: typecheck
         working-directory: app
         run: npm run typecheck
+        env:
+          PYTHONIOENCODING: utf-8
+
+      # 发版前把日常闸也跑一遍：只 typecheck+build 的发版链，等于允许
+      # 「测试红着但 tag 已打」的提交直接出厂。
+      - name: unit tests
+        working-directory: app
+        run: npm test
+        env:
+          PYTHONIOENCODING: utf-8
+
+      - name: regression static
+        working-directory: app
+        run: npm run regression:static
         env:
           PYTHONIOENCODING: utf-8
 

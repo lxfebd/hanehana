@@ -117,7 +117,7 @@ async function main() {
         pass++
         console.log(`  [PASS] ${name}`)
       } else {
-        fail++
+        fail++; process.exitCode = 1
         console.log(`  [FAIL] ${name} ${extra ? ':: ' + extra : ''}`)
       }
     }

@@ -1,5 +1,6 @@
 # 守门三件套：clone 可构建 + 类型零错 + Rust 单测真的被跑。
-# 任何一项红 = 合入阻断。e2e/视觉不在这里跑（需 CDP 起真实窗口，另列 workflow 或本地）。
+# 任何一项红 = 合入阻断。e2e 不在这里跑（需 HTTPS fixture 与真实引擎，另列 workflow 或本地）；
+# CDP 真机闸里耗时可接受的那部分（static / layers）已进来。
 name: CI
 
 on:
@@ -47,6 +48,15 @@ jobs:
       - name: regression static (grep gates)
         working-directory: app
         run: npm run regression:static
+
+      # 层叠闸：真机起窗口，elementFromPoint 断言弹层不被封面卡片覆盖
+      # （backdrop-filter 把 z-index 关进祖先层叠上下文的既存事故类）。
+      # 原先只在本地 / visual.yml 跑，PR 改 z-index 合进来时线上不拦。
+      - name: regression layers (CDP)
+        working-directory: app
+        run: npm run regression:layers
+        env:
+          PYTHONIOENCODING: utf-8
 
       # lint：错误 = 合入阻断（0 errors 闸）；警告是渐进债务台账，不阻断。
       #   no-console 提醒走 logger；未用变量提醒清尾。新代码必须过。

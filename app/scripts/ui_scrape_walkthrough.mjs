@@ -141,13 +141,28 @@ async function dialogState() {
   })`)
 }
 
+let failed = 0
+/** 这条走查过去只有 log、没有任何断言——被当成回归闸其实是纯日志。 */
+const ck = (name, ok, extra = '') => {
+  if (ok) {
+    console.log('PASS ' + name)
+  } else {
+    failed++
+    process.exitCode = 1
+    console.log('FAIL ' + name + ' ' + extra)
+  }
+}
+
 console.log('== 场景1：污染目录名【Key】Clannad [EX](完全版) ==')
 await openScrapeFor('Clannad')
 await sleep(3000)
 console.log(' 3s 状态(流式)：', await dialogState())
 await shot('ui_streaming.png')
 await sleep(11000)
-console.log('14s 状态(两源落定)：', await dialogState())
+const st14 = await dialogState()
+console.log('14s 状态(两源落定)：', st14)
+const cards14 = Number(await ev(`document.querySelectorAll('.result-card').length`))
+ck('刮削拉到候选卡（≥1 张）', cards14 >= 1, 'cards=' + cards14)
 await shot('ui_settled.png')
 // 选第一张卡 → 应用按钮可用 → 真点「应用选中」→ 验证游戏元数据真的落库
 console.log(' 选卡前 games.json：', (await ev('window.hh && 0')) !== null ? '' : '')
@@ -179,6 +194,11 @@ for (let i = 0; i < 30; i++) {
   if (i % 5 === 4) console.log(`  +${i + 1}s 等待落库… 对话框开着=${dlgOpen}`)
 }
 console.log('  gA 应用后：title=' + JSON.stringify(gA1.title) + ' native=' + JSON.stringify(gA1.titleNative) + ' cover=' + JSON.stringify(gA1.coverPath) + ' rating=' + gA1.rating + ' desc=' + (gA1.description || '').slice(0, 30))
+ck(
+  '应用后 gA 元数据真的落库',
+  gA1.title !== gA0.title || !!gA1.coverPath,
+  'before=' + JSON.stringify(gA0.title) + ' after=' + JSON.stringify(gA1.title) + ' cover=' + JSON.stringify(gA1.coverPath),
+)
 await shot('ui_after_apply.png')
 
 // 关掉对话框，换 夏ノ音
@@ -190,6 +210,7 @@ await openScrapeFor('夏ノ音')
 await sleep(14000)
 console.log('14s 状态：', await dialogState())
 await shot('ui_notfound.png')
+console.log('==== ' + (failed === 0 ? 'WALKTHROUGH OK' : 'WALKTHROUGH FAILED') + ' ====')
 
 ws.close()
 try {

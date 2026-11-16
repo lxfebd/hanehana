@@ -90,7 +90,10 @@ console.log('=== 加之后库内:', lib.length, '款 ===')
 const addedExes = new Set((r2.added ?? []).map((g) => g.exePath.toLowerCase()))
 const dupeExes = (r2.dupes ?? []).map((d) => d.exePath.toLowerCase())
 const leak = dupeExes.filter((e) => addedExes.has(e))
-console.log(leak.length === 0 ? 'PASS 未经确认的同款零入库' : 'FAIL 自动入库了 dupe: ' + JSON.stringify(leak))
+const dupeOk = leak.length === 0
+console.log(dupeOk ? 'PASS 未经确认的同款零入库' : 'FAIL 自动入库了 dupe: ' + JSON.stringify(leak))
+// 原先只打日志：这条 FAIL 被末尾的 exit(0) 吞掉，整个 step 永远绿。
+if (!dupeOk) process.exitCode = 1
 
 // 扫描结果浮层是否真的渲染出 dupe 区块 + 按钮
 const ui = JSON.parse(await ev(`(async () => {
@@ -111,7 +114,16 @@ const ui = JSON.parse(await ev(`(async () => {
   })
 })()`))
 console.log('[扫描浮层 UI]', JSON.stringify(ui))
+// 浮层是这条链唯一面向用户的产物：区块没出来 / 行数为 0 / 没有「也加进来」按钮，
+// 都等于「去重提示在界面上不存在」——不报红就等于这条回归网自己漏了。
+if (!ui.dupeBlock || ui.dupeRows < 1 || !(ui.addBtns || []).length) {
+  console.log('FAIL 扫描浮层缺少 dupe 区块/行/按钮：' + JSON.stringify(ui))
+  process.exitCode = 1
+} else {
+  console.log('PASS 扫描浮层 dupe 区块 + ' + ui.dupeRows + ' 行 + ' + ui.addBtns.length + ' 个按钮')
+}
 
 ws.close()
 spawn('taskkill', ['/pid', String(proc.pid), '/T', '/F'], { stdio: 'ignore' })
-setTimeout(() => process.exit(0), 1500)
+// 不能写死 exit(0)：上面任何一条 FAIL 都会被它吞掉，CI 永远绿。
+setTimeout(() => process.exit(process.exitCode || 0), 1500)
