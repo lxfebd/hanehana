@@ -97,37 +97,40 @@ async function resolveGofile(m: Mirror): Promise<ResolveOutcome> {
 // --------------------------------------------------------------- Cloudreve v4
 
 /**
- * 网盘 API 基址。FD_CLOUDREVE_BASE 只给离线回归门用（tests/test_proxy_e2e.py 起一个
- * 假 Cloudreve，把「120 个文件截断成 60 个」这类只有大分享才会暴露的计数测出来）；
- * 不设置就是真实分享域名。这条链全程匿名、不带任何 Cookie，所以指错地址也
- * 泄露不了登录态。
+ * 网盘 API 基址。FD_CLOUDREVE_BASE 用来把解析层指向本地假 Cloudreve（联调 /
+ * 离线回归，大分享的计数只有像满量列目录这种路径才测得出）；不设置就是真实
+ * 分享域名。这条链全程匿名、不带任何 Cookie，所以指错地址也泄露不了登录态。
  */
 const CR_BASE = process.env.FD_CLOUDREVE_BASE ?? 'https://pan.nekogal.top/api/v4'
 
 /**
  * 一次分享解析的收尾播报。
  *
- * 单独抽出来是因为这几行里有两处「吞掉信息」的老毛病：
- * - 分享里的文件超过 CR_MAX_FILES 时只取了前面一截，不说的话用户要到解压才发现缺件；
- * - 换直链失败的那几个（failed）以前完全不出现在任何提示里。
+ * 解析层现在不截断：分享里列出的每个文件都进了 resolved，入队节奏交给调用方
+ * （渲染层逐个建任务，Manager 自带排队与 max_concurrent）。这里只负责把
+ * 「到底全到了没有」说清楚——历史上这几行正是「吞掉信息」的老毛病：
+ * 拿一句「还有 N 个文件未加入」把缺件包装成可接受提示，用户到解压才发现。
+ * 所以文案反过来写：
+ * - 全部换到直链，才允许说「已全部加入队列」；
+ * - 换直链失败的那几个（failed）必须点名数量，一个都不许静默消失。
  * missing 是给渲染层的机器可读计数（决定要不要把分享页摊回浏览器），别让它去读中文。
  */
 export function crBundleNote(
   shareName: string,
   total: number,
-  extra: number,
   failed: number,
 ): { message: string; missing: number } {
-  const note = extra > 0 ? `（还有 ${extra} 个文件未加入，可在分享页查看）` : ''
-  const failNote = failed > 0 ? `（另有 ${failed} 个文件取直链失败）` : ''
-  return { message: `${shareName} 共 ${total} 个文件${note}${failNote}`, missing: extra + failed }
+  const body =
+    failed > 0
+      ? `共 ${total} 个文件，已加入 ${total - failed} 个，另有 ${failed} 个取直链失败`
+      : `共 ${total} 个文件已全部加入队列`
+  return { message: `${shareName} ${body}`, missing: failed }
 }
 
 const CR_MAX_DEPTH = 8
 const CR_PAGE_SIZE = 500
 /** 列目录翻页上限：500/页 × 20 = 一万个文件，远超任何真实分享；防服务端异常。 */
 const CR_MAX_PAGES = 20
-const CR_MAX_FILES = 60
 
 interface CrEntry {
   type: number
@@ -170,12 +173,14 @@ async function resolveCloudreve(m: Mirror): Promise<ResolveOutcome> {
     }
     // 分卷要按 .part1/.part2 顺序入队
     files.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }))
-    const head = files.slice(0, CR_MAX_FILES)
-    const extra = files.length - head.length
 
+    // 解析层不截断：多分卷 galgame 常有 60+ 文件，以前在这里砍掉第 61 个之后的
+    // 文件，界面却长得像成功，用户到解压才发现缺件。现在分享里的每个文件都
+    // 换成直链交回去；一次入队多少、要不要分批提示，是调用方和 Manager 队列
+    // （max_concurrent）的事——解析层的职责是报全量，不是替用户裁剪。
     const resolved: ResolvedFile[] = []
     let failed = 0
-    for (const f of head) {
+    for (const f of files) {
       const url = await crDirectUrl(f.path)
       if (url) resolved.push({ url, filename: f.name, size: f.size })
       else failed++
@@ -188,9 +193,9 @@ async function resolveCloudreve(m: Mirror): Promise<ResolveOutcome> {
       }
     }
 
-    const { message, missing } = crBundleNote(shareName, files.length, extra, failed)
+    const { message, missing } = crBundleNote(shareName, files.length, failed)
     const only = resolved[0]
-    if (resolved.length === 1 && !failed && !extra) {
+    if (resolved.length === 1 && !failed) {
       // 一个文件、全部成功：没有要告知的事，别把「共 1 个文件」当成结果播报刷在屏幕上
       return { ok: true, url: only.url, filename: only.filename, size: only.size }
     }
