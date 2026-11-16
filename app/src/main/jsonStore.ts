@@ -44,6 +44,15 @@ export interface JsonStore<T> {
   load(): T | null
   /** 保存。尾触发合并：窗口内多次调用只写一次最终快照。 */
   save(_value: T): void
+  /**
+   * 读-改-写：以「待写内容」为准做一次变换后再保存。
+   *
+   * 存在的理由：`save()` 是尾触发合并，而 `load()` 只读盘上内容、读不到
+   * 合并窗口里的 pending。调用方若按「load → 改 → save」做追加，两次追加落在
+   * 同一个 400ms 窗口里时，后一次写回的是「盘上旧内容 + 第二次」——
+   * 第一次的内容被静默覆盖（游玩会话就是这么丢的）。
+   */
+  update(_fn: (_prev: T | null) => T): void
   /** 立即把待写内容落盘（进程退出前调用）。返回是否真的写了。 */
   flush(): boolean
 }
@@ -95,7 +104,7 @@ export function createJsonStore<T>(file: string, serialize?: (_v: T) => string, 
     }
   }
 
-  return {
+  const store: JsonStore<T> = {
     load(): T | null {
       if (existsSync(file)) {
         try {
@@ -152,6 +161,11 @@ export function createJsonStore<T>(file: string, serialize?: (_v: T) => string, 
         }
       }, delay)
     },
+    update(fn: (prev: T | null) => T): void {
+      // 合并窗口里有待写内容就以它为准；没有才去读盘。
+      const base = dirty && pending !== undefined ? pending : store.load()
+      store.save(fn(base))
+    },
     flush(): boolean {
       if (timer) {
         clearTimeout(timer)
@@ -173,4 +187,5 @@ export function createJsonStore<T>(file: string, serialize?: (_v: T) => string, 
       return true
     },
   }
+  return store
 }

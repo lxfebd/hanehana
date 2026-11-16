@@ -295,10 +295,15 @@ export class Store {
 
   appendPlaySessions(sessions: PlaySession[]): void {
     if (!sessions.length) return
-    const all = [...this.loadPlaySessions(), ...sessions]
     // 只保留最近 2 年：统计页只需日/周/月粒度，无上限增长没有意义
     const cutoff = Date.now() - 730 * 86400000
-    this.sessionsStore.save(all.filter((s) => s.end >= cutoff))
+    // 必须走 update 而不是「load → 合并 → save」：load 只读盘上内容，读不到 400ms
+    // 合并窗口里的待写批次；两次追加撞进同一窗口时，后一次写回的是「盘上旧内容 +
+    // 第二次」，前一批被整份覆盖——游玩记录就这么丢的。
+    this.sessionsStore.update((prev) => {
+      const base = prev ?? this.loadPlaySessions()
+      return [...base, ...sessions].filter((s) => s.end >= cutoff)
+    })
   }
 
   /** 把三个域待写的内容立即落盘（进程退出前调用），不丢合并窗口里的最后一批。 */

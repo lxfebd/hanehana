@@ -36,6 +36,22 @@ test('save: 立即创建文件、不留 .tmp、可读回', () => {
   }
 })
 
+test('update: 读-改-写要看得到合并窗口里的待写内容（不能拿盘上旧值覆盖）', () => {
+  const dir = tempDir()
+  try {
+    const file = join(dir, 'u.json')
+    const s = createJsonStore<number[]>(file)
+    s.save([1])
+    // 不 flush：模拟两次追加落在同一个 400ms 合并窗口里
+    s.update((prev) => [...(prev ?? []), 2])
+    s.update((prev) => [...(prev ?? []), 3])
+    s.flush()
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), [1, 2, 3], '两次 update 都不能丢')
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test('save: 文件权限 0o600（便携模式防其他用户读到凭据）', () => {
   const dir = tempDir()
   try {
