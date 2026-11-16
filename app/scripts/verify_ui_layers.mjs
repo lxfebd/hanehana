@@ -137,7 +137,7 @@ const PAGES = [
   { name: 'collection', nav: '收藏夹', marker: '.collection-page', more: false, rail: false },
   { name: 'downloads', nav: '下载任务', marker: '.dl-layout', more: false, rail: false },
   { name: 'stats', nav: '统计', marker: '.stats-page', more: true, rail: false },
-  { name: 'games', nav: '游戏站', marker: '.games', more: true, rail: false },
+  { name: 'games', nav: '游戏站', marker: '.games', more: false, rail: false },
 ]
 
 // 全页面通用布局探针：横向溢出 + 主列（sidebar/content/aside）两两重叠 + 右栏空白 + 封面卡片重叠

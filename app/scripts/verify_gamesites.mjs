@@ -114,10 +114,8 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500))
     }
     await new Promise((r) => setTimeout(r, 800))
-    // 切到游戏站（侧栏「更多 → 游戏站」）
-    await ev(`(() => { const m = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('更多')); if (m) { m.click(); return 'ok' } return 'no-more' })()`)
-    await new Promise((r) => setTimeout(r, 500))
-    await ev(`(() => { const t = [...document.querySelectorAll('.more-menu .nav-item')].find(x => (x.textContent||'').includes('游戏站')); if (t) { t.click(); return 'ok' } return 'no-sites' })()`)
+    // 切到游戏站（侧栏一级入口「游戏站」——已从「更多」菜单提出来，对用户可见可点）
+    await ev(`(() => { const t = [...document.querySelectorAll('.sidebar .nav-item')].filter(x => !x.closest('.more-menu')).find(x => (x.textContent||'').includes('游戏站') || (x.textContent||'').includes('Sites')); if (t) { t.click(); return 'ok' } return 'no-sites' })()`)
     await new Promise((r) => setTimeout(r, 2000))
     const st = JSON.parse(
       await ev(`JSON.stringify((() => {

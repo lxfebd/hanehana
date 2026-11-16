@@ -175,6 +175,17 @@ function moreAction(fn: () => void): void {
       <span>{{ t('nav_downloads') }}</span>
       <span class="count">{{ runningCount }}</span>
     </button>
+    <!-- 游戏站（内嵌 webview 的站点浏览页）：原先收在「更多」里，等于没入口——
+         提为主栏一级入口，紧挨「下载任务」（浏览站点 → 投递下载是同一件事）。 -->
+    <button
+      class="nav-item"
+      :class="{ active: ui.page === 'games' }"
+      :aria-current="ui.page === 'games' ? 'page' : undefined"
+      @click="goPage('games')"
+    >
+      <Compass :size="16" class="nav-ic" />
+      <span>{{ t('nav_games') }}</span>
+    </button>
 
     <div class="nav-spacer"></div>
     <button class="nav-item" @click="library.scanOpen = true">
@@ -186,7 +197,8 @@ function moreAction(fn: () => void): void {
       <span>{{ t('nav_settings') }}</span>
     </button>
 
-    <!-- P1-4 更多：游戏站/统计/全屏/添加/Steam 收纳，只收不删 -->
+    <!-- P1-4 更多：统计/全屏/添加/Steam 收纳，只收不删
+         （游戏站已提到主栏一级入口：它是真页面、也是给新用户看的门面） -->
     <div class="more-wrap">
       <button
         class="nav-item more-toggle"
@@ -198,10 +210,6 @@ function moreAction(fn: () => void): void {
         <span>{{ t('nav_more') }}</span>
       </button>
       <div v-if="moreMenuOpen" class="more-menu glass">
-        <button class="nav-item" :class="{ active: ui.page === 'games' }" @click="goPage('games')">
-          <Compass :size="16" class="nav-ic" />
-          <span>{{ t('nav_games') }}</span>
-        </button>
         <button class="nav-item" :class="{ active: ui.page === 'stats' }" @click="goPage('stats')">
           <BarChart3 :size="16" class="nav-ic" />
           <span>{{ t('nav_stats') }}</span>
