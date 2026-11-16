@@ -206,7 +206,8 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
 <template>
   <aside class="detail-panel glass" :class="{ 'is-expanded': expanded }">
     <!-- 头部动作：整页展开 ⇄ 收回，以及把右栏整条收成窄条。
-         sticky + margin-bottom:-40px 让它浮在 banner 右上角，滚动时不跟着 content 走。 -->
+         浮在 banner 右上角、滚动时钉在面板顶部；用零高度浮层实现（见 .dp-head-actions
+         的注释），不再靠「按钮行高 28px + 负 margin」手算让位。 -->
     <div class="dp-head-actions">
       <template v-if="expanded">
         <button
@@ -317,8 +318,16 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
   /* 8px 列距：右栏各区块的间距 */
   gap: var(--hh-space-x2);
 }
-/* 头部动作组（展开整页 / 收成窄条）：sticky 让它浮在 banner 右上角，
-   滚动时不跟着内容走；负 margin 让 banner 顶上来，不占布局高度。 */
+/* 头部动作组（展开整页 / 收成窄条）：浮在 banner 右上角，滚动时仍钉在面板顶部
+   ——长简介滚下去也得随时能收栏/展开，所以 sticky 的滚动行为是故意的。
+   sticky 的约束矩形是面板**内容区**，top:0 就停在 padding 内侧，与旧写法一致。
+
+   旧写法是「sticky + margin-bottom:-40px」：40px = 按钮行 28px + 12，按钮尺寸一改
+   就得重算。现在改成**零高度浮层**：height:0 让锚点不占布局高度（banner 的位置
+   只由下面两个 token 决定，与按钮尺寸/个数无关），pointer-events:none 让 0 高锚点
+   不挡 banner 的点击，按钮自己开回 auto。margin-top 抵消的是「旧 -40 里那 -12px 的
+   净位移」：banner 距面板顶 = padding - 12 + gap，抽屉 12-12+8=8、整页 16-12+12=16，
+   与旧式的 12+28+8-40 / 16+28+12-40 逐像素一致（不滚动时按钮也仍在原位）。 */
 .dp-head-actions {
   position: sticky;
   top: 0;
@@ -326,8 +335,14 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
   align-self: flex-end;
   display: flex;
   gap: 6px;
-  margin-bottom: -40px;
   flex: none;
+  height: 0;
+  margin-top: calc(-1 * var(--hh-space-x3));
+  pointer-events: none;
+}
+/* 0 高锚点的按钮要自己开回命中测试，否则看得见点不到 */
+.dp-head-actions > .dp-icon-btn {
+  pointer-events: auto;
 }
 .dp-icon-btn {
   width: 28px;

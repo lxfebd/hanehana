@@ -23,6 +23,7 @@ import {
 } from 'lucide-vue-next'
 import { message } from 'ant-design-vue'
 import { library, openEdit, openScrape, refreshGames, toggleFavorite } from '../stores/library'
+import { useClickOutside } from '../composables/useClickOutside'
 import { t, tf } from '../i18n'
 
 /** 菜单目标（游戏 id）+ 屏幕坐标。null = 关着的。 */
@@ -31,6 +32,12 @@ const pos = ref({ x: 0, y: 0 })
 /** 菜单自身尺寸（定位后量），用来在贴边时翻转方向 */
 const menuW = ref(180)
 const menuH = ref(0)
+/**
+ * 菜单元素 ref：菜单 Teleport 到 body，量尺寸与「点外面收起」都用这个 ref，
+ * 不再 document.querySelector('.ctx-menu')——类名只负责样式，改名/换挂载点
+ * 不会让逻辑静默失效（querySelector 返回 null 只会「点外面不收」，不报错）。
+ */
+const menuRef = ref<HTMLElement | null>(null)
 
 const open = computed(() => target.value !== null)
 
@@ -47,7 +54,7 @@ function close(): void {
 
 // 贴边翻转：右边不够往左，下边不够往上
 function adjust(): void {
-  const el = document.querySelector('.ctx-menu') as HTMLElement | null
+  const el = menuRef.value
   if (!el) return
   const r = el.getBoundingClientRect()
   menuW.value = r.width
@@ -61,11 +68,14 @@ function adjust(): void {
 }
 
 // 关菜单的三个入口：左键、Esc、滚动（滚动时卡片会被虚拟化卸载，菜单必须跟着关）
-function onDocClick(e: MouseEvent): void {
-  if (!open.value) return
-  const menu = document.querySelector('.ctx-menu')
-  if (menu && !menu.contains(e.target as Node)) close()
-}
+// 左键：点菜单外任意处（保持原 capture 时序：先判断是否在菜单内，再执行点击目标自己的动作）
+useClickOutside(
+  menuRef,
+  () => {
+    if (open.value) close()
+  },
+  { capture: true },
+)
 function onKey(e: KeyboardEvent): void {
   if (e.key === 'Escape') close()
 }
@@ -74,13 +84,11 @@ function onScroll(): void {
 }
 
 onMounted(() => {
-  document.addEventListener('click', onDocClick, true)
   document.addEventListener('keydown', onKey, true)
   // capture + passive：滚动容器任何一层滚都关，不用逐个容器绑
   document.addEventListener('scroll', onScroll, true)
 })
 onBeforeUnmount(() => {
-  document.removeEventListener('click', onDocClick, true)
   document.removeEventListener('keydown', onKey, true)
   document.removeEventListener('scroll', onScroll, true)
 })
@@ -156,6 +164,7 @@ defineExpose({ showAt, close })
   <Teleport to="body">
     <div
       v-if="open"
+      ref="menuRef"
       class="ctx-menu glass"
       data-dialog="open"
       :style="{ left: pos.x + 'px', top: pos.y + 'px', minWidth: menuW + 'px' }"

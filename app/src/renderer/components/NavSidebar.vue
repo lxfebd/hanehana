@@ -27,6 +27,7 @@ import {
 import { library } from '../stores/library'
 import { downloads, openSettings } from '../stores/downloads'
 import { ui } from '../stores/ui'
+import { useClickOutside } from '../composables/useClickOutside'
 import { t } from '../i18n'
 
 const emit = defineEmits<{
@@ -129,15 +130,17 @@ onMounted(() => {
   window.addEventListener('resize', onResize)
 })
 
-/** 点菜单外任意处收起「更多」菜单 */
-function closeMore(e: MouseEvent): void {
-  const more = document.querySelector('.more-wrap')
-  const target = e.target as Node
-  if (moreMenuOpen.value && more && !more.contains(target)) moreMenuOpen.value = false
-}
-onMounted(() => document.addEventListener('click', closeMore))
+/**
+ * 「更多」菜单的外层容器。点外面由**本组件的元素 ref** 判断，不再
+ * document.querySelector('.more-wrap')：DOM 在哪判断就在哪，类名只负责样式。
+ */
+const moreWrapRef = ref<HTMLElement | null>(null)
+useClickOutside(moreWrapRef, () => {
+  if (moreMenuOpen.value) moreMenuOpen.value = false
+})
+
+/** 点外面收起由 useClickOutside 管；窗口尺寸监听的退订仍归本组件。 */
 onUnmounted(() => {
-  document.removeEventListener('click', closeMore)
   window.removeEventListener('resize', onResize)
 })
 
@@ -265,7 +268,7 @@ function moreAction(fn: () => void): void {
 
     <!-- P1-4 更多：统计/全屏/添加/Steam 收纳，只收不删
          （游戏站已提到主栏一级入口：它是真页面、也是给新用户看的门面） -->
-    <div class="more-wrap">
+    <div ref="moreWrapRef" class="more-wrap">
       <button
         class="nav-item more-toggle"
         :class="{ active: moreMenuOpen || ui.page === 'stats' }"

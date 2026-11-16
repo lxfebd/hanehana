@@ -9,6 +9,7 @@ import type { Game, GameProcessState, OverviewStats, ScrapeCandidate } from '../
 // ESM 之谜：带 .js 的 specifier，TS 映射回 .ts（与 tests 同一约定）
 import { isLaunching, isRunning } from '../../shared/processState.js'
 import { pickAuto, scoreCandidate } from '../../shared/scrapeScore.js'
+import type { I18nKey } from '../i18n'
 
 export const library = reactive({
   games: [] as Game[],
@@ -104,21 +105,23 @@ export type SmartListId = '' | 'recentPlayed' | 'recent30' | 'played10h' | 'unra
 
 export interface SmartListDef {
   id: SmartListId
-  label: string
+  /** i18n 键而不是中文字面量：下拉框切英文语言时标签跟着切（此前硬编码中文，
+   *  英文界面里只有这一栏永远是中文）。键名与 en.ts 一一对应，靠 Record 闸住。 */
+  labelKey: I18nKey
   test: (g: Game) => boolean
 }
 
 const DAY = 86400000
 
 export const SMART_LISTS: SmartListDef[] = [
-  { id: '', label: '全部游戏', test: () => true },
+  { id: '', labelKey: 'smart_all', test: () => true },
   // 最近游玩放第一位：日常最高频的入口是「昨天玩到哪」，不是「全部」。
   // 只收 30 天内玩过的，避免列表里混着一年前的单次记录。
-  { id: 'recentPlayed', label: '最近玩过', test: (g) => !!g.lastPlayed && Date.now() - g.lastPlayed <= 30 * DAY },
-  { id: 'recent30', label: '近 30 天入库', test: (g) => Date.now() - g.addedAt <= 30 * DAY },
-  { id: 'played10h', label: '攻略中（>10h）', test: (g) => g.playMs > 10 * 3600000 },
-  { id: 'unrated', label: '未评分', test: (g) => !g.rating },
-  { id: 'unplayed', label: '还没玩过', test: (g) => g.playMs <= 0 },
+  { id: 'recentPlayed', labelKey: 'smart_recent', test: (g) => !!g.lastPlayed && Date.now() - g.lastPlayed <= 30 * DAY },
+  { id: 'recent30', labelKey: 'smart_recent30', test: (g) => Date.now() - g.addedAt <= 30 * DAY },
+  { id: 'played10h', labelKey: 'smart_played10h', test: (g) => g.playMs > 10 * 3600000 },
+  { id: 'unrated', labelKey: 'smart_unrated', test: (g) => !g.rating },
+  { id: 'unplayed', labelKey: 'smart_unplayed', test: (g) => g.playMs <= 0 },
 ]
 
 export function smartListTest(id: SmartListId, g: Game): boolean {

@@ -455,12 +455,14 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <span v-if="fmtSub(item)" class="list-sub">{{ fmtSub(item) }}</span>
             </div>
           </div>
-          <!-- 右侧两列 caption tabular-nums：发行 / 时长（评分已移到行内徽章） -->
+          <!-- 右侧两列 caption tabular-nums：发行 / 时长（评分已移到行内徽章）。
+               时长列带语义类 .list-col-optional（窄视口退场列）：nth-child(2) 会随
+               模板列顺序漂移，列一增删隐掉的就是错的那列。 -->
           <div class="list-cols">
             <span v-if="item.releaseDate">{{ item.releaseDate }}</span>
             <span v-else></span>
-            <span v-if="fmtPlay(item.playMs)">{{ fmtPlay(item.playMs) }}</span>
-            <span v-else></span>
+            <span v-if="fmtPlay(item.playMs)" class="list-col-optional">{{ fmtPlay(item.playMs) }}</span>
+            <span v-else class="list-col-optional"></span>
           </div>
         </div>
       </template>
@@ -1108,9 +1110,11 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
   vertical-align: -1px;
 }
 
-/* 窄视口让位：次要列逐级退场，标题区永远保有足够宽度。时长列先退，最低只留发行年。 */
+/* 窄视口让位：次要列逐级退场，标题区永远保有足够宽度。时长列先退，最低只留发行年。
+   按语义类 .list-col-optional 隐藏（模板里时长列两分支都带）：nth-child(2) 绑的是
+   列的位置而不是身份，模板列顺序一改就隐错东西。断点与隐藏对象与旧实现一致。 */
 @media (max-width: 1100px) {
-  .list-cols span:nth-child(2) {
+  .list-cols .list-col-optional {
     display: none;
   }
 }

@@ -9,11 +9,13 @@
  *   - filteredCount / exportMenuOpen / doExport / clearMeta 属 App 级（导出走
  *     window.hh、计数来自 filteredGames），经 props/emit 传入
  */
+import { ref } from 'vue'
 import { Heart, LayoutGrid, List, Search, CheckSquare, ArrowUpFromLine, X } from 'lucide-vue-next'
 import { categories, enterSelectMode, library, SMART_LISTS } from '../stores/library'
+import { useClickOutside } from '../composables/useClickOutside'
 import { t } from '../i18n'
 
-defineProps<{
+const props = defineProps<{
   filteredCount: number
   exportMenuOpen: boolean
 }>()
@@ -22,7 +24,18 @@ const emit = defineEmits<{
   toggleExport: []
   export: [fmt: 'csv' | 'json']
   clearMeta: []
+  closeExport: []
 }>()
+
+/**
+ * 导出菜单的外层容器。点外面由**本组件自己的元素 ref** 判断，不再让 App.vue
+ * 用 document.querySelector('.export-wrap') 跨组件抓 DOM：菜单的 DOM 在这里，
+ * 判断也该在这里；App 只保留开关状态，收不收由这里通知（emit closeExport）。
+ */
+const exportWrapRef = ref<HTMLElement | null>(null)
+useClickOutside(exportWrapRef, () => {
+  if (props.exportMenuOpen) emit('closeExport')
+})
 
 /** 模板只写单方法调用（prettier 会拆多语句表达式） */
 </script>
@@ -63,9 +76,9 @@ const emit = defineEmits<{
       </button>
     </div>
 
-    <!-- 智能列表（动态筛选，Playnite 式） -->
+    <!-- 智能列表（动态筛选，Playnite 式）：文案走 i18n 键，不存中文标签 -->
     <select v-model="library.smartList" class="smart-select" :title="t('toolbar_smart')">
-      <option v-for="l in SMART_LISTS" :key="l.id" :value="l.id">{{ l.label }}</option>
+      <option v-for="l in SMART_LISTS" :key="l.id" :value="l.id">{{ t(l.labelKey) }}</option>
     </select>
 
     <button
@@ -92,7 +105,7 @@ const emit = defineEmits<{
     </button>
 
     <!-- G14 导出：主操作带文字（基准口径：图标 + 文字，不纯图标）+ 小菜单（CSV / JSON） -->
-    <div class="export-wrap">
+    <div ref="exportWrapRef" class="export-wrap">
       <button
         class="tool-btn labeled"
         :class="{ active: exportMenuOpen }"

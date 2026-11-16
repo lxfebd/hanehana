@@ -40,7 +40,21 @@ function inEditable(el: Element | null): boolean {
   return (el as HTMLElement).isContentEditable === true
 }
 
-/** 有任意弹层开着吗（antd Modal 的 .ant-modal-root + 自绘弹层的 [data-dialog="open"]）。 */
+/**
+ * 有任意弹层开着吗（antd Modal 的 .ant-modal-root + 自绘弹层的 [data-dialog="open"]）。
+ *
+ * 为什么这里还留着选择器（与 useClickOutside 的改造同源，但**这次不做**）：
+ *   1. antd 的 Modal.confirm 是命令式静态方法，浮层由 antd 自己挂到 body 的
+ *      .ant-modal-root，不在我们的组件树里——DialogShell 计数根本看不见它。
+ *      只把自绘弹层换成计数器，就会变成「计数器 + 选择器」两套权威，
+ *      比现在这一处选择器更难保证一致。
+ *   2. 自绘弹层分布在 DialogShell / ShortcutHelp / GameContextMenu(Teleport) /
+ *      BatchEditOverlay，且开合方式不统一（v-if、prop、computed），每个都要在
+ *      正确的生命周期 +1/-1 才能不漏计数；漏一次的表现是「Esc 在某个弹层里突然
+ *      不生效」，属于低频难复现的回归。
+ *   结论：等统一弹层栈（或 antd Modal 全部换成 DialogShell）时一起收口；
+ *   在那之前这里保持单一的 DOM 判据，只认 [data-dialog="open"] 这一个约定。
+ */
 function anyDialogOpen(): boolean {
   return !!document.querySelector('.ant-modal-root, [data-dialog="open"]')
 }

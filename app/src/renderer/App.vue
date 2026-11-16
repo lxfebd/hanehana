@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, provide, ref } from 'vue'
+import { computed, provide, ref } from 'vue'
 import { App as AntApp, ConfigProvider } from 'ant-design-vue'
 import zhCN from 'ant-design-vue/es/locale/zh_CN'
 import { X, ChevronLeft, Plus, ScanSearch } from 'lucide-vue-next'
@@ -93,17 +93,10 @@ function clearMeta(): void {
 }
 const addSubmitKey = ref(0)
 
-/** G14 导出菜单开关（工具栏箭头按钮下的小菜单：CSV / JSON） */
+/** G14 导出菜单开关（工具栏箭头按钮下的小菜单：CSV / JSON）。
+ *  「点外面收起」由 LibraryToolbar 自己的元素 ref 判断（见 useClickOutside）：
+ *  DOM 在哪个组件里，判断就放哪个组件，App 只留开关状态。 */
 const exportMenuOpen = ref(false)
-
-/** 点菜单外的任意处收起导出菜单（含切页/点工具栏其他按钮）。 */
-function closeExportMenu(e: MouseEvent): void {
-  const wrap = document.querySelector('.export-wrap')
-  const target = e.target as Node
-  if (exportMenuOpen.value && wrap && !wrap.contains(target)) exportMenuOpen.value = false
-}
-onMounted(() => document.addEventListener('click', closeExportMenu))
-onUnmounted(() => document.removeEventListener('click', closeExportMenu))
 
 /** G14 游戏库导出：调主进程弹保存对话框，成功后通知落盘位置 */
 async function doExport(fmt: 'csv' | 'json'): Promise<void> {
@@ -194,6 +187,7 @@ async function submitAddTask(input: {
                   :filtered-count="filteredCount"
                   :export-menu-open="exportMenuOpen"
                   @toggle-export="exportMenuOpen = !exportMenuOpen"
+                  @close-export="exportMenuOpen = false"
                   @export="doExport"
                   @clear-meta="clearMeta()"
                 />

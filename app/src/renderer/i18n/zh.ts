@@ -105,6 +105,13 @@ export const zh = {
   toolbar_list: '列表视图',
   toolbar_all: '全部',
   toolbar_smart: '智能列表',
+  // 智能列表下拉的标签（stores/library.ts 的 SMART_LISTS 持有键名，模板 t() 渲染）
+  smart_all: '全部游戏',
+  smart_recent: '最近玩过',
+  smart_recent30: '近 30 天入库',
+  smart_played10h: '攻略中（>10h）',
+  smart_unrated: '未评分',
+  smart_unplayed: '还没玩过',
   lib_empty: '游戏库还是空的',
   lib_empty_hint: '点「扫描导入」选择游戏目录，自动识别 exe 入库',
   lib_scan: '扫描导入',
