@@ -10,7 +10,6 @@
  * PUT 上传 / GET 下载 / MKCOL 建目录 / PROPFIND 列清单，不引第三方依赖。
  * 冲突策略：比较两端 mtime，新者胜；同一时刻的冲突保留 .conflict-<ts> 副本。
  */
-import { createHash } from 'node:crypto'
 import {
   copyFileSync,
   createWriteStream,
@@ -27,6 +26,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import type { BackupStats, CloudSyncResult, Game, SnapshotInfo } from '../shared/types'
 import { isSaveFile, webdavUrlError, relToRemote, bigBodyRe } from './saveRules'
 import { dataDir } from './store'
+import { sha1File } from '../shared/sha1File'
 
 // ---------------------------------------------------------------- 类型
 
@@ -80,14 +80,21 @@ export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
 
   const files: SnapshotMeta['files'] = []
   let totalBytes = 0
+  let skipped = 0
   for (const rel of rels) {
     const abs = join(srcDir, rel)
     try {
       const st = statSync(abs)
       if (!st.isFile()) continue
-      // 超过哈希上限的文件（超大 .dat 资源包）不进快照：备份它既 OOM 风险又无价值
-      if (st.size > MAX_HASH_BYTES) continue
-      const sha1 = hashFile(abs)
+      // 分块算 sha1，不再按体积跳过：几百 MB 的存档资源包也照进快照。
+      // 旧实现的「> 200MB 直接 continue」等于「备份报告成功、恢复时才发现少文件」。
+      // 摘要只供人工核对，算不出来不阻止备份（文件本身仍要拷）。
+      let sha1 = ''
+      try {
+        sha1 = sha1File(abs)
+      } catch {
+        /* 摘要失败不阻止备份 */
+      }
       files.push({ rel, size: st.size, sha1 })
       totalBytes += st.size
       // 目标子目录
@@ -95,10 +102,12 @@ export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
       mkdirSync(dirname(dst), { recursive: true })
       copyFileSync(abs, dst)
     } catch {
-      // 单个文件被占用/删除跳过，不整批失败
+      // 单文件被占用/删除：跳过，但留痕（不再是静默丢）
+      skipped += 1
       continue
     }
   }
+  if (skipped > 0) console.warn(`[hanehana] 存档快照跳过 ${skipped} 个文件（被占用或不可读）`)
 
   if (files.length === 0) {
     // 一个文件都没备份到：目录里可能全是本体。还是留个 meta 说明，避免恢复时空目录
@@ -217,21 +226,8 @@ function collectTree(dir: string, relStart: string, out: string[]): void {
   }
 }
 
-/** 单文件哈希上限：超过视为资源文件（.dat 资源包常达几百 MB），跳过不备份。 */
-const MAX_HASH_BYTES = 200 * 1024 * 1024
-
-function hashFile(p: string): string {
-  // 先看大小再读：超大文件整读进内存会拖垮主进程（OOM 是整个应用一起死），
-  // 而几百 MB 的资源包本就不该进存档快照。
-  try {
-    const size = statSync(p).size
-    if (size > MAX_HASH_BYTES) return ''
-  } catch {
-    return ''
-  }
-  const buf = readFileSync(p)
-  return createHash('sha1').update(buf).digest('hex')
-}
+// 哈希实现见 shared/sha1File.ts：1 MiB 分块，内存与文件大小无关，
+// 因此这里不再有「超过多少 MB 就不备份」的分支。
 
 // ---------------------------------------------------------------- 快照列出/恢复/删除
 

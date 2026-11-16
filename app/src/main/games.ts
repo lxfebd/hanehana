@@ -14,6 +14,7 @@ import { dupKeyOf as dupKeyRaw } from './dupKey'
 import { backfillLocalCovers, adoptLocalCover } from './localCover'
 import { backfillLocalIcons, adoptLocalIcon } from './localIcon'
 import { scanDir, isValidDir } from './scanner'
+import { isAbnormalExit } from '../shared/exitCode'
 import type { Game, GameVariant, GameProcessState, PlaySession, SteamImportResult } from '../shared/types'
 
 /**
@@ -285,11 +286,10 @@ export interface CrashRecord {
 }
 const recentCrashes = new Map<string, CrashRecord>()
 
-// signal 参数保留位置（调用方按位传），但当前判定只看退出码：信号终止同样是非 0。
-function recordExit(id: string, title: string, dir: string, code: number | null, _signal: string | null): void {
-  // 正常退出：code 0 或 null（用户自己关窗口）；异常：非 0 退出码 / 信号终止
-  const abnormal = code !== 0 && code !== null
-  if (abnormal) {
+// 异常 = 非 0 退出码，或被信号终止。信号终止时 Node 的 code 是 null、signal 才有值，
+// 所以判定必须以 signal 为准（旧实现写成 code !== null 把崩溃当成了正常退出）。
+function recordExit(id: string, title: string, dir: string, code: number | null, signal: string | null): void {
+  if (isAbnormalExit(code, signal)) {
     recentCrashes.set(id, { title, dir })
     crashNotifier?.({ title, dir })
   }
@@ -542,8 +542,8 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
         const ms = now - since
         updateGame(id, { playMs: g.playMs + ms, lastPlayed: now })
         recordSession(id, g.title, since, now)
-        // 正常退出（非 0 不算崩）：自动备份已开启 → 后台快照
-        if (autoBackupFn && (code === 0 || code === null)) {
+        // 只在正常退出后自动备份：崩溃/被信号杀时备份的是写坏的现场
+        if (autoBackupFn && !isAbnormalExit(code, signal)) {
           const fresh = getGame(id)
           if (fresh?.backupEnabled) autoBackupFn({ ...fresh, playMs: fresh.playMs })
         }

@@ -21,7 +21,7 @@
  *     item-view 是绝对定位 transform，居中必须收窄「定位坐标系」本身，
  *     不能靠 item 内 padding。
  */
-import { computed, inject, onBeforeUnmount, onMounted, ref, type Ref } from 'vue'
+import { computed, inject, onBeforeUnmount, onMounted, ref, watch, type Ref } from 'vue'
 import { RecycleScroller } from 'vue-virtual-scroller'
 import 'vue-virtual-scroller/dist/vue-virtual-scroller.css'
 import { Activity, Check, EyeOff, Flower2, Heart, Loader2, Star } from 'lucide-vue-next'
@@ -69,6 +69,10 @@ function onCardContext(e: MouseEvent, g: Game): void {
 
 const emit = defineEmits<{ select: [id: string] }>()
 const games = computed(() => props.games)
+/** 换成另一批卡片（筛选/重建）时清空失败记录：允许重新尝试一次。 */
+watch(games, () => {
+  brokenImgs.value = new Set()
+})
 const selected = computed(() => library.selectedId)
 /** 库里根本没有游戏（而非被筛选过滤光）——两种空态文案不同 */
 const filteredEmpty = computed(() => library.games.length === 0)
@@ -187,10 +191,14 @@ function click(g: Game, idx: number): void {
   emit('select', g.id)
 }
 
-/** 缩略图加载失败：隐藏破图，露出底下的占位字母/占位色 */
-function imgErr(e: Event): void {
-  const img = e.target as HTMLImageElement
-  img.style.display = 'none'
+/** 加载失败的图（状态而不是 DOM）。
+ * RecycleScroller 会复用卡片 DOM：命令式给 <img> 写 display:none 之后 Vue 并不知道，
+ * 下一个滑进视口的正常封面会沿用这块被隐藏的节点——封面从此消失，且只在滚动/切筛选后
+ * 复现。banner 那边已经踩过同一个坑（DetailBanner 的注释就是在记它）。
+ * key = 图种前缀 + 游戏 id：缩略图与图标分开记，一张失败不影响另一张。 */
+const brokenImgs = ref(new Set<string>())
+function markImgBroken(key: string): void {
+  brokenImgs.value.add(key)
 }
 
 /** 临时显示某款 NSFW 封面（点击遮盖层，单次解除；切换筛选/重建后重置）。
@@ -303,11 +311,24 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
             @contextmenu.prevent="onCardContext($event, it.g)"
           >
             <div class="cover-thumb" :style="{ background: placeholderBg(it.g) }">
-              <img v-if="thumbUrl(it.g)" :src="thumbUrl(it.g)" loading="lazy" :alt="it.g.title" @error="imgErr" />
+              <img
+                v-if="thumbUrl(it.g) && !brokenImgs.has('t:' + it.g.id)"
+                :src="thumbUrl(it.g)"
+                loading="lazy"
+                :alt="it.g.title"
+                @error="markImgBroken('t:' + it.g.id)"
+              />
               <!-- 无封面：主色底 + 渐变层 + 大字标题占位（海报占位，不是糊图） -->
               <template v-else>
                 <div class="cover-poster-grad" aria-hidden="true"></div>
-                <img v-if="iconUrl(it.g)" class="cover-icon" :src="iconUrl(it.g)" loading="lazy" :alt="it.g.title" @error="imgErr" />
+                <img
+                  v-if="iconUrl(it.g) && !brokenImgs.has('i:' + it.g.id)"
+                  class="cover-icon"
+                  :src="iconUrl(it.g)"
+                  loading="lazy"
+                  :alt="it.g.title"
+                  @error="markImgBroken('i:' + it.g.id)"
+                />
                 <span v-else class="cover-letter" :style="{ fontSize: posterFont(it.g.title) + 'px' }" :title="it.g.title">{{ it.g.title }}</span>
               </template>
 
@@ -322,7 +343,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               </div>
 
               <!-- 压暗渐变只给真图用：占位色块上画只会糊出一团灰雾 -->
-              <div v-if="thumbUrl(it.g)" class="cover-shade"></div>
+              <div v-if="thumbUrl(it.g) && !brokenImgs.has('t:' + it.g.id)" class="cover-shade"></div>
 
               <!-- 封面左下叠徽章（基准库图口径）：评分 星+分数，同排排名 #N；深色 scrim 上白字 -->
               <div v-if="it.g.rating" class="cover-badges">
@@ -396,8 +417,21 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
           @keydown="onKeydown($event, index)"
         >
           <div class="list-thumb" :style="{ background: placeholderBg(item) }">
-            <img v-if="thumbUrl(item)" :src="thumbUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
-            <img v-else-if="iconUrl(item)" class="list-icon" :src="iconUrl(item)" loading="lazy" :alt="item.title" @error="imgErr" />
+            <img
+              v-if="thumbUrl(item) && !brokenImgs.has('t:' + item.id)"
+              :src="thumbUrl(item)"
+              loading="lazy"
+              :alt="item.title"
+              @error="markImgBroken('t:' + item.id)"
+            />
+            <img
+              v-else-if="iconUrl(item) && !brokenImgs.has('i:' + item.id)"
+              class="list-icon"
+              :src="iconUrl(item)"
+              loading="lazy"
+              :alt="item.title"
+              @error="markImgBroken('i:' + item.id)"
+            />
             <span v-else class="list-letter">{{ item.title.slice(0, 1) }}</span>
             <div v-if="runningGames.has(item.id)" class="list-running">
               <Activity :size="10" :stroke-width="2.5" />
