@@ -10,11 +10,14 @@
 - **`will-navigate` 放行所有 `file:`**（`app/src/main/index.ts`）：渲染层一次 XSS 就能把整窗导航到任意本地 HTML，而那页同样拿得到 preload 暴露的 `window.hh`。白名单收窄到打包入口 `index.html` 的精确路径。
 - **`Ipc.OpenDir` 可执行任意程序**（`app/src/main/games.ts`）：`shell.openPath` 对 exe 是「运行」，而 `OpenDir` 是 IPC 面、此前没有任何路径闸门。补目录判定，非目录直接拒绝。
 - **写盘失败会崩掉主进程**（`app/src/main/jsonStore.ts`）：合并写定时器与 `flush()` 里的 `writeNow` 没有 try/catch，磁盘满 / 被杀软占用时异常冒成 `uncaughtException`（窗口与下载列表全没）。现在捕获后保留 `dirty+pending` 重试并记日志。
+- **引擎换代停不住旧代 worker**（`engine-rs/src/main.rs`）：`run` 换代时把共享的 `cancelled` 清回 false 新 worker 才能跑，这同时等于替旧代放行；旧代只在写进度时比对 gen，fetch 循环照跑到段尾 —— 快速 pause→run 会出现两代 worker 同时写同一区间，Windows 上旧句柄未关还会让 `finalize` 的 rename 撞共享冲突。现在换代时对旧 Arc 置真并换全新 Arc，worker 在 tick 与 fetch 返回处都比对 gen，不一致立即退出。
+- **游玩会话被 400ms 合并窗口覆盖**（`app/src/main/store.ts` + `jsonStore.ts`）：`appendPlaySessions` 原走「load（读盘）→ 合并 → save」，读不到合并窗口里的 pending；两次追加撞进同一窗口时前一批整份丢失。`jsonStore` 新增 `update(fn)`（有待写内容以它为准），追加改走它；补一条「两次 update 不许丢」的单测。
 
 ### 变更
 
 - **正则搜索不再逐条编译**（`app/src/renderer/stores/library.ts`）：`matchSearch` 原先对每款游戏 `new RegExp`，万级库每次键入编译上万次；改为 `filteredGames` 编译一次后传入。
 - **列表视图 key 提到 computed**（`app/src/renderer/components/CoverGrid.vue`）：原写在模板表达式里，每次重渲染（hover / 滚动 / 定时刷新）都全库 `join('|')` 一遍。
+- **下载线程数绝对上限 64**（`engine-rs/src/main.rs`）：`threads` 原先只按 `total / MIN_SEGMENT` 夹，10 GB 传 1024 就是 4 万段 / 4 万个 `.part` 句柄 / 4 万条连接；`run` 与 `set_threads` 两处都夹到 64。
 
 ### 测试与闸门
 
@@ -24,6 +27,9 @@
 - **`reg_all.mjs` 逃生阀语义**：`--no-layers` / `--no-download` 跳过步骤时打印 `REGRESSION PARTIAL PASS` 并以 exit 3 结束（此前的 ALL PASS + exit 0 会把「跳过」记成「绿」）。
 - **CI 补层叠闸**（`.github/workflows/ci.yml`）：PR 增加 `regression:layers`。
 - **发版前置闸**（`.github/workflows/release.yml`）：新增 tag 与 `app/package.json` 版本一致性校验，并补跑 `npm test` + `regression:static`。
+- **CDP 探针不再假红**（`app/scripts/lib/probePort.mjs` + 31 个脚本）：写死 93xx 端口 + `proc.kill()` 只杀 Electron 主进程，会让下一个脚本连上**上一个实例**并读到别人的数据（实测 `verify_download_view` 扫描时 rows=0、单跑 rows=6）。改为 `pickFreePort()`（bind 0 向系统要端口）+ `killTree()`（`taskkill /T /F`）。全量扫描 20 条视觉闸：20 GREEN / 0 RED，跑完无残留进程。
+- **下载 e2e 重启断言去竞态**（`app/scripts/e2e_download.mjs`）：硬杀跳过了 `before-quit` 的 flush，`tasks.json` 是 400ms 合并写，「重启后任务还在」变成掷骰子。改为 CDP `Browser.close` 走正常退出、等旧进程真退出再启新实例（否则撞单实例锁），并给 `send()` 补 3s 超时（`Browser.close` 在回包前就断连，原先会把整个脚本挂死）。连续两次 30/30。
+
 ## [0.2.22] - 2026-11-08
 
 > 一次「先用眼睛、再用工具、最后审查代码」的大版本维护发布：视觉走查 + 全功能 CDP 验收修掉 6 个真 bug；随后对整个代码库做了四轮静态审查（engine-rs / 主进程 46 文件 / 扩展与 native messaging 全链 / 站点适配器），修掉 1 个 critical（引擎暂停→继续会把已下进度全部清零重下）、2 个 high 与一批 medium/low；全部改动编译、单测（应用 138 + Rust 31+7）、回归闸门（8/32/23/35）绿后才入库。
