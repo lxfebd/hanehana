@@ -165,6 +165,20 @@ async fn emit(tx: &mpsc::UnboundedSender<Value>, v: Value) {
     let _ = tx.send(v);
 }
 
+/// 组一条「反映当前状态」的 progress 快照事件：`seq` 是产生这帧状态的那条命令的序号。
+///
+/// 为什么序号必须跟着快照走而不是在写出时统一贴：事件先入通道、写出是另一条任务，
+/// 写的时候再读「最新序号」会把一帧属于旧命令的快照贴上一条新命令的标签——等于把
+/// 要修的问题原样搬到了写侧。所以序号在**生成**这帧快照时就被钉住。
+fn snap_event(g: &Task) -> Value {
+    json!({"event":"progress","data":g.snapshot(),"seq":g.state_seq})
+}
+
+/// probe 的第一条应答：此刻 Task 还没建出来，序号只能直接取命令自己的。
+fn preparing_event(seq: u64) -> Value {
+    json!({"event":"progress","data":{"state":"preparing"},"seq":seq})
+}
+
 struct Task {
     url: String,
     dest: String,
@@ -194,6 +208,12 @@ struct Task {
     /// （后台校验），避免引擎长驻时跨任务串味。
     id: u64,
     state: String,
+    /// 产生当前 `state` 的那条命令的序号（主进程派发，见 protocol.rs 的 `Cmd::seq`）。
+    ///
+    /// 每条状态类命令（probe/run/resume/pause/stop）在开头覆盖它，随后这一代产生的
+    /// 所有 progress 快照都回带它。主进程据此丢弃「属于更早命令」的迟到回执——
+    /// 不再需要拿「看门狗还在不在」去猜一帧 paused 该不该认。
+    state_seq: u64,
     error: String,
     /// 与 `error` 原文配套的稳定错误码 / 参数。界面按码查文案，原文只留作排查凭据。
     error_code: String,
@@ -561,6 +581,10 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
     let mut attempt = 0usize;
     // 连续截断次数，单独计数：`attempt` 成功就会归零，但截断是累积证据。
     let mut trunc_streak: u32 = 0;
+    // 停滞兜底的两个锚点：最后一次「全局已下字节确实增长」的时刻，以及那一刻的字节数。
+    // 网络级错误无限重试，这一对是「多久没增长就该收场」的唯一证据。
+    let mut stall_at = Instant::now();
+    let mut stall_bytes = 0u64;
     // 连续「服务器无视 Range、要求从段首重下」的次数。对首段（start==0）重下即成功，
     // 计数不会累积；但若某段起点非 0 且服务器每次都无视 Range，重下也无法自愈，
     // 累计到阈值就升级成 fatal，避免无限空转的死循环。
@@ -797,6 +821,42 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                     }
                     return;
                 }
+                // ---- 停滞兜底：给「无限重试」一个下界 ----
+                // 网络抖动自愈靠无限重试是对的，但「每次都失败、且全局一个字节都没
+                // 多下」的组合不是抖动，是死链路（站点换出口、本机换了网络、隧道
+                // 掉了）。这种状态重试一万次结果都一样，还把任务永远钉在
+                // downloading。判据用**全局** downloaded 而不是本段：某一段反复
+                // 失败时别的段可能还在推进，整体没有停滞就不该判死。
+                let global = task.lock().await.downloaded();
+                if global > stall_bytes {
+                    // 有字节落账：重开窗口，从这一次失败重新计时。
+                    stall_bytes = global;
+                    stall_at = Instant::now();
+                } else if stalled(attempt, stall_at.elapsed()) {
+                    let mut g = task.lock().await;
+                    if g.gen == gen {
+                        if let Some(s) = g.segments.get_mut(index) {
+                            s.status = "error".into();
+                        }
+                        g.fail(
+                            // 复用 no_reply 而不是造新码：errors.ts 的码表不在引擎
+                            // 侧可改范围，no_reply（「服务器迟迟不响应」）正是这个
+                            // 场景的用户视角文案，advice 也已经是「检查网络后重试」。
+                            "no_reply",
+                            format!(
+                                "stalled: no byte progress for {}s after {} retries (last: {})",
+                                stall_at.elapsed().as_secs(),
+                                attempt,
+                                e.msg
+                            ),
+                            json!({
+                                "stalled_secs": stall_at.elapsed().as_secs(),
+                                "attempts": attempt,
+                            }),
+                        );
+                    }
+                    return;
+                }
                 // 无限重试：下载任务该断多久就能续多久。
                 attempt += 1;
                 tokio::time::sleep(retry_backoff(attempt, index)).await;
@@ -826,6 +886,21 @@ fn retry_backoff(attempt: usize, index: usize) -> Duration {
     let phase = ((attempt * 7 + index * 13) % 5) as u64;
     let jitter = 80 + phase * 5; // 80%..100%
     Duration::from_secs((base * jitter / 100).max(1))
+}
+
+/// 判定「整条链接已经停滞」所需的连续失败次数。按退避封顶 30s 算约 2 分钟，
+/// 足以排除单次抖动、公共 DNS 短暂故障这类自愈型错误。
+const STALL_ATTEMPTS: usize = 8;
+/// 判定「整条链接已经停滞」所需的零增长窗口。必须显著大于退避封顶（30s）：
+/// 窗口比一次退避还短的话，正常重试的间隙就会被误判成停滞、把还能救的任务打死。
+const STALL_WINDOW: Duration = Duration::from_secs(5 * 60);
+
+/// 停滞判据（纯函数，便于测试）：连续失败次数够了**且**这段窗口里全局字节没增长。
+///
+/// 两个条件缺一不可：只看次数会误伤「隔几分钟失败一次、其余时间正常」的连接；
+/// 只看时间会让刚启动就失败、但此前一直正常的任务立刻被判死。
+fn stalled(attempts: usize, since_last_growth: Duration) -> bool {
+    attempts >= STALL_ATTEMPTS && since_last_growth >= STALL_WINDOW
 }
 
 /// 长度未知（探测不出 `Content-Length`、也没有真正的 206）时的驱动：一条流顺序读到 EOF。
@@ -1118,7 +1193,7 @@ async fn handle(
             // 第一条应答的形状不能改：主进程靠 `state=="preparing"` 区分「还在探测」，
             // 且这条里的 total 是上一轮继承的旧值——任何依赖 total 的放行
             // 只能落在下面那条 `state == "idle"` 的完整快照上。
-            let _ = emit(&tx, json!({"event":"progress","data":{"state":"preparing"}})).await;
+            let _ = emit(&tx, preparing_event(cmd.seq)).await;
             // 校验和参数先解析：格式不对/算法不支持就当场报错，
             // 别等几十 GB 下完才说校不了。
             let checksum = match parse_checksum(&cmd.checksum) {
@@ -1173,6 +1248,9 @@ async fn handle(
                 rate: Arc::new(Mutex::new(Bucket::new(rate_kbps))),
                 id: NEXT_TASK_ID.fetch_add(1, Ordering::Relaxed),
                 state: "idle".into(),
+                // probe 也是状态类命令：它产出的 idle 快照必须带自己的序号，
+                // 否则主进程分辨不出「这是这条 probe 的应答」还是上一轮遗留的回执。
+                state_seq: cmd.seq,
                 error: String::new(),
                 error_code: String::new(),
                 error_params: Value::Null,
@@ -1188,12 +1266,15 @@ async fn handle(
                 sidecar_lock: Arc::new(Mutex::new(())),
             };
             t.build_segments();
-            let snap = t.snapshot();
-            let _ = emit(&tx, json!({"event":"progress","data":snap})).await;
+            let _ = emit(&tx, snap_event(&t)).await;
             *task = Some(Arc::new(Mutex::new(t)));
         }
         "run" | "resume" => {
             if let Some(t) = task.clone() {
+                // run/resume 是状态类命令：先记序号，这一命令产出的所有快照都回带它。
+                // 放在改任何任务字段之前——晚于 set_rate 之类的话，中间那帧快照
+                // 会顶着旧命令的序号出去，主进程会把它当迟到回执丢掉。
+                t.lock().await.state_seq = cmd.seq;
                 // run/resume 也接受限速与校验参数，但只在字段真的给了的情况下才改：
                 // 一条裸 `{"cmd":"run"}` 不该把 probe 设好的限速抹成不限速。
                 if let Some(kbps) = cmd.rate_limit_kbps {
@@ -1294,14 +1375,23 @@ async fn handle(
                     g.clear_error();
                     gen = g.gen;
                 }
-                let snap = t.lock().await.snapshot();
-                let _ = emit(&tx, json!({"event":"progress","data":snap})).await;
+                // 取序号与快照必须在同一把锁里完成：中间插进一条 pause 就会把
+                // 「downloading 的快照」贴上 pause 的序号，主进程认它、界面就会
+                // 显示成「已暂停」却还在跑。
+                let msg = {
+                    let g = t.lock().await;
+                    snap_event(&g)
+                };
+                let _ = emit(&tx, msg).await;
                 spawn_workers(t.clone(), gen).await;
             }
         }
         "pause" => {
             if let Some(t) = task.clone() {
                 let mut g = t.lock().await;
+                // 状态类命令：先认领序号再改状态。这一帧 paused 因此带的是
+                // 「pause 命令」的序号，主进程能确定它就是自己刚发的这条的应答。
+                g.state_seq = cmd.seq;
                 g.paused.store(true, Ordering::Relaxed);
                 for s in &mut g.segments {
                     // 速度归零：暂停后 on_tick 不再推进快照（state != downloading），
@@ -1317,7 +1407,7 @@ async fn handle(
                 // 而 worker 会在下一个 tick（≤100ms）内 drop 掉 in-flight 请求退出。
                 // 暂停后 tick 停止，必须 now 立即落盘（降频会漏掉最后 1 秒水位）。
                 g.save_sidecar_now();
-                let _ = emit(&tx, json!({"event":"progress","data":g.snapshot()})).await;
+                let _ = emit(&tx, snap_event(&g)).await;
             }
         }
         "stop" => {
@@ -1325,6 +1415,7 @@ async fn handle(
                 let mut g = t.lock().await;
                 // stop 是“不保留进度”：除了让 worker 退出，还要清掉 sidecar
                 // 和已记录的分段偏移，否则下一次 run 会从半路接着下。
+                g.state_seq = cmd.seq;
                 g.gen += 1;
                 g.cancelled.store(true, Ordering::Relaxed);
                 g.paused.store(true, Ordering::Relaxed);
@@ -1332,7 +1423,7 @@ async fn handle(
                 g.clear_error();
                 g.speed = 0.0;
                 discard_progress(&mut g).await;
-                let _ = emit(&tx, json!({"event":"progress","data":g.snapshot()})).await;
+                let _ = emit(&tx, snap_event(&g)).await;
             }
         }
         "set_threads" => {
@@ -1362,7 +1453,9 @@ async fn handle(
                         g.save_sidecar_now();
                     }
                 }
-                let _ = emit(&tx, json!({"event":"progress","data":g.snapshot()})).await;
+                // 非状态类命令：快照里的 state 仍是上一次状态类命令定的，序号也就
+                // 沿用 `state_seq`——主进程只把它和「最近一条状态类命令」比对，对得上。
+                let _ = emit(&tx, snap_event(&g)).await;
             }
         }
         "set_rate" => {
@@ -1375,12 +1468,20 @@ async fn handle(
                 if let Some(kbps) = kbps {
                     t.lock().await.set_rate(kbps).await;
                 }
-                let _ = emit(&tx, json!({"event":"progress","data":t.lock().await.snapshot()})).await;
+                let msg = {
+                    let g = t.lock().await;
+                    snap_event(&g)
+                };
+                let _ = emit(&tx, msg).await;
             }
         }
         "stats" => {
             if let Some(t) = task.clone() {
-                let _ = emit(&tx, json!({"event":"progress","data":t.lock().await.snapshot()})).await;
+                let msg = {
+                    let g = t.lock().await;
+                    snap_event(&g)
+                };
+                let _ = emit(&tx, msg).await;
             }
         }
         other => {
@@ -1440,10 +1541,10 @@ async fn on_tick(
                     Some(error_event(vr.code, &e, &vr.params))
                 }
             };
-            let snap = g.snapshot();
+            let snap = snap_event(&g);
             drop(g);
             *last_speed_at = Instant::now();
-            emit(&tx, json!({"event":"progress","data":snap})).await;
+            emit(&tx, snap).await;
             if let Some(m) = msg {
                 emit(&tx, m).await;
             }
@@ -1478,11 +1579,11 @@ async fn on_tick(
                 g.state = "done".into();
                 finalize(&mut g).await
             };
-            let snap = g.snapshot();
+            let snap = snap_event(&g);
             drop(g);
             *last_downloaded = st.1;
             *last_speed_at = Instant::now();
-            emit(&tx, json!({"event":"progress","data":snap})).await;
+            emit(&tx, snap).await;
             if let Some(m) = msg {
                 emit(&tx, m).await;
             }
@@ -1527,9 +1628,9 @@ async fn on_tick(
     }
     *last_downloaded = st.1;
     *last_speed_at = Instant::now();
-    let snap = g.snapshot();
+    let snap = snap_event(&g);
     drop(g);
-    emit(&tx, json!({"event":"progress","data":snap})).await;
+    emit(&tx, snap).await;
     if let Some(m) = finish_msg {
         emit(&tx, m).await;
     }
@@ -2049,5 +2150,36 @@ mod tests {
         assert_eq!(recompute_segment(0, 3999, &old), 2500);
         // 新段 [2400,3099]：段2已下载区 [2000,2500) 交得 [2400,2500)=100；段3无。
         assert_eq!(recompute_segment(2400, 3099, &old), 100);
+    }
+
+    // ---- 命令序号：状态类回执必须原样带回（对应缺陷 4 / 主进程的缺陷 3）----
+    #[test]
+    fn state_events_carry_command_seq() {
+        // probe 的第一条应答在 Task 建出来之前发出（那时候还没有 state_seq 字段），
+        // 序号只能直接取命令自己的：主进程靠它把这条应答和刚发出的 probe 对上。
+        let ev = preparing_event(17);
+        assert_eq!(ev["event"], "progress");
+        assert_eq!(ev["data"]["state"], "preparing");
+        assert_eq!(ev["seq"], 17);
+        // 旧主进程根本不发 seq（Cmd::seq 缺省 0）：回执里的 0 就是「这条命令没带序号」，
+        // 主进程据此走兼容路径，不能把 0 当成一条正常的自增序号去比对。
+        assert_eq!(preparing_event(0)["seq"], 0);
+        // 序号必须是顶层字段：主进程的 switch 只看 msg.event/msg.data，把 seq 塞进
+        // data 里会跟着快照一起被摊进 TaskSnapshot（多出一个没人认识的键）。
+        assert!(ev.get("data").unwrap().get("seq").is_none());
+    }
+
+    // ---- 停滞兜底：两个条件缺一不可 ----
+    #[test]
+    fn stall_needs_both_attempts_and_idle_window() {
+        // 次数到了但时间不够：刚失败几次就判死会误伤「隔一会儿掉一次」的慢站点。
+        assert!(!stalled(STALL_ATTEMPTS, STALL_WINDOW - Duration::from_secs(1)));
+        // 时间够但次数不够：0 字节状态才刚出现，可能只是还没有第一块数据。
+        assert!(!stalled(STALL_ATTEMPTS - 1, STALL_WINDOW));
+        // 两个条件同时满足才是停滞。
+        assert!(stalled(STALL_ATTEMPTS, STALL_WINDOW));
+        assert!(stalled(STALL_ATTEMPTS + 5, STALL_WINDOW * 2));
+        // 窗口必须显著大于退避封顶，否则每次正常重试的间隙都会被算成停滞。
+        assert!(STALL_WINDOW > Duration::from_secs(RETRY_BACKOFF_CAP * 2));
     }
 }

@@ -29,6 +29,14 @@ pub struct Cmd {
     /// 完成后校验和，空 = 不校验（不产生任何额外磁盘读）。
     /// 形如 `"sha256:<hex>"` / `"sha1:<hex>"` / `"md5:<hex>"`，裸 64 位十六进制按 sha256 处理。
     #[serde(default)] pub checksum: String,
+    /// 命令序号：主进程为每条命令自增派发，引擎在「状态类」回执里原样带回。
+    ///
+    /// 为什么协议里必须有它：主进程的 pause/resume 都是「先改本地状态、再发命令」，
+    /// 两条命令连着发时引擎会按顺序各回一帧快照。没有序号，晚到的那一帧（其实属于
+    /// 前一条命令）与刚发出命令的应答长得一模一样，主进程只能拿定时器猜它是谁——
+    /// 猜错就把「已恢复」打回「已暂停」，也就是所谓「两个真理源」。
+    /// 缺省 0 = 旧主进程（完全不带这个字段），回执里的 0 由主进程按旧行为处理。
+    #[serde(default)] pub seq: u64,
 }
 
 /// Read one line from stdin into `buf`.
@@ -106,5 +114,18 @@ mod tests {
         let c: Cmd = serde_json::from_str(r#"{"cmd":"pause","headers":{"X-Foo":"bar"}}"#).unwrap();
         assert_eq!(c.cmd, "pause");
         assert_eq!(c.headers.get("X-Foo").map(String::as_str), Some("bar"));
+    }
+
+    #[test]
+    fn cmd_seq_defaults_to_zero_and_round_trips() {
+        // 旧主进程一条 seq 都不发：必须照样解析成功，0 表示「这条命令没带序号」。
+        let c: Cmd = serde_json::from_str(r#"{"cmd":"pause"}"#).unwrap();
+        assert_eq!(c.seq, 0);
+        // pause/resume/stop/run 都带自增序号，引擎得原样记住它（见 Task::state_seq）。
+        let c: Cmd = serde_json::from_str(r#"{"cmd":"run","seq":42}"#).unwrap();
+        assert_eq!(c.seq, 42);
+        // serde 只看字段名：seq 放在 cmd 前面也一样。
+        let c: Cmd = serde_json::from_str(r#"{"seq":7,"cmd":"stop"}"#).unwrap();
+        assert_eq!(c.seq, 7);
     }
 }

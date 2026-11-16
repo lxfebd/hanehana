@@ -22,8 +22,19 @@ import { engineProxyFor } from './netConfig'
 import { dataDir } from './store'
 import { consumeLines } from './engineLines'
 
-/** 暂停/停止命令的确认等待上限。超时按「引擎没听见」处理，见 pause()/discard()。 */
-const PAUSE_ACK_MS = 1500
+/** 暂停兜底看门狗的一轮窗口（毫秒），见 pause()。
+ *
+ *  为什么是 9 秒而不是原来的 1.5 秒：1.5 秒只覆盖「引擎没回确认」这一种情况，
+ *  而引擎正忙（分段卡着 socket 读、上一条 probe 还在跑）时几秒不回确认完全正常。
+ *  真正该判死的是「引擎一动不动」：它正常时每 100ms 就吐一帧进度，9 秒内连
+ *  一个字节的 progress 事件都没有，只可能是进程卡死/被挂起。窗口再放大到分钟级
+ *  只会把「点了暂停、速率还在涨」拖成用户眼里的另一个 bug。 */
+const PAUSE_STALL_MS = 9000
+/** 上面那轮窗口最多重复几次（含首轮），见 pause()。
+ *  必须有上限：引擎活着但一直不认 pause（例如正卡在一条长 probe 里）时，
+ *  无限等等于没有看门狗，任务会永远停在「已暂停」而没人收场。3 轮 ≈ 27 秒，
+ *  超过就只能记 warn 放弃——继续/重试都会重新拉起进程，用户还有路可走。 */
+const PAUSE_STALL_MAX_ROUNDS = 3
 /** 引擎子进程意外退出（崩溃/卡死）时的会话内自动重拉：上限与退避毫秒。
  *  断点（.part + sidecar）还在，重拉后 probe 会读回 sidecar 从断点续传，
  *  所以过程性故障不需要人工点「重试」。 */
@@ -35,6 +46,38 @@ const STOP_ACK_MS = 1000
  *  （HEADERS_TIMEOUT 30s）串行最坏 70s，60s 会把慢但健康的服务器误判成
  *  engine_hang（每轮 60s、三次后落 error，用户看到「引擎挂死」其实是服务器慢）。 */
 const PROBE_TIMEOUT_MS = 120_000
+
+/**
+ * 线上命令的形状：`EngineCommand` + 自增序号。
+ *
+ * 为什么不把 `seq` 加进 `EngineCommand`（shared/types.ts）：那个文件是主/渲染共用的
+ * 协议契约，本次改动只允许碰 engine.ts 与引擎源码。序列化时把 seq 拼进去就够了，
+ * 读端按可选字段解析（见 handleEvent），旧引擎忽略不认识的字段。
+ */
+type SequencedCommand = EngineCommand & { seq: number }
+
+/**
+ * 引擎 → 主进程的事件 + 可选序号。
+ *
+ * `seq` 缺省表示这是个不回带序号的旧引擎二进制；带了就是「这帧状态属于哪条命令」的
+ * 身份证，见 handleEvent 的核对逻辑。
+ */
+type SequencedEvent = EngineEvent & { seq?: number }
+
+/**
+ * 把子进程的退出码/信号翻成一句人话（日志与错误文案共用）。
+ *
+ * 三分法对应用户和排查者完全不同的下一步：`code=0` 是流程自己走完了（多半是协议层
+ * 意外：命令还没发完管道就 EOF 了），非 0 是程序内部出错（引擎的 panic 兜底固定
+ * exit 101），`signal` 是被外部打死（SIGSEGV/OOM killer/手动 kill）。只写一句
+ * 「意外退出」等于把这三条线索一起丢掉——而这正是崩溃任务唯一可查的病因。
+ */
+function describeExit(code: number | null, signal: NodeJS.Signals | null): string {
+  if (signal) return `被信号终止 signal=${signal}`
+  if (code === null) return '退出码未知（没有 code 也没有 signal）'
+  if (code === 0) return '正常退出 code=0'
+  return `异常退出 code=${code}`
+}
 
 /** 定位 fastdrop-engine 可执行文件。 */
 export function enginePath(): string {
@@ -132,6 +175,24 @@ export class EngineTask {
   private writeBuf: Buffer[] = []
   private draining = false
   private stdoutBuf = ''
+  /**
+   * 命令序号源：每条发出的命令 +1（见 send()）。
+   *
+   * 引擎会把序号原样贴回它产出的状态快照。没有这个号，主进程分不清「这条 paused
+   * 是刚才那条 pause 的应答」还是「上一轮遗留的迟到回执」——以前只能靠「看门狗
+   * 还在不在」猜，猜错就把「已恢复」打回「已暂停」，等于两个真理源。
+   */
+  private cmdSeq = 0
+  /** 最近一条**状态类**命令（probe/run/pause/stop）的序号。带 seq 的状态回执只有与它相等才被接受，见 handleEvent。 */
+  private expectedStateSeq = 0
+  /**
+   * 最后一次收到「带 downloaded 的进度事件」的时间戳。
+   *
+   * 暂停看门狗的判据之一：引擎正常时每 100ms 吐一帧，9 秒一帧都没有才算卡死。
+   * 用**收到事件**而不是「本地状态没变」来判定，是因为本地状态本来就不可信——
+   * pause() 会先乐观地置成 paused，之后再拿它当证据就是循环论证。
+   */
+  private lastProgressAt = 0
   /** probe 发出后的心跳看门狗，见 sendStartCommands()。 */
   private probeWatchdog: ReturnType<typeof setTimeout> | null = null
   /** 挂在 stdin 上的 drain 回调（flush 里 once 注册的）。terminate 时摘掉，避免泄漏。 */
@@ -204,6 +265,22 @@ export class EngineTask {
     return this.snap ?? emptySnap(this.url, this.dest, this.state)
   }
 
+  /**
+   * 日志里能出现的 URL 摘要：只留 host + pathname。
+   *
+   * 不记 query：Cloudreve 预签名直链、站点跳转链接的 query 段可能携带一次性
+   * 签名/令牌，落盘等于泄漏可复用凭证。stderr 与退出日志共用这一份，
+   * 免得两处各写一套规则、悄悄漂移。
+   */
+  private logTarget(): string {
+    try {
+      const u = new URL(this.url)
+      return u.host + u.pathname
+    } catch {
+      return this.url.slice(0, 80)
+    }
+  }
+
   private spawnProc(): void {
     // 只认「确实还活着」的进程。子进程已经退出、close 事件却还没送达时，
     // 句柄是非空但管道是死的——这时必须重新 spawn，否则命令全丢进死管道。
@@ -241,16 +318,7 @@ export class EngineTask {
     // 用 appendFileSync 逐块写会无限膨胀（长跑任务断线重试一次能刷出几百条）；
     // 这里每块先过 logAppend 的长度闸门——超上限只保留尾部，日志文件有界。
     proc.stderr?.on('data', (d: Buffer) => {
-      // 日志里只记 host+pathname，不记 URL query：Cloudreve 预签名直链、
-      // 站点跳转链接的 query 段可能携带一次性签名/令牌，落盘等于泄漏可复用凭证。
-      let hostPath = this.url
-      try {
-        const u = new URL(this.url)
-        hostPath = u.host + u.pathname
-      } catch {
-        hostPath = this.url.slice(0, 80)
-      }
-      logAppend(`[engine ${hostPath}] ${d.toString('utf8')}`)
+      logAppend(`[engine ${this.logTarget()}] ${d.toString('utf8')}`)
     })
 
     proc.stdout?.setEncoding('utf8')
@@ -270,7 +338,7 @@ export class EngineTask {
       this.setError(`引擎启动失败: ${e.message}`, 'engine_spawn_failed')
       this.setState('error')
     })
-    proc.on('close', () => {
+    proc.on('close', (code, signal) => {
       // 只处理当前这个实例。retry 会先杀旧进程再立刻 spawn 新的，旧 child 的
       // close 事件晚一拍到达；不判断就会把新进程的句柄清掉，任务从此卡死。
       if (this.proc !== proc) return
@@ -286,38 +354,45 @@ export class EngineTask {
       // 子进程意外退出（非 stop 触发）视为失败。必须把 error 原文/码写进快照
       // 再改状态——否则用户只看到「失败」两个字，没有病因可查（此前只
       // setState('error')，快照里 error 是空的，界面报不出为什么）。
-      if (this.state !== 'done' && this.state !== 'cancelled') {
-        // 过程性故障（进程崩溃/卡死）先自动重拉：断点还在，run(true) 重 spawn 后
-        // probe 会读回 sidecar 从断点续传。次数用完再落 error 交给用户手动重试。
-        if (this.autoRetryCount < MAX_ENGINE_AUTO_RETRY) {
-          this.autoRetryCount++
-          const delay = AUTO_RETRY_DELAYS_MS[Math.min(this.autoRetryCount, AUTO_RETRY_DELAYS_MS.length) - 1]
-          const note = `引擎进程意外退出，${delay / 1000}s 后自动重试（${this.autoRetryCount}/${MAX_ENGINE_AUTO_RETRY}）`
-          this.setError(note, 'engine_exited')
-          this.snap = {
-            ...(this.snap ?? emptySnap(this.url, this.dest, this.state)),
-            error: note,
-            error_code: 'engine_exited',
-            error_params: null,
-          }
-          this.emitProgress()
-          this.autoRetryTimer = setTimeout(() => {
-            this.autoRetryTimer = null
-            this.run(true)
-          }, delay)
-          return
-        }
-        const reason = '引擎进程意外退出，请重试'
-        this.setError(reason, 'engine_exited')
+      if (this.state === 'done' || this.state === 'cancelled') return
+      // 退出原因必须进日志和错误：崩溃任务的唯一病因就在这里。以前 close 回调
+      // 不收 (code, signal)，「被 SIGSEGV 打死」和「自己 exit 0 走完」在日志里
+      // 长得一模一样，重拉 3 次之后用户只剩一句「意外退出」可看。
+      const why = describeExit(code, signal)
+      logAppend(`[engine ${this.logTarget()}] 子进程退出：${why}（state=${this.state}）`)
+      // 落到快照里的是结构化参数，界面按 error_code 查文案、params 留给排查，
+      // 原文里带上人话分类——直接看任务详情也能知道是崩溃还是被杀。
+      const exitParams: ErrorParams = { exit_code: code, signal }
+      // 过程性故障（进程崩溃/卡死）先自动重拉：断点还在，run(true) 重 spawn 后
+      // probe 会读回 sidecar 从断点续传。次数用完再落 error 交给用户手动重试。
+      if (this.autoRetryCount < MAX_ENGINE_AUTO_RETRY) {
+        this.autoRetryCount++
+        const delay = AUTO_RETRY_DELAYS_MS[Math.min(this.autoRetryCount, AUTO_RETRY_DELAYS_MS.length) - 1]
+        const note = `引擎进程意外退出（${why}），${delay / 1000}s 后自动重试（${this.autoRetryCount}/${MAX_ENGINE_AUTO_RETRY}）`
+        this.setError(note, 'engine_exited', exitParams)
         this.snap = {
-          ...(this.snap ?? emptySnap(this.url, this.dest, 'error')),
-          error: reason,
+          ...(this.snap ?? emptySnap(this.url, this.dest, this.state)),
+          error: note,
           error_code: 'engine_exited',
-          error_params: null,
+          error_params: exitParams,
         }
-        this.forceState('error')
         this.emitProgress()
+        this.autoRetryTimer = setTimeout(() => {
+          this.autoRetryTimer = null
+          this.run(true)
+        }, delay)
+        return
       }
+      const reason = `引擎进程意外退出（${why}），请重试`
+      this.setError(reason, 'engine_exited', exitParams)
+      this.snap = {
+        ...(this.snap ?? emptySnap(this.url, this.dest, 'error')),
+        error: reason,
+        error_code: 'engine_exited',
+        error_params: exitParams,
+      }
+      this.forceState('error')
+      this.emitProgress()
     })
   }
 
@@ -389,19 +464,24 @@ export class EngineTask {
         // 挂死（不退出、不报事件）。挂死的任务永远占着并发槽，排队任务整队
         // 卡死——超时就按失败处理，断点保留，用户点「继续」重新拉起进程。
         this.armProbeWatchdog()
-        this.send({
-          cmd: 'probe',
-          url: this.url,
-          dest: this.dest,
-          threads: this.threads,
-          proxy: this.effectiveProxy,
-          user_agent: this.userAgent,
-          // 任务专属请求头（扩展投递来的 Cookie / Referer）：引擎把它当客户端默认头。
-          // 空对象也照发，引擎侧按「没有自定义头」处理。
-          headers: this.headers,
-          rate_limit_kbps: this.rateLimitKbps,
-          checksum: this.checksum,
-        })
+        // probe 也是状态类命令：它回的 idle 快照带自己的 seq，主进程据此知道
+        // 「这条应答属于刚发的 probe」，而不是上一轮遗留的旧帧。
+        this.send(
+          {
+            cmd: 'probe',
+            url: this.url,
+            dest: this.dest,
+            threads: this.threads,
+            proxy: this.effectiveProxy,
+            user_agent: this.userAgent,
+            // 任务专属请求头（扩展投递来的 Cookie / Referer）：引擎把它当客户端默认头。
+            // 空对象也照发，引擎侧按「没有自定义头」处理。
+            headers: this.headers,
+            rate_limit_kbps: this.rateLimitKbps,
+            checksum: this.checksum,
+          },
+          true,
+        )
         return
       }
       // run 也带上限速与校验和：同一个子进程可能被 resume/pause 反复拉起，
@@ -438,14 +518,17 @@ export class EngineTask {
   /** 发 run 命令（带上本轮的限速、校验和与请求头）。失败就地报成 error，不让它静默卡住。 */
   private sendRun(): void {
     try {
-      this.send({
-        cmd: 'run',
-        rate_limit_kbps: this.rateLimitKbps,
-        checksum: this.checksum,
-        // 引擎的 client 在 probe 时建好并复用，run 里的头通常不生效；
-        // 但引擎若在 run 时重建 client，这条就是它的唯一来源——两头都放最稳。
-        headers: this.headers,
-      })
+      this.send(
+        {
+          cmd: 'run',
+          rate_limit_kbps: this.rateLimitKbps,
+          checksum: this.checksum,
+          // 引擎的 client 在 probe 时建好并复用，run 里的头通常不生效；
+          // 但引擎若在 run 时重建 client，这条就是它的唯一来源——两头都放最稳。
+          headers: this.headers,
+        },
+        true,
+      )
     } catch (e) {
       this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
       this.setState('error')
@@ -454,28 +537,73 @@ export class EngineTask {
 
   pause(): void {
     if (this.state !== 'downloading' && this.state !== 'preparing') return
+    // 记下暂停发生前是不是真的在跑：只有跑着的任务才有「流量得停下来」这回事。
+    // 准备中暂停不需要这个看门狗——那段时间引擎本来就不吐进度，判据会把
+    // 「正在等一条 40s 的 HEAD」的健康进程当成卡死，而真挂死的 probe 由
+    // armProbeWatchdog（120s）在下次继续下载时收场。
+    const wasDownloading = this.state === 'downloading'
     this.clearAutoRetryTimer()
     this.autoRetryCount = 0
     this.setState('paused')
     try {
-      this.send({ cmd: 'pause' })
+      // 状态类命令：带 seq，并把它记为「当前期望的回执」，见 handleEvent。
+      this.send({ cmd: 'pause' }, true)
     } catch (e) {
       this.setError(e instanceof Error ? e.message : String(e), 'engine_unavailable')
       this.setState('error')
       return
     }
     // 兜底：分段正卡在 socket 读上时，引擎可能几秒都不回暂停确认，而界面已经
-    // 写着「已暂停」、速率却还在涨——用户看到的正是「暂停没用」。1.5s 没等到
-    // 确认就终止进程。不发 stop，所以 .part 与 sidecar 都留着，继续下载能接着下。
-    this.clearPauseWatchdog()
-    this.pauseWatchdog = setTimeout(() => {
-      this.pauseWatchdog = null
-      if (this.state === 'paused') this.terminate()
-    }, PAUSE_ACK_MS)
+    // 写着「已暂停」、速率却还在涨——用户看到的正是「暂停没用」。
+    // 判据不是「多久没确认」而是「多久没有任何动静」：真卡死的进程安静得像块砖，
+    // 忙着的健康引擎至少还在吐进度帧。不发 stop，所以 .part 与 sidecar 都留着，
+    // 继续下载能接着下。
+    if (wasDownloading) this.armPauseWatchdog()
   }
 
-  /** 暂停确认看门狗，见 pause()。任何离开 paused 的路径都必须清掉它。 */
+  /** 暂停兜底看门狗，见 pause()。任何离开 paused 的路径都必须清掉它。 */
   private pauseWatchdog: ReturnType<typeof setTimeout> | null = null
+  /** 暂停看门狗已经跑过的轮数（含首轮），见 pauseStallCheck()。 */
+  private pauseWatchdogRounds = 0
+
+  /**
+   * 挂上暂停看门狗：每 PAUSE_STALL_MS 检查一次，见 pause()。
+   *
+   * 为什么必须两轮以上而不是一轮就杀：第一轮只能说「这一刻没动静」，而引擎在
+   * 处理上一条命令（probe 的 HEAD 最长 40s）时确实可以几秒不发事件。多等一轮
+   * 才能把「暂时忙」和「彻底卡死」分开。
+   */
+  private armPauseWatchdog(): void {
+    this.clearPauseWatchdog()
+    this.pauseWatchdogRounds = 0
+    this.pauseStallCheck()
+  }
+
+  private pauseStallCheck(): void {
+    this.pauseWatchdog = setTimeout(() => {
+      this.pauseWatchdog = null
+      // 用户已经继续/取消：这条看门狗的语义（保证暂停真的停住）已经不成立了。
+      if (this.state !== 'paused') return
+      if (Date.now() - this.lastProgressAt > PAUSE_STALL_MS) {
+        // 既没等到确认、这一整段窗口里也没有任何进度事件 = 引擎进程卡死。
+        // terminate 不发 stop，断点保留在 .part + sidecar 里，用户点「继续」
+        // 会重新拉起进程从断点续传。
+        this.terminate()
+        return
+      }
+      this.pauseWatchdogRounds++
+      if (this.pauseWatchdogRounds >= PAUSE_STALL_MAX_ROUNDS) {
+        // 还有事件在流，说明进程活着，只是 pause 迟迟没被处理到。再等下去也
+        // 等不到答案，而无限等等于没有看门狗——记一条 warn 收手，交给用户
+        // （继续/重试都会重新拉起进程）。
+        logAppend(
+          `[engine ${this.logTarget()}] 暂停确认 ${PAUSE_STALL_MS * PAUSE_STALL_MAX_ROUNDS}ms 未到，但仍有进度事件，放弃看门狗（state=${this.state}）`,
+        )
+        return
+      }
+      this.pauseStallCheck()
+    }, PAUSE_STALL_MS)
+  }
   /** 引擎进程意外退出的自动重拉计数与计时器，见 spawnProc 的 close 处理。 */
   private autoRetryCount = 0
   private autoRetryTimer: ReturnType<typeof setTimeout> | null = null
@@ -571,7 +699,8 @@ export class EngineTask {
     const proc = this.proc
     if (proc && proc.exitCode === null && proc.signalCode === null) {
       try {
-        this.send({ cmd: 'stop' })
+        // 状态类命令（stop 会把任务翻成 idle）：带 seq，回执才认得出是谁的。
+        this.send({ cmd: 'stop' }, true)
       } catch {
         // 进程可能已经退出
       }
@@ -623,18 +752,26 @@ export class EngineTask {
   /**
    * 写一行命令到 stdin。引擎按行解析，不做流式。
    *
+   * 每条命令都带自增 `seq`；`stateClass = true` 的命令（probe/run/resume/pause/stop）
+   * 还会被记成「当前期望的回执序号」——引擎回带同一个号，主进程据此认领或丢弃
+   * 迟到的状态回执（见 handleEvent）。序号在**发出去之前**就记下：命令一旦进了
+   * 管道，引擎随时可能回话，晚一步记就会把这条自己的应答当成别人的丢弃。
+   *
    * 必须同步落笔：调用方（stop/kill/pause）紧接着就 proc.kill()。
    * 之前这里把字节塞进 writeBuf、用 setImmediate 到下一个 tick 才写，于是
    * 「发 stop」和「杀进程」之间隔了一个事件循环轮次——stop 永远没机会进管道，
    * 引擎被 SIGTERM 直接打死，来不及把分段进度写回 .part.meta，重启后已下的
    * 部分只能重下。
    */
-  private send(cmd: EngineCommand): void {
+  private send(cmd: EngineCommand, stateClass = false): void {
     const stdin = this.proc?.stdin
     if (!stdin || !stdin.writable) {
       throw new Error('引擎进程不可用')
     }
-    this.writeBuf.push(Buffer.from(JSON.stringify(cmd) + '\n', 'utf8'))
+    const seq = ++this.cmdSeq
+    if (stateClass) this.expectedStateSeq = seq
+    const wire: SequencedCommand = { ...cmd, seq }
+    this.writeBuf.push(Buffer.from(JSON.stringify(wire) + '\n', 'utf8'))
     this.flush()
   }
 
@@ -677,9 +814,9 @@ export class EngineTask {
   }
 
   private handleEvent(line: string): void {
-    let msg: EngineEvent
+    let msg: SequencedEvent
     try {
-      msg = JSON.parse(line) as EngineEvent
+      msg = JSON.parse(line) as SequencedEvent
     } catch {
       return // 非 JSON 行（引擎的诊断输出）忽略
     }
@@ -687,6 +824,25 @@ export class EngineTask {
     switch (msg.event) {
       case 'progress': {
         const data = msg.data ?? {}
+        // 引擎还活着、还在报字节：先记时间，再看回执新旧。
+        // 为什么放在序号核对**之前**：迟到的旧回执同样证明进程没挂死，而暂停
+        // 看门狗要区分的正是「引擎慢但活着」和「引擎整个卡住」——把过期的生命
+        // 信号也丢掉，就会把慢引擎误判成卡死。
+        if (typeof data.downloaded === 'number') this.lastProgressAt = Date.now()
+        // ---- 回执序号核对 ----
+        // 引擎回带 seq（见 send()），主进程只认「最近一条状态类命令」的那一条。
+        // 迟到的旧回执整帧丢弃：它反映的是更早命令执行时的事实，摊进快照会让
+        // downloaded/segments 一起回跳，只丢 state 又会把两代数据混着用。
+        // seq 缺失 = 旧版引擎二进制（不认识这个字段）：退化为原来的行为，
+        // 见下面 legacy 分支。
+        const seq = typeof msg.seq === 'number' ? msg.seq : null
+        const legacySeq = seq === null || seq === 0
+        if (data.state && !legacySeq && seq !== this.expectedStateSeq) {
+          logAppend(
+            `[engine ${this.logTarget()}] 丢弃迟到的旧回执：seq=${seq}，期望 ${this.expectedStateSeq}（state=${data.state}）`,
+          )
+          break
+        }
         // preparing 阶段只发 {"state":"preparing"}，其余字段全缺。用空快照打底
         // 再覆盖，保证 UI 依赖的键永远存在——否则行刷新会在 snap.progress 上炸。
         const cur: TaskSnapshot = {
@@ -721,14 +877,15 @@ export class EngineTask {
           // 上：状态要是退成排队中，用户在这毫秒级窗口点暂停会被 pause() 直接 return
           // 掉，命令却照样发出去——所以这一段对外一律显示准备中。
           let ns: TaskSnapshot['state'] = this.pendingRun && data.state === 'idle' ? 'preparing' : data.state
-          // 迟到的暂停确认不算数：pause() 先置 paused 再发命令，用户紧接着点
-          // 「继续」会连带发 run；引擎处理完 pause 才回的 {"state":"paused"} 到达
-          // 时任务已经在恢复途中，拿它改状态会把「正在跑」打回「已暂停」，
-          // UI 上看到的就是「我按了继续它还是停着」。看门狗还挂着 = 仍在等这条
-          // 确认，这时才认；恢复路径已经把看门狗清了，迟到的这条直接忽略——
-          // 保持当前状态（preparing/downloading 都如实），等下一条真正的
-          // 带 state 的 progress 再纠正。
-          if (ns === 'paused' && !this.pauseWatchdog) {
+          // 兼容路径（旧版引擎二进制，回执里没有 seq）：序号核对没法用，只能保留
+          // 旧启发式——pause() 先置 paused 再发命令，用户紧接着点「继续」会连带
+          // 发 run；引擎处理完 pause 才回的 {"state":"paused"} 到达时任务已经在
+          // 恢复途中，拿它改状态会把「正在跑」打回「已暂停」。看门狗还挂着 = 仍在
+          // 等这条确认，这时才认；恢复路径已经把看门狗清了，迟到的这条按当前状态
+          // 处理（UI 不变），等下一条真正带 state 的 progress 再纠正。
+          // 这条路径只对不认序号的旧二进制生效；新引擎由上面的 seq 核对负责，
+          // 不再需要拿「看门狗在不在」猜——那等于给状态机开了第二个真理源。
+          if (legacySeq && ns === 'paused' && !this.pauseWatchdog) {
             ns = this.state
           }
           cur.state = ns
