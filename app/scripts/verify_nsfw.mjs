@@ -2,11 +2,12 @@
 // 点击遮盖层临时显示（解除遮盖）。对标 ReinaManager 的 NSFW 遮盖功能。
 // 用法：node scripts/verify_nsfw.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9403
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.nsfw-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -157,14 +158,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

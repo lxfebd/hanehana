@@ -2,12 +2,13 @@
 // .hero-meta 含「本周 · 总计」（home_hero_meta）、.hero-recent-chip 出现
 // （旧 4 行统计卡与 .hs-prog 续读条已退役）
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9353
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.hero-stats-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 const seed = spawnSync(process.execPath, [join(APP_ROOT, 'scripts', 'seed_layout.mjs'), DATA_DIR], { cwd: APP_ROOT, stdio: ['ignore', 'inherit', 'inherit'] })
@@ -45,7 +46,7 @@ async function main() {
     ck('旧统计卡/续读进度条已退役', st.old === 0, 'old=' + st.old)
     console.log('  kicker:', st.kicker, '| meta:', st.meta, '| chips:', st.chips)
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
-  } finally { ws.close(); proc.kill() }
+  } finally { ws.close(); killTree(proc) }
 }
-main().catch((e) => { console.error(e); console.error(stderr.slice(-1500)); try { proc.kill() } catch {} ; process.exit(1) })
+main().catch((e) => { console.error(e); console.error(stderr.slice(-1500)); try { killTree(proc) } catch {} ; process.exit(1) })
 

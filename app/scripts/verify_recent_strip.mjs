@@ -4,11 +4,12 @@
 // 否则动态流滑不动——曾因 flex item 的 stretch 高度不是 definite height 而整条不滚）。
 // 用法：node scripts/verify_recent_strip.mjs（启动页即 home，无需导航）
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9395
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.recent-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -198,14 +199,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

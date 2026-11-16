@@ -1,11 +1,12 @@
 // 新作追踪验证：订阅关键词 → 回读列表 → 真实检查 VNDB（README 宣称功能）
 // 用法：node scripts/verify_track.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9405
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.track-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -131,14 +132,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1500))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

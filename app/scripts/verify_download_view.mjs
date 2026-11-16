@@ -1,11 +1,12 @@
 // 下载页渲染质量验证：seed 6 任务 → 切到下载页 → 任务行/进度条/状态 chip/筛选齐全
 // 用法：node scripts/verify_download_view.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9393
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.dl-view-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -136,14 +137,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

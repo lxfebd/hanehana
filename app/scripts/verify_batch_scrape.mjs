@@ -2,11 +2,12 @@
 // 真实调批量刮削流程，断言两款都能刮出候选（YMGal 命中中文、VNDB 命中英文）并落库。
 // 用法：node scripts/verify_batch_scrape.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync, readFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9381
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.batch-scrape-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -188,14 +189,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1500))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

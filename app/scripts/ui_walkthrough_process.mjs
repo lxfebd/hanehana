@@ -7,6 +7,7 @@
 //  D1 onProcessChanged 推送能收到（状态机真的在广播）
 //  E1 '启动中' 只在 starting 态出现，不会永久卡住（收尾防护）
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -14,7 +15,7 @@ import { deflateSync } from 'node:zlib'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const PORT = 9325
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.ui-proc-data')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 

@@ -2,11 +2,12 @@
 // → scrapeApply → 读回 games.json 的 coverPath/thumbPath/color，确认封面真的落库。
 // 用法：node scripts/verify_scrape_apply.mjs
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9349
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.scrape-apply-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(join(DATA_DIR, 'covers'), { recursive: true })
@@ -178,7 +179,7 @@ async function main() {
     }
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 
@@ -187,7 +188,7 @@ main().catch((e) => {
   console.error('--- stderr tail ---')
   console.error(stderr.slice(-2000))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

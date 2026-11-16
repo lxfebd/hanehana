@@ -3,12 +3,13 @@
 // 断言封面回填（adoptLocalCover）→ 封面墙 img 真实渲染。
 // 用法：node scripts/verify_scan_cover.mjs
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync, existsSync } from 'node:fs'
 import { deflateSync } from 'node:zlib'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9391
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.scan-cover-data')
 const GAME_DIR = join(APP_ROOT, '.scan-cover-game')
 for (let i = 0; i < 5; i++) {
@@ -194,14 +195,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

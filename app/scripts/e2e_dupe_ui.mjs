@@ -1,13 +1,14 @@
 // E2E：同款不同目录 → 判重后 dupe 明细回给 UI，且「也加进来」真能入库。
 // 场景即用户机器实测：G:\ggame 与 F:\gg 各放同一批游戏。
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const PORT = 9283
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.dupe-ui')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(DATA_DIR, { recursive: true })

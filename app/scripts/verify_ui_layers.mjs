@@ -6,11 +6,12 @@
 //       node scripts/verify_ui_layers.mjs --all  —— 全量视口扫描（窗口下限 960x600 ~ 4K）
 // 覆盖的浮层：右键菜单 / 导出下拉 / 更多菜单 / 设置对话框 / 快捷键帮助 / 详情整页 / 批量浮条。
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
 
 const APP_ROOT = process.cwd()
-const PORT = 9423
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.uilayer-data')
 const SHOTS = join(APP_ROOT, '.shots', 'uilayer')
 const ALL = process.argv.includes('--all')
@@ -410,14 +411,14 @@ async function main() {
     if (fail > 0) process.exitCode = 1
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

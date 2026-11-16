@@ -6,11 +6,12 @@
 //   - 收藏切换交互正常（乐观更新 + 回读）
 // 高频界面（用户点封面必看）。用法：node scripts/verify_detail_panel.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9389
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.detail-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -273,14 +274,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

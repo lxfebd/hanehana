@@ -2,13 +2,14 @@
 // 数对话框里真实渲染出的结果卡（.result-card DOM 节点），并截屏给我自己看。
 // 数据隔离在 .uiwalk-data（配合 index.ts 的 userData 隔离，不会撞用户开着的安装版）。
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const PORT = 9312
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.uiwalk-data')
 const SHOTS = join(APP_ROOT, '.shots')
 rmSync(DATA_DIR, { recursive: true, force: true })

@@ -1,11 +1,12 @@
 // 验证 ScrapeDialog：ymgal 徽章样式 + 候选封面悬浮缩放存在
 // 用法：node scripts/verify_scrape_dialog_ui.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9373
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.scrape-dialog-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -187,14 +188,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1500))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

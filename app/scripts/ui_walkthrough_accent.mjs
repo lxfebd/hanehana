@@ -10,13 +10,14 @@
 //  E1 切预设主题风格时 accent 保留（两条轴解耦）
 //  F  无 renderer 异常
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const PORT = 9319
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.ui-accent-data')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 

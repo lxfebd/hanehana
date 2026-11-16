@@ -8,6 +8,7 @@
 //  E 书架板：封面墙 .cover-card 下 .cover-shelf 存在
 // 阶段2（重写 seed 为全无封面，重启 app）：C 空态分支：.hero 不渲染
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -15,7 +16,7 @@ import { deflateSync } from 'node:zlib'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const PORT = 9313
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.ui-hero-data')
 const SHOTS = join(APP_ROOT, '.shots')
 const SHOTS2 = join(APP_ROOT, '.shots', 'hero-themes')

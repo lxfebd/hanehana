@@ -4,11 +4,12 @@
 // 见文件末尾断言——曾因 flex:1 写在 display:block 父级上而整页滑不动）。
 // 用法：node scripts/verify_cover_render.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync, readFileSync, existsSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9385
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.cover-render-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -229,14 +230,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1500))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

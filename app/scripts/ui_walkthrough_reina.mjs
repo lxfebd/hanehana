@@ -7,11 +7,12 @@
 // 用法：node scripts/ui_walkthrough_reina.mjs（须先 npm run build）
 // 截图落盘：app/.shots/reina/（基准图在「不要上传…」夹，逐屏人比对）。
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9355
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.reina-data')
 const SHOTS = join(APP_ROOT, '.shots', 'reina')
 for (let i = 0; i < 5; i++) {
@@ -190,7 +191,7 @@ async function main() {
     await shot('05-collection')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
   process.exit(0)
 }
@@ -199,7 +200,7 @@ main().catch((e) => {
   console.error('--- stderr tail ---')
   console.error(stderr.slice(-2000))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

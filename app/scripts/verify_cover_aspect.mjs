@@ -2,11 +2,12 @@
 // 刮削 CLANNAD（VNDB 竖版封面 3:4）→ 断言封面墙缩略图 naturalHeight > naturalWidth。
 // 用法：node scripts/verify_cover_aspect.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync, existsSync, readFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9387
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.aspect-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -167,14 +168,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1500))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

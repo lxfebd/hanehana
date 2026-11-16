@@ -1,11 +1,12 @@
 // 设置页渲染质量验证：8 页签齐全、外观页主题卡、语言切换、保存交互
 // 用法：node scripts/verify_settings.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9397
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.settings-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -142,14 +143,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

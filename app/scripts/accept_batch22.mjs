@@ -5,12 +5,13 @@
 //  - 运行时：Hello / GameList / SettingsGet 通；TasksAdd 非法 url 返 err 形
 //  - 运行时：设置弹层 .ds-mask 可开可关（DialogShell Esc）
 import { mkdirSync, rmSync, readFileSync, readdirSync, statSync } from 'node:fs'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, extname, relative } from 'node:path'
 import { spawn } from 'node:child_process'
 
 const here = join(process.cwd(), 'scripts')
 const APP_ROOT = process.cwd()
-const PORT = '9278'
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.batch22-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(DATA_DIR, { recursive: true })
@@ -335,7 +336,7 @@ async function main() {
   } finally {
     console.log(`\n==== ${passed} passed, ${failed} failed ====`)
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
   process.exit(failed > 0 ? 1 : 0)
 }
@@ -345,7 +346,7 @@ main().catch((e) => {
   console.error('--- stderr tail ---')
   console.error(stderr.slice(-2000))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

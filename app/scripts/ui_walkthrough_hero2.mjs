@@ -7,6 +7,7 @@
 //   E 无 renderer 异常
 // 启动页是 home（B8），库页导航用侧栏「全部游戏」。
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
@@ -14,7 +15,7 @@ import { deflateSync } from 'node:zlib'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const PORT = 9318
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.ui-hero2-data')
 const SHOTS2 = join(APP_ROOT, '.shots', 'hero2')
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))

@@ -12,6 +12,7 @@
 //
 // 用法：node scripts/e2e_download.mjs
 import { createServer } from 'node:https'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { createReadStream, existsSync, mkdirSync, rmSync, statSync, readFileSync, writeFileSync } from 'node:fs'
 import { createHash, randomBytes } from 'node:crypto'
 import { join, dirname } from 'node:path'
@@ -20,7 +21,7 @@ import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const APP_ROOT = join(here, '..')
-const DEBUG_PORT = 9223
+const DEBUG_PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.e2e-data')
 const DOWNLOAD_DIR = join(DATA_DIR, 'dl')
 const SRC_FILE = join(DATA_DIR, 'src.bin')
@@ -148,8 +149,25 @@ function connectCdp() {
 function send(method, params = {}) {
   return new Promise((resolve) => {
     const mid = ++msgId
-    pending.set(mid, resolve)
-    ws.send(JSON.stringify({ id: mid, method, params }))
+    // 必须有超时：`Browser.close` 会在回包之前就把连接断掉，promise 会永远悬着
+    // （实测整个 e2e 卡死在第 8 步重启处，10 分钟无输出）。超时按「对端已关」处理。
+    const timer = setTimeout(() => {
+      if (pending.has(mid)) {
+        pending.delete(mid)
+        resolve(null)
+      }
+    }, 3000)
+    pending.set(mid, (m) => {
+      clearTimeout(timer)
+      resolve(m)
+    })
+    try {
+      ws.send(JSON.stringify({ id: mid, method, params }))
+    } catch {
+      clearTimeout(timer)
+      pending.delete(mid)
+      resolve(null)
+    }
   })
 }
 
@@ -479,12 +497,36 @@ async function main() {
     )
     console.log('[persist] 重启前任务已完成，准备重启 Electron…')
 
-    // 关闭当前实例，再用同一 DATA_DIR 重启
+    // 关闭当前实例，再用同一 DATA_DIR 重启。
+    //
+    // 必须走正常退出（CDP Browser.close → app.quit → before-quit 里 flush
+    // jsonStore）：tasks.json 是 400ms 合并写，硬杀等于模拟崩溃，
+    // 「重启后任务还在」就变成掷骰子（同一份提交上红绿交替过多次）。
+    try {
+      await send('Browser.close')
+    } catch {
+      /* 应用可能已经自己退出 */
+    }
+    await Promise.race([
+      new Promise((r) => {
+        if (!electronProc || electronProc.exitCode !== null) return r(undefined)
+        electronProc.once('exit', () => r(undefined))
+      }),
+      wait(8000),
+    ])
+    // 兜底：Browser.close 失败或退出卡住时不留下孤儿进程与调试端口
+    killTree(electronProc)
     try {
       ws?.close()
-    } catch {}
-    electronProc?.kill()
-    await wait(1200)
+    } catch {
+      /* 已断开 */
+    }
+    // 旧实例必须真的退出再启新的：应用有单实例锁，旧进程还没死干净时新进程
+    // 会立刻自退，随后 CDP 永远连不上。
+    for (let i = 0; i < 40 && electronProc && electronProc.exitCode === null; i++) {
+      await new Promise((r) => setTimeout(r, 150))
+    }
+    await wait(800)
     await launchElectron()
     await connectCdp()
     await wait(1200)

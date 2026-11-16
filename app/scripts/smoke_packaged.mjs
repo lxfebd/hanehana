@@ -10,6 +10,7 @@
 //
 // 用法：node scripts/smoke_packaged.mjs
 import { existsSync, statSync } from 'node:fs'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
@@ -20,7 +21,7 @@ const UNPACKED = join(APP_ROOT, 'release', 'win-unpacked')
 // executableName 是 hanehana（electron-builder.yml），产物名不带品牌大写
 const EXE = join(UNPACKED, 'hanehana.exe')
 const ENGINE = join(UNPACKED, 'resources', 'fastdrop-engine.exe')
-const DEBUG_PORT = 9237
+const DEBUG_PORT = await pickFreePort()
 
 let failed = 0
 function check(name, cond, detail = '') {
@@ -66,7 +67,7 @@ async function launchAndProbe() {
   }
   if (!pages || !pages.some((p) => p.type === 'page')) {
     try {
-      proc.kill()
+      killTree(proc)
     } catch {}
     throw new Error('Electron CDP 端口没在 30s 内就绪')
   }
@@ -102,7 +103,7 @@ async function launchAndProbe() {
   try {
     ws.close()
   } catch {}
-  proc.kill()
+  killTree(proc)
   return val
 }
 

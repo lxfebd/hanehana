@@ -3,12 +3,13 @@
 //  - 静态：zh/en 键集一致且 ≥60；无 i18next；Download/Settings 接线 t()
 //  - 运行时：切 en 后侧栏/下载页无 key 裸奔（不出现 nav_ / dl_ / set_ 裸键名）
 import { mkdirSync, rmSync, readFileSync } from 'node:fs'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { spawn } from 'node:child_process'
 
 const here = join(process.cwd(), 'scripts')
 const APP_ROOT = process.cwd()
-const PORT = '9279'
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.batch23-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(DATA_DIR, { recursive: true })
@@ -282,7 +283,7 @@ async function main() {
   } finally {
     console.log(`\n==== ${passed} passed, ${failed} failed ====`)
     ws.close()
-    proc.kill()
+    killTree(proc)
     // 恢复中文，避免污染本机用户数据目录以外的测试数据（测试目录会删）
     try {
       const { writeFileSync, readFileSync, existsSync } = await import('node:fs')
@@ -304,7 +305,7 @@ main().catch((e) => {
   console.error('--- stderr tail ---')
   console.error(stderr.slice(-2000))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

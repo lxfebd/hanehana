@@ -1,10 +1,11 @@
 // 验证沉浸式空库引导页：空库启动 → .empty-wrap/.empty-aurora/.empty-steps/三步文案存在
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync, writeFileSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9355
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.empty-guide-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(join(DATA_DIR, 'covers'), { recursive: true })
@@ -124,14 +125,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1500))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

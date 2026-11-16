@@ -3,11 +3,12 @@
 // 逐条打印各源命中数与耗时——验证「刮削不行」的修复在真实链路生效。
 // 用法：node scripts/verify_scrape_live.mjs
 import { spawn } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9347
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.scrape-live-data')
 rmSync(DATA_DIR, { recursive: true, force: true })
 mkdirSync(DATA_DIR, { recursive: true })
@@ -123,7 +124,7 @@ async function main() {
     console.log(`\n==== ${pass} passed, ${fail} failed ====`)
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 
@@ -132,7 +133,7 @@ main().catch((e) => {
   console.error('--- stderr tail ---')
   console.error(stderr.slice(-2000))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }

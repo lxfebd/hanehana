@@ -1,11 +1,12 @@
 // 批量编辑 UI 走查：多选 2 款 → 批量面板出现（计数/收藏/移除）→ 收藏切换 → 回读
 // 用法：node scripts/verify_batch_edit.mjs
 import { spawn, spawnSync } from 'node:child_process'
+import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
 
 const APP_ROOT = join(process.cwd())
-const PORT = 9407
+const PORT = await pickFreePort()
 const DATA_DIR = join(APP_ROOT, '.batedit-data')
 for (let i = 0; i < 5; i++) {
   try {
@@ -160,14 +161,14 @@ async function main() {
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()
-    proc.kill()
+    killTree(proc)
   }
 }
 main().catch((e) => {
   console.error(e)
   console.error(stderr.slice(-1200))
   try {
-    proc.kill()
+    killTree(proc)
   } catch {
     /* ignore */
   }
