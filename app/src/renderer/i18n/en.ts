@@ -12,6 +12,8 @@ export const en: Record<I18nKey, string> = {
   nav_games: 'Sites',
   nav_settings: 'Settings',
   nav_more: 'More',
+  nav_collapse: 'Collapse sidebar',
+  nav_expand: 'Expand sidebar',
   nav_fullscreen: 'Fullscreen',
   nav_steam_import: 'Steam Import',
   // ---- ReinaManager benchmark keys: headers / KPI / activity / chart / collections (B1–B6) ----

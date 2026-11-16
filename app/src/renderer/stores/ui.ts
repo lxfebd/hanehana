@@ -24,6 +24,9 @@ export const ui = reactive({
   accent: '',
   /** 右侧详情面板收起（只留竖条，点竖条展开） */
   detailCollapsed: false,
+  /** 左侧导航收起成图标条（56px）：下载站这类宽内容页想要横向空间时用。
+      本机偏好，NavSidebar 启动时从 localStorage 回填、切换时写回。 */
+  navCollapsed: false,
   /** Steam 导入对话框 */
   steamImportOpen: false,
   /** 手动添加游戏对话框（T25：选 exe 直接入库） */

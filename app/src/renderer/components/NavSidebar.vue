@@ -18,6 +18,8 @@ import {
   LibraryBig,
   Maximize2,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   ScanSearch,
   Settings,
@@ -47,6 +49,48 @@ const favCount = computed(() => library.games.filter((g) => g.favorite).length)
 const moreMenuOpen = ref(false)
 
 /**
+ * 侧栏收起成图标条（144px ⇄ 56px）。
+ *
+ * 两种触发共用一套样式：
+ *  - 用户点顶部那颗「收起/展开」→ ui.navCollapsed，写 localStorage，重启不丢；
+ *  - 窗口 ≤860px 时自动收 —— 由**当前宽度**派生（不是一次性开关），拉宽自己回来。
+ *
+ * 为什么要：游戏站（下载站）是内嵌 webview 的宽内容页，144px 的侧栏在 1280 窗里
+ * 占掉整窗约 10% 的面积；收起后内嵌站点立刻多出 88px 横向空间。
+ */
+const RAIL_KEY = 'hh.nav.rail'
+const narrow = ref(false)
+let narrowMq: MediaQueryList | null = null
+const rail = computed(() => ui.navCollapsed || narrow.value)
+function onNarrow(e: MediaQueryListEvent): void {
+  narrow.value = e.matches
+}
+function toggleRail(): void {
+  ui.navCollapsed = !ui.navCollapsed
+  try {
+    localStorage.setItem(RAIL_KEY, ui.navCollapsed ? '1' : '0')
+  } catch {
+    /* 无 localStorage 的环境（纯 node 测试）忽略 */
+  }
+}
+onMounted(() => {
+  try {
+    if (localStorage.getItem(RAIL_KEY) === '1') ui.navCollapsed = true
+  } catch {
+    /* ignore */
+  }
+  if (typeof window !== 'undefined' && 'matchMedia' in window) {
+    narrowMq = window.matchMedia('(max-width: 860px)')
+    narrow.value = narrowMq.matches
+    narrowMq.addEventListener('change', onNarrow)
+  }
+})
+onUnmounted(() => {
+  narrowMq?.removeEventListener('change', onNarrow)
+  narrowMq = null
+})
+
+/**
  * 选中块指示器（滑动高亮）：不是每个 nav-item 各自亮底，而是**一块**
  * 统一的高亮块从旧位置滑到新位置——这是侧栏「连贯」的来源。
  * 位置在切页后 nextTick 量（DOM 已换好 active 类），窗口尺寸变化时重量。
@@ -71,6 +115,10 @@ watch(
   },
 )
 watch(moreMenuOpen, () => {
+  void nextTick(measureHl)
+})
+/* 收起/展开会改变条目纵坐标（顶部多了一颗按钮），指示块要重量 */
+watch(rail, () => {
   void nextTick(measureHl)
 })
 function onResize(): void {
@@ -119,7 +167,7 @@ function moreAction(fn: () => void): void {
 </script>
 
 <template>
-  <nav ref="navEl" class="glass sidebar" :aria-label="t('app_nav_aria')">
+  <nav ref="navEl" class="glass sidebar" :class="{ rail }" :aria-label="t('app_nav_aria')">
     <!-- 滑动选中块：一块高亮在条目间平移（不是每条各亮一次）。
          高度/位置由 measureHl 量当前 active 条目；opacity 管首帧淡入，
          避免挂载时高亮从 y=0 一路滑下来。 -->
@@ -132,12 +180,26 @@ function moreAction(fn: () => void): void {
         opacity: hl.visible ? 1 : 0,
       }"
     ></span>
+    <!-- 收起/展开：图标条 56px ⇄ 带文字 144px。下载站这类宽内容页想要横向
+         空间时收起来，中栏/内嵌站点立刻多出 88px；状态记在本机，重启不丢。 -->
+    <button
+      class="rail-toggle"
+      type="button"
+      :title="rail ? t('nav_expand') : t('nav_collapse')"
+      :aria-label="rail ? t('nav_expand') : t('nav_collapse')"
+      :aria-expanded="!rail"
+      @click="toggleRail"
+    >
+      <PanelLeftOpen v-if="rail" :size="15" />
+      <PanelLeftClose v-else :size="15" />
+    </button>
     <!-- 首页仪表盘（B8，对标基准 Home）：KPI/Continue/Random/Activity。
          基准的导航顺序就是 Home 在 Library 前面——仪表盘先行、浏览其次。 -->
     <button
       class="nav-item"
       :class="{ active: ui.page === 'home' }"
       :aria-current="ui.page === 'home' ? 'page' : undefined"
+      :title="t('nav_home')"
       @click="goPage('home')"
     >
       <House :size="16" class="nav-ic" />
@@ -147,6 +209,7 @@ function moreAction(fn: () => void): void {
       class="nav-item"
       :class="{ active: ui.page === 'library' }"
       :aria-current="ui.page === 'library' ? 'page' : undefined"
+      :title="t('nav_library')"
       @click="goPage('library')"
     >
       <LibraryBig :size="16" class="nav-ic" />
@@ -159,6 +222,7 @@ function moreAction(fn: () => void): void {
       class="nav-item"
       :class="{ active: ui.page === 'collection' }"
       :aria-current="ui.page === 'collection' ? 'page' : undefined"
+      :title="t('nav_favorites')"
       @click="goFavorites"
     >
       <Heart :size="16" class="nav-ic" />
@@ -169,6 +233,7 @@ function moreAction(fn: () => void): void {
       class="nav-item"
       :class="{ active: ui.page === 'downloads' }"
       :aria-current="ui.page === 'downloads' ? 'page' : undefined"
+      :title="t('nav_downloads')"
       @click="goPage('downloads')"
     >
       <Download :size="16" class="nav-ic" />
@@ -181,6 +246,7 @@ function moreAction(fn: () => void): void {
       class="nav-item"
       :class="{ active: ui.page === 'games' }"
       :aria-current="ui.page === 'games' ? 'page' : undefined"
+      :title="t('nav_games')"
       @click="goPage('games')"
     >
       <Compass :size="16" class="nav-ic" />
@@ -188,11 +254,11 @@ function moreAction(fn: () => void): void {
     </button>
 
     <div class="nav-spacer"></div>
-    <button class="nav-item" @click="library.scanOpen = true">
+    <button class="nav-item" :title="t('lib_scan')" @click="library.scanOpen = true">
       <ScanSearch :size="16" class="nav-ic" />
       <span>{{ t('lib_scan') }}</span>
     </button>
-    <button class="nav-item" @click="openSettings()">
+    <button class="nav-item" :title="t('nav_settings')" @click="openSettings()">
       <Settings :size="16" class="nav-ic" />
       <span>{{ t('nav_settings') }}</span>
     </button>
@@ -204,6 +270,7 @@ function moreAction(fn: () => void): void {
         class="nav-item more-toggle"
         :class="{ active: moreMenuOpen || ui.page === 'stats' }"
         :aria-expanded="moreMenuOpen"
+        :title="t('nav_more')"
         @click="moreMenuOpen = !moreMenuOpen"
       >
         <MoreHorizontal :size="16" class="nav-ic" />
@@ -240,6 +307,8 @@ function moreAction(fn: () => void): void {
      窄窗 ≤620px 仍收成 56px 图标条，见文件末尾媒体查询。 */
   width: 144px;
   padding: 10px 8px;
+  /* 收起/展开时宽度平滑过渡（56 ⇄ 144），不是硬切 */
+  transition: width var(--hh-motion-slow) var(--hh-motion-ease-slide);
   position: relative;
   /* 滑动高亮的容器必须建层叠上下文：.nav-item 提升到 z-index 1 之上，
      指示块（z-index 0）才不会压住条目文字/图标。glass 已有 backdrop-filter
@@ -254,6 +323,30 @@ function moreAction(fn: () => void): void {
   /* 不设 overflow-y:auto：overflow-x 会被算成 auto，把 .more-menu 伸出侧栏
      右侧的浮层裁掉（「更多」入口点不到）。侧栏条目少，竖向本就不需要滚。 */
   overflow: visible;
+}
+/* 收起/展开按钮：常驻在条目上方，rail 态居中。15px 图标、无文字，
+   不和条目抢注意力。 */
+.rail-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: flex-start;
+  align-self: stretch;
+  gap: 6px;
+  height: 28px;
+  padding: 0 8px;
+  margin-bottom: 6px;
+  border: none;
+  border-radius: var(--hh-radius-sm);
+  background: transparent;
+  color: var(--hh-color-text-dim-strong);
+  cursor: pointer;
+  transition:
+    background var(--hh-motion-med),
+    color var(--hh-motion-med);
+}
+.rail-toggle:hover {
+  background: var(--hh-color-surface-soft);
+  color: var(--hh-color-text-glow);
 }
 .nav-item {
   display: flex;
@@ -366,34 +459,40 @@ function moreAction(fn: () => void): void {
   margin-bottom: 0;
 }
 
-/* 极窄窗口：侧栏收成图标条（≤620px 时三列预算 208+12+12 也让内容区所剩无几）。
-   放在 .sidebar/.nav-item 定义之后，才能覆盖前面的 width:208px。 */
-@media (max-width: 620px) {
-  .sidebar {
-    width: 56px;
-    padding: 12px 8px;
-    align-items: center;
-  }
-  .nav-item {
-    justify-content: center;
-    padding: 0 6px;
-    gap: 0;
-  }
-  .nav-item span {
-    display: none;
-  }
-  .nav-item .count {
-    display: flex;
-    position: absolute;
-    top: 3px;
-    right: 2px;
-    margin: 0;
-    min-width: 16px;
-    height: 16px;
-    padding: 0 4px;
-    align-items: center;
-    justify-content: center;
-    font-size: 9px;
-  }
+/* ============ 收起态：图标条（56px） ============
+   两种来源共用这一套：用户点收起（ui.navCollapsed，永久）或窗口 ≤860px
+   （由当前宽度派生，拉宽自动回来）。标签隐藏、图标居中、计数降级成右上角
+   小徽章；「更多」菜单本来就向右弹（left: calc(100% + 8px)），56px 宽时照样点得到。
+   鼠标悬停看名字：每个条目都带 title（rail 态下这是唯一可读的标签）。 */
+.sidebar.rail {
+  width: 56px;
+  padding: 12px 8px;
+  align-items: center;
+}
+.sidebar.rail .nav-item,
+.sidebar.rail .rail-toggle {
+  justify-content: center;
+  padding: 0 6px;
+  gap: 0;
+}
+.sidebar.rail .rail-toggle {
+  align-self: center;
+  width: 32px;
+}
+.sidebar.rail .nav-item span {
+  display: none;
+}
+.sidebar.rail .nav-item .count {
+  display: flex;
+  position: absolute;
+  top: 3px;
+  right: 2px;
+  margin: 0;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
 }
 </style>

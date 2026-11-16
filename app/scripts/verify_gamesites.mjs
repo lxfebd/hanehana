@@ -137,6 +137,38 @@ async function main() {
     ck('搜索输入框存在', (st.inputs || []).length > 0, 'inputs=' + JSON.stringify(st.inputs))
     ck('站点聚合入口（Gamer520/NekoGAL/PlayZip 至少可见）', st.hasGamer || st.hasNeko || st.hasPlayzip, 'gamer=' + st.hasGamer + ' neko=' + st.hasNeko + ' playzip=' + st.hasPlayzip)
     console.log('  游戏站:', JSON.stringify({ webview: st.webview, src: st.wvSrc, inputs: st.inputs }))
+
+    // ---- 侧栏可收：下载站是宽内容页，144px 侧栏在 1280 窗里占掉整窗约 10%；
+    //      收起成 56px 图标条后内嵌站点应当多出至少 80px 横向空间（回归靶）。
+    const dimsExpr = `(() => {
+      const sb = document.querySelector('.sidebar')
+      const wv = document.querySelector('webview')
+      const label = document.querySelector('.sidebar .nav-item span')
+      return JSON.stringify({
+        sidebar: sb ? Math.round(sb.getBoundingClientRect().width) : -1,
+        rail: !!(sb && sb.classList.contains('rail')),
+        webview: wv ? Math.round(wv.getBoundingClientRect().width) : -1,
+        labelShown: label ? getComputedStyle(label).display !== 'none' : null,
+        toggles: document.querySelectorAll('.rail-toggle').length,
+      })
+    })()`
+    const before = JSON.parse(await ev(dimsExpr))
+    await ev(`(() => { const b = document.querySelector('.rail-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 700))
+    const after = JSON.parse(await ev(dimsExpr))
+    ck('侧栏有收起/展开按钮', before.toggles === 1, 'toggles=' + before.toggles)
+    ck('默认展开：侧栏 144px 且标签可见', before.sidebar === 144 && before.labelShown === true, JSON.stringify(before))
+    ck('收起后侧栏变 56px 图标条且标签隐藏', after.sidebar === 56 && after.rail === true && after.labelShown === false, JSON.stringify(after))
+    ck(
+      '收起后下载站多出 ≥80px 横向空间',
+      after.webview - before.webview >= 80,
+      'before=' + before.webview + ' after=' + after.webview + ' 差=' + (after.webview - before.webview),
+    )
+    await ev(`(() => { const b = document.querySelector('.rail-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await new Promise((r) => setTimeout(r, 700))
+    const back = JSON.parse(await ev(dimsExpr))
+    ck('再点一次展开：侧栏回到 144px', back.sidebar === 144 && back.rail === false, JSON.stringify(back))
+    console.log('  侧栏弹性:', JSON.stringify({ before, after }))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
     ws.close()

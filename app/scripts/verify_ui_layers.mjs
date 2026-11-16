@@ -293,8 +293,8 @@ async function main() {
         await ev(`(() => { const items=[...document.querySelectorAll('.sidebar .nav-item')].filter(x=>!x.closest('.more-menu')); const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
       }
     }
-    const waitMarker = async (marker) => {
-      for (let i = 0; i < 24; i++) {
+    const waitMarker = async (marker, tries = 24) => {
+      for (let i = 0; i < tries; i++) {
         if ((await ev('!!document.querySelector(' + JSON.stringify(marker) + ')')) === true) return true
         await sleep(500)
       }
@@ -312,8 +312,16 @@ async function main() {
       // ---- 全页面布局扫描：每个视口下切到每页，断言横向溢出/主列重叠/空白右栏/卡片重叠 ----
       for (const p of PAGES) {
         await goPage(p.nav, p.more)
-        const ready = await waitMarker(p.marker)
-        ck(tag + ' 切换:' + p.name, ready === true)
+        let ready = await waitMarker(p.marker)
+        if (!ready) {
+          // 高负载 / 4K 视口下偶发「点了但标记迟迟不出现」（单独复现时切页 260ms 就位，
+          // 且同一次运行里所有布局断言仍然通过）——不是渲染错，是探针的时序假设太紧。
+          // 重点一次并再等 12s；真回归会在两次都超时后才红，且日志里看得到「重点一次」。
+          console.log('  [retry] ' + tag + ' 切换:' + p.name + ' 标记 ' + p.marker + ' 首个 12s 未出现，重点一次')
+          await goPage(p.nav, p.more)
+          ready = await waitMarker(p.marker, 48)
+        }
+        ck(tag + ' 切换:' + p.name, ready === true, '标记 ' + p.marker + ' 连续两次超时')
         await sleep(600)
         await moveAway()
         await sleep(200)

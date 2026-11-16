@@ -16,6 +16,8 @@ export const zh = {
   nav_games: '游戏站',
   nav_settings: '设置',
   nav_more: '更多',
+  nav_collapse: '收起侧栏',
+  nav_expand: '展开侧栏',
   nav_fullscreen: '全屏模式',
   nav_steam_import: 'Steam 导入',
   // ---- ReinaManager 对标改造：页头 / KPI / 活动流 / 曲线 / 收藏夹（B1–B6）----
