@@ -27,6 +27,10 @@
 ### 测试与闸门
 
 - **层叠闸改为等启动就绪**（`app/scripts/verify_ui_layers.mjs`）：每个视口 `Page.reload` 后固定 `sleep(3000)`，高负载/4K 下后续点击会落在半启动的页面上，表现为「点了但标记 12s 不出现」——这正是此前需要「重点一次」的真因。改为 `waitBoot(60s)` 轮询 `window.hh + .app-shell`，超时才 warn；全视口 10 个尺寸 350/0 通过，无 `[retry]`、无 `[warn]`。
+- **恒真断言与兜底改绿**（`verify_download_view.mjs`）：`st.speed.length >= 0` 永远成立（无论显示错值还是永久消失），等于没验。改为「空闲时 `.total-speed` 必须不渲染」的真断言（正向分支需真传输，由 `e2e_download` 管，那里目前只验 IPC 不验 UI，已记入待补）。
+- **删掉导航兜底**（`verify_ui_layers.mjs`）：`find(...) || items[0]` 会在「全部游戏」入口改名/被删时静默点中任意导航项，后续断言就在错页上全绿。改为找不到即 `false`（进库页条目直接红）。
+- **截图脚本不再冒充闸**：`ui_walkthrough_reina.mjs` 零 `ck()` 断言、结尾 `process.exit(0)`，却挂在 `regression:reina` 且被 `visual.yml` 当闸跑。改为 `shots:reina`（README/visual.yml 同步注明「截图脚本，无断言/无退出码语义」），结尾改为按失败数退出。
+- **死三元**（`smoke_packaged.mjs`）：`process.exitCode = failed > 0 ? 1 : 1` 两个分支一样，改成 `= 1`。
 
 - **21 个验证脚本不再 fail-open**（`app/scripts/verify_*.mjs`）：断言失败原只打印计数、从不设置退出码，`npm run regression` 红了也返回 0。现在失败当场置 `process.exitCode = 1`（早退路径同样覆盖）。
 - **`e2e_dupe_ui.mjs` 恒绿修复**：末尾写死 `process.exit(0)` 吞掉了所有 FAIL；并把「扫描浮层 dupe 区块 / 行 / 按钮」补成真断言。

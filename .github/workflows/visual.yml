@@ -43,7 +43,7 @@ jobs:
       - name: CDP visual gates
         working-directory: app
         run: |
-          npm run regression:reina
+          npm run shots:reina   # 截图脚本，不是闸：无断言、无退出码语义
           npm run regression:hero
           npm run regression:accent
           npm run regression:process

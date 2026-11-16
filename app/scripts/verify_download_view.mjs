@@ -125,14 +125,21 @@ async function main() {
         const prog = document.querySelectorAll('.task-row .prog, .task-row .bar-fill').length
         const chips = document.querySelectorAll('.st-chip').length
         const speed = (document.querySelector('.total-speed')||{}).textContent?.trim() || ''
-        return { rows, segs, btns, prog, chips, speed }
+        return { rows, segs, btns, prog, chips, speed, speedEls: document.querySelectorAll('.total-speed').length }
       })())`),
     )
     ck('任务列表渲染', st.rows >= 3, 'rows=' + st.rows)
     ck('筛选 chips 齐全', Array.isArray(st.segs) && st.segs.length >= 4, 'segs=' + JSON.stringify(st.segs))
     ck('操作按钮组齐全（新建/全开/全停/重试/清理）', st.btns >= 4, 'btns=' + st.btns)
     ck('进度条/状态 chip 渲染', st.prog >= 1 && st.chips >= 3, 'prog=' + st.prog + ' chips=' + st.chips)
-    ck('总速度显示（无流量时隐藏，正确）', st.speed.length >= 0, 'speed=' + st.speed + '（无下载流量时为空是正确行为）')
+    // 「无流量隐藏总速度」是个契约，得真验：.total-speed 是 v-if="totalSpeed > 0"，
+    // 空闲 fixture 下它必须不存在。旧断言写 st.speed.length >= 0（恒真），等于没验。
+    // 正向分支（有流量时显示且格式正确）需要真传输，归 e2e_download 管（那边目前只验 IPC，不验 UI，已记入待补）。
+    ck(
+      '无流量时不渲染总速度（.total-speed 缺席）',
+      st.speed === '' && st.speedEls === 0,
+      'speed=' + JSON.stringify(st.speed) + ' els=' + st.speedEls,
+    )
     console.log('  下载页:', JSON.stringify(st))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {

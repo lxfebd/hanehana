@@ -113,7 +113,7 @@ async function main() {
   check('引擎产物存在（extraResources）', existsSync(ENGINE), ENGINE)
   if (!existsSync(EXE)) {
     console.log('未找到解包产物，先跑：npm run dist:dir')
-    process.exitCode = failed > 0 ? 1 : 1
+    process.exitCode = 1
     return
   }
   const exeSize = statSync(EXE).size

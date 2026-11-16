@@ -48,7 +48,7 @@
     "regression:layers": "node scripts/verify_ui_layers.mjs",
     "regression:layers:all": "node scripts/verify_ui_layers.mjs --all",
     "regression:collection": "node scripts/verify_dlview.mjs",
-    "regression:reina": "node scripts/ui_walkthrough_reina.mjs"
+    "shots:reina": "node scripts/ui_walkthrough_reina.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

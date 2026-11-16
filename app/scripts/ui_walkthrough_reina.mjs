@@ -6,6 +6,10 @@
 //   5 收藏夹   —— 按开发商 / 系列分组卡
 // 用法：node scripts/ui_walkthrough_reina.mjs（须先 npm run build）
 // 截图落盘：app/.shots/reina/（基准图在「不要上传…」夹，逐屏人比对）。
+//
+// 【这不是闸】全程只有截图与打印，没有 PASS/FAIL 断言，也没有退出码语义；
+// 所以它不从 regression:* 跑（npm script 叫 shots:reina），
+// visual.yml 里也注明它不是闸。把它当闸用 = 零断言的仪式性绿。
 import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
@@ -193,7 +197,7 @@ async function main() {
     ws.close()
     killTree(proc)
   }
-  process.exit(0)
+  process.exit(process.exitCode || 0)
 }
 main().catch((e) => {
   console.error(e)

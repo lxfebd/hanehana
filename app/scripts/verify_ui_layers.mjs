@@ -274,7 +274,11 @@ async function main() {
       return p.badCount === 0
     }
     const gotoLibrary = async () => {
-      await ev(`(() => { const items=[...document.querySelectorAll('.sidebar .nav-item')]; const b=items.find(x=>(x.textContent||'').includes('全部游戏')||(x.textContent||'').includes('Library'))||items[0]; if(b){b.click();return 'ok'} return 'no' })()`)
+      // 不能 `|| items[0]`：入口改名/被删时点中任意一项，后面所有断言都会在错页上“通过”。
+      const hit = await ev(
+        `(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')||(x.textContent||'').includes('Library')); if(!b) return 'no-entry'; b.click(); return 'ok' })()`,
+      )
+      if (hit !== 'ok') return false
       for (let i = 0; i < 24; i++) {
         if ((await ev('!!document.querySelector(".cover-card")')) === true) return true
         await sleep(500)

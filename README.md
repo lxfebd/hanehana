@@ -199,7 +199,7 @@ engine-rs (Rust)  ·  分段并发下载 + 校验，每任务一个子进程
 | `npm run regression:download` | 真实引擎下载链路 e2e |
 | `npm run regression:ui` | 真实 App 走查：起进程、像用户一样点封面 → 刮削 → 应用选中，读真实 DOM 与截屏 |
 | `npm run regression:dupe` | 同款不同盘目录扫两次：断言零自动入库 + `dupes` 明细回传 + 「也加进来」真能入库 |
-| `npm run regression:reina` | 五屏对标基准 ReinaManager：截图 + 结构断言（首页/库/详情/统计/收藏） |
+| `npm run shots:reina` | 五屏对标基准 ReinaManager：**只截图**（不是闸：无数值断言、无退出码语义） |
 | `npm run regression:hero` / `:accent` / `:process` | 主题走查 / 强调色断言 / 启动·进程·计时全链路 |
 | `npm run regression` | 串联 typecheck + 静态闸 + 下载链路，遇错即停 |
 | `npm run dist:dir && npm run smoke` | 解包产物验收：进程可启动 + IPC 通 + 引擎存在 |
