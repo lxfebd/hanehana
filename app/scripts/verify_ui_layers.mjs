@@ -336,8 +336,9 @@ async function main() {
       await moveAway()
       await sleep(200)
       ck(tag + ' 封面墙就绪', (await ev('!!document.querySelector(".cover-card")')) === true)
-      // B4：右栏永远有内容——展开态（>1100px）库页未选中应显示动态流而非空白；
-      // ≤1100px 时 useBoot 有意收起为 28px 栏（.aside.collapsed），属窄屏策略，允许。
+      // B4：右栏永远有内容——库页未选中应显示动态流而非空白。
+      // 右栏宽度是弹性的（App.vue .aside 的 clamp，400 → 300），窄窗不再自动收成
+      // 28px 竖条；.aside.collapsed 只在用户手动点「收成竖条」时出现。
       ck(tag + ' 库页右栏非空白', (await ev(`(() => { const a = document.querySelector('.aside'); if (!a) return false; if (a.classList.contains('collapsed')) return true; return !!a.querySelector('.activity-feed, .detail-panel') })()`)) === true)
       let L = await ev('(' + LAYOUT_PROBE + ')()')
       if (L && L.__err) {
@@ -382,8 +383,8 @@ async function main() {
       // ---- 6. 详情整页展开 .detail-panel.is-expanded（fixed, overlay 层）----
       await ev(`(() => { const c = document.querySelector('.cover-card'); if (!c) return 'no-card'; c.click(); return 'ok' })()`)
       await sleep(700)
-      // 窄屏（<=1100px）useBoot 的 matchMedia 会自动 detailCollapsed=true 收起右栏；
-      // 先点 .detail-collapsed 展开钮恢复，再断言详情面板挂载（这是有意的窄屏策略，非 bug）。
+      // 右栏是弹性的：窄窗下详情面板本来就在（已经没有 matchMedia 自动收起这回事）。
+      // 若此前被手动收起过，.detail-collapsed 展开钮兑底点一次——有就点，没有就跳过。
       await ev(`(() => { const b = document.querySelector('.detail-collapsed'); if (b) { b.click(); return 'uncollapse' } return 'no' })()`)
       await sleep(700)
       ck(tag + ' 详情面板出现', (await ev('!!document.querySelector(".detail-panel")')) === true)

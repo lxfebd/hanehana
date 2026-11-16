@@ -259,6 +259,45 @@ async function main() {
       favBefore !== 'no-btn' && favBefore !== favAfter && ((favAfter || '').includes('收藏') || (favAfter || '').includes('Faved')),
       'before=' + favBefore + ' after=' + favAfter,
     )
+    // ---- 右栏弹性（回归靶：右栏死咬 400、窗口拖窄后右栏占掉半个窗口 / 中栏被挤没）----
+    // 默认窗口宽下右栏必须还是 token 宽（设计稿口径不能被弹性改掉）；
+    // 窄窗下必须跟着收、不越界、内部不出横向滚动。
+    const baseW = Math.round(
+      (await ev(`(() => { const a = document.querySelector('.aside'); return a ? a.getBoundingClientRect().width : -1 })()`)) ?? -1,
+    )
+    ck('默认窗口右栏宽 = token（400，设计稿口径）', baseW === 400, 'w=' + baseW)
+    await send('Emulation.setDeviceMetricsOverride', { width: 1000, height: 800, deviceScaleFactor: 1, mobile: false })
+    await new Promise((r) => setTimeout(r, 700))
+    const flexRaw = await ev(`(() => {
+      const aside = document.querySelector('.aside')
+      const content = document.querySelector('.content')
+      const panel = document.querySelector('.detail-panel')
+      if (!aside || !content) return null
+      const a = aside.getBoundingClientRect()
+      const c = content.getBoundingClientRect()
+      const acts = document.querySelector('.actions-sub')
+      return JSON.stringify({
+        iw: innerWidth,
+        asideW: Math.round(a.width),
+        asideRight: Math.round(a.right),
+        contentW: Math.round(c.width),
+        docSW: document.documentElement.scrollWidth,
+        panelOverX: panel ? panel.scrollWidth - panel.clientWidth : -1,
+        actsH: acts ? Math.round(acts.getBoundingClientRect().height) : -1,
+      })
+    })()`)
+    const fx = flexRaw ? JSON.parse(flexRaw) : null
+    ck('窄窗（1000）右栏弹性收缩到 token 以下', !!fx && fx.asideW < 400 && fx.asideW >= 280, 'aside=' + (fx && fx.asideW))
+    ck('窄窗右栏不越出窗口（「只露一半」的回归靶）', !!fx && fx.asideRight <= fx.iw && fx.docSW <= fx.iw + 1, JSON.stringify(fx))
+    ck('窄窗中栏保留可用宽度（不被右栏挤没）', !!fx && fx.contentW >= 420, 'content=' + (fx && fx.contentW))
+    ck('窄窗面板内部无横向溢出', !!fx && fx.panelOverX === 0, 'overX=' + (fx && fx.panelOverX))
+    ck('窄窗次按钮自动换行（容器查询生效）', !!fx && fx.actsH > 50, 'actsH=' + (fx && fx.actsH))
+    await send('Emulation.clearDeviceMetricsOverride')
+    await new Promise((r) => setTimeout(r, 700))
+    const back = JSON.parse(
+      (await ev(`(() => { const a = document.querySelector('.aside'); return JSON.stringify({ w: Math.round(a.getBoundingClientRect().width), iw: innerWidth }) })()`)) || '{}',
+    )
+    ck('恢复窗口宽度后右栏回到 token 宽（400）', back.w === 400, JSON.stringify(back))
     console.log(
       '  面板状态:',
       JSON.stringify({

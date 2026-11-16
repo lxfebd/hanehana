@@ -185,11 +185,21 @@ function bannerFallback(): string {
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-bright);
   text-shadow: 0 1px 4px var(--hh-color-shade-text);
+  /* 窄口径（右栏被 clamp 收到 300 时原生名只剩 ~129px）不能硬推：
+     不裁到邻居身上，就地省略号。 */
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .banner-chips {
   display: flex;
   gap: 6px;
   margin-top: 2px;
+  /* 发行日 + 评分 + 收藏三颗芯片在 129px 里放不下（实测被右边界切 14px），
+     窄口径换行——banner 是固定 180px 高，多一行芯片仍在高度预算内。 */
+  flex-wrap: wrap;
+  row-gap: 4px;
 }
 .chip {
   font-size: 11px;

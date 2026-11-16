@@ -42,7 +42,7 @@ const DownloadView = defineAsyncComponent(() => import('./components/DownloadVie
 const GameSites = defineAsyncComponent(() => import('./components/GameSites.vue'))
 
 
-// 启动编排（hello/刷新/订阅/窄窗口折叠/全屏控制）收在 useBoot 里，
+// 启动编排（hello/刷新/订阅/全屏控制）收在 useBoot 里，
 // 组件只拿结果：bootInfo 标题栏版本号、全屏/保存回调、gamesMounted 保活开关。
 const { bootInfo, enterFullscreen, exitFullscreen, saveSettings, gamesMounted } = useBoot()
 
@@ -488,7 +488,7 @@ async function submitAddTask(input: {
   min-height: 0;
 }
 
-/* 右栏容器：宽度交给 token，收起态动画到 28px（.aside.collapsed）。
+/* 右栏容器：**弹性宽度**，收起态动画到 28px（.aside.collapsed）。
    width 的 transition 是「连贯」的一部分——收起时中栏是平滑让宽的。
 
    高度链的最后一环在 .aside > .detail：.detail 是 flex item，flex stretch
@@ -497,10 +497,14 @@ async function submitAddTask(input: {
    overflow-y:auto 永远不滚（详情面板当初 32px banner 的同一条病根）。
    align-self:stretch 显式化 + min-height:0 允许收缩，环才闭合。 */
 .aside {
-  width: var(--hh-layout-detail-w);
-  /* 右栏固定宽：ActivityFeed 根的 flex:1 会把 width 顶掉（flex-basis 0 + grow），
-     实测 361 token 被撑成 557，主列被挤到 555。基准 home.png 主列 699 : 活动 395。
-     flex:none 让 token 宽度真正生效，主列自动吃剩余。 */
+  /* 右栏是弹性的，不是死咬一个数：窗口往窄里拖时它跟着收（400 → 300），
+     而不是占着 400 把中栏挤成一条缝（实测 800 宽时右栏占满一半，中栏只剩 232）。
+     三档：上限 = token（宽窗与设计稿逐像素一致）｜32vw = 跟着窗口走｜300 下限
+     （300 时中栏仍留得住两列封面）。低于下限再窄就交给「收成竖条」那条路。 */
+  width: clamp(300px, 32vw, var(--hh-layout-detail-w));
+  /* 宽度由上面这行说了算：ActivityFeed 根的 flex:1 会把 width 顶掉（flex-basis 0 + grow），
+     实测 361 token 被撑成 557，主列被挤到 555。flex:none 让 clamp 宽度真正生效，
+     主列自动吃剩余。 */
   flex: none;
   position: relative;
   align-self: stretch;

@@ -306,6 +306,10 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
 <style scoped>
 .detail-panel {
   width: var(--hh-layout-detail-w);
+  /* 容器查询的容器：右栏宽度是弹性的（App.vue .aside 的 clamp，400 → 300），
+     面板内按 400 排的行需要知道「我现在多宽」才好换排法，见文件末的 @container。 */
+  container-type: inline-size;
+  container-name: detail;
   position: relative;
   overflow-y: auto;
   padding: 12px;
@@ -425,6 +429,18 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
 }
 .ghost-btn:hover {
   background: var(--hh-color-surface-hover-soft);
+}
+/* 窄口径（右栏被 clamp 收到 ~300）：四个 ghost 按钮一行放不下（图标 + 不换行的
+   4 汉字 ≈ 72px/颗，四颗 312px）。放不下就会出现两颗按钮字叠在一起——
+   按容器宽度换成 2×2，而不是让字溢出到邻居身上。
+   阈值按内容盒（400 宽的面板内容盒 363px）取 340：默认尺寸下一行四颗不变。 */
+@container detail (max-width: 340px) {
+  .actions-sub {
+    flex-wrap: wrap;
+  }
+  .ghost-btn {
+    flex: 1 1 calc(50% - 4px);
+  }
 }
 
 /* ============ 分栏容器 ============ */

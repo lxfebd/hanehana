@@ -5,7 +5,11 @@
  * 订阅主题/全屏推送、窄窗口折叠监听——全部挤在组件生命周期里，既没法单测，
  * 也让根组件 script 越来越长。这里收成唯一入口：App.vue 只调用一次 useBoot()，
  * 拿到 bootInfo（标题栏版本号/失败原因）与全屏控制函数，剩下的生命周期
- * （订阅退订、窄窗口清理）都在 composable 内部自管理。
+ * （订阅退订）都在 composable 内部自管理。
+ *
+ * 曾经这里还有一条「<1100px 自动把右栏收成 28px 竖条」的 matchMedia 监听，
+ * 已删：右栏现在是弹性宽度（App.vue .aside 的 clamp），窗口拖窄它自己会收；
+ * 而那条监听只会单向收起、窗口拉宽也不恢复，用户看到的就是「侧边栏没了」。
  *
  * 为什么放 composable 而不是 store：这是「启动那一刻做什么」的编排逻辑，
  * 不是可复用的响应式状态——store 不该背着一次性的启动流程。
@@ -49,10 +53,6 @@ export function useBoot(): {
   const bootInfo = ref('')
   /** 推送订阅句柄：onUnmounted 统一退订（页面销毁不泄漏 listener） */
   let unsubPushes: Array<() => void> = []
-
-  // 窄窗口（<1100px）时详情面板宽度会把内容区挤没，自动收起
-  let narrowMq: MediaQueryList | null = null
-  let narrowMqFn: ((_e: MediaQueryListEvent) => void) | null = null
 
   async function saveSettings(s: unknown): Promise<void> {
     try {
@@ -123,23 +123,10 @@ export function useBoot(): {
         }),
       )
     }
-
-    // 窄窗口自动收起详情面板：360px 详情 + 208px 侧栏会把内容区挤没
-    if ('matchMedia' in window) {
-      narrowMq = window.matchMedia('(max-width: 1100px)')
-      narrowMqFn = (e: MediaQueryListEvent) => {
-        if (e.matches) ui.detailCollapsed = true
-      }
-      if (narrowMq.matches) ui.detailCollapsed = true
-      narrowMq.addEventListener('change', narrowMqFn)
-    }
   })
 
   onUnmounted(() => {
     stopProcessSync()
-    narrowMq?.removeEventListener('change', narrowMqFn as EventListener)
-    narrowMq = null
-    narrowMqFn = null
     for (const unsub of unsubPushes) unsub()
   })
 
