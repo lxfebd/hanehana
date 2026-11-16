@@ -208,21 +208,30 @@ function isoDate(ts: number): string {
   return `${d.getFullYear()}-${mm}-${dd}`
 }
 
-/** 单次检查进行中标记：防连点「立即检查」并发交错读写 tracking.json（重复通知）。 */
-let checkInFlight = false
+/** 进行中的那轮检查（共享 Promise）。 */
+let inflight: Promise<TrackCheckResult> | null = null
 
 /**
  * 检查所有订阅：每个订阅词查一遍 VNDB（并行，订阅多时不串行卡死），识别
  * 「新」作（id 不在 seenIds 里），更新 lastCheck/seenIds，返回命中与新作清单。
+ *
+ * 并发语义：定时检查（默认每小时）与手动「立即检查」会撞上。旧实现碰到并发
+ * 直接 `return { ok: true, hits: [], fresh: [] }` —— 一个形状合法的「成功」，
+ * UI 会把「这次没查」显示成「没有新作」（功能静默失效）。现在把进行中那轮
+ * Promise 共享出去：并发调用 await 同一轮结果，而不是各回各的假结果。
  */
-export async function checkTracks(): Promise<TrackCheckResult> {
-  if (checkInFlight) return { ok: true, hits: [], fresh: [] }
-  checkInFlight = true
+export function checkTracks(): Promise<TrackCheckResult> {
+  if (inflight) return inflight
+  const run = runCheckTracks().finally(() => {
+    inflight = null
+  })
+  inflight = run
+  return run
+}
+
+async function runCheckTracks(): Promise<TrackCheckResult> {
   const all = loadTracking()
-  if (!all.length) {
-    checkInFlight = false
-    return { ok: true, hits: [], fresh: [] }
-  }
+  if (!all.length) return { ok: true, hits: [], fresh: [] }
   const hits: TrackHit[] = []
   const fresh: TrackHit[] = []
   try {
@@ -271,7 +280,5 @@ export async function checkTracks(): Promise<TrackCheckResult> {
     return { ok: true, hits, fresh, ...(errors.length ? { error: errors.join('；') } : {}) }
   } catch (e) {
     return { ok: false, error: e instanceof Error ? e.message : String(e) }
-  } finally {
-    checkInFlight = false
   }
 }

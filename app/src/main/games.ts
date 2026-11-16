@@ -408,9 +408,16 @@ export async function handleLaunch(id: string): Promise<{ ok: boolean; error?: s
   // .lnk 不是可执行映像，CreateProcess 会以异步 error 事件炸出来；
   // 快捷方式交给系统壳打开（代价：这条不计游玩时长）
   if (/\.lnk$/i.test(exe)) {
-    // 快捷方式交给系统壳（不计游玩时长）；没有进程句柄可跟，只能标 starting→running
+    // 快捷方式交给系统壳（不计游玩时长，没有进程句柄可跟）。
+    // openPath 失败不是 reject，而是 resolve 一个错误字符串——不判就会把
+    // 「快捷方式失效/目标被删」当成「已运行」（同目录的 handleOpenDir 就是正确写法）。
     setProcState(id, { status: 'starting', pid: null })
-    void shell.openPath(exe).then(() => setProcState(id, { status: 'running', pid: null }))
+    const why = await shell.openPath(exe)
+    if (why) {
+      setProcState(id, { status: 'exited', pid: null })
+      return { ok: false, error: `启动失败：${why}` }
+    }
+    setProcState(id, { status: 'running', pid: null })
     updateGame(id, { lastPlayed: Date.now() })
     return { ok: true }
   }
