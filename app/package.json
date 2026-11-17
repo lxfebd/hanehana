@@ -48,6 +48,9 @@
     "regression:batchedit": "node scripts/verify_batch_edit.mjs",
     "regression:layers": "node scripts/verify_ui_layers.mjs",
     "regression:layers:all": "node scripts/verify_ui_layers.mjs --all",
+    "regression:coverfallback": "node scripts/verify_cover_fallback.mjs",
+    "regression:clickoutside": "node scripts/verify_click_outside.mjs",
+    "regression:panelhead": "node scripts/verify_panel_head.mjs",
     "regression:collection": "node scripts/verify_dlview.mjs",
     "shots:reina": "node scripts/ui_walkthrough_reina.mjs"
   },

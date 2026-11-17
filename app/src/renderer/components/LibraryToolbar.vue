@@ -9,7 +9,7 @@
  *   - filteredCount / exportMenuOpen / doExport / clearMeta 属 App 级（导出走
  *     window.hh、计数来自 filteredGames），经 props/emit 传入
  */
-import { ref } from 'vue'
+import { onBeforeUnmount, ref } from 'vue'
 import { Heart, LayoutGrid, List, Search, CheckSquare, ArrowUpFromLine, X } from 'lucide-vue-next'
 import { categories, enterSelectMode, library, SMART_LISTS } from '../stores/library'
 import { useClickOutside } from '../composables/useClickOutside'
@@ -34,6 +34,20 @@ const emit = defineEmits<{
  */
 const exportWrapRef = ref<HTMLElement | null>(null)
 useClickOutside(exportWrapRef, () => {
+  if (props.exportMenuOpen) emit('closeExport')
+})
+
+/** 卸载时收回「菜单开着」这个 App 级状态。
+ *  为什么必须在卸载时关：菜单的 DOM 在本组件（v-if），开关状态在 App（exportMenuOpen），
+ *  两处不同生共死——本组件一卸载（切页等），DOM 没了，App 里那个 true 还活着；
+ *  回到库页时组件重新挂载，v-if 拿着旧 true 又把菜单开出来，像是「自己开着的」。
+ *  旧实现用全局 document 监听，切页那一下点击会顺手关掉它，所以这个空洞一直没暴露；
+ *  收口到本组件的元素 ref 之后，不带鼠标的切页（快捷键 1/2/3、程序内跳转）就漏了
+ *  （verify_click_outside.mjs 的快捷键分支就是抓这条）。
+ *  为什么在子组件卸载钩子里清，而不是 App 侧 watch(ui.page)：宿主没了就该连状态一起
+ *  收走，这对**任何**卸载原因（页面切换、以后的条件渲染）都成立；watch 页面名只
+ *  覆盖「切页」这一种原因，组件因别的原因卸载时同样的空洞又会回来。 */
+onBeforeUnmount(() => {
   if (props.exportMenuOpen) emit('closeExport')
 })
 
