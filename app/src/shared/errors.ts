@@ -73,6 +73,15 @@ const rules: { test: RegExp; title: string; advice: string }[] = [
     advice: '换一台镜像重新下载，这里重试通常没用。',
   },
   { test: /truncated/i, title: '传到一半被掐断了', advice: '网络或站点不稳定，会自动重连续传。' },
+  // 引擎的停滞兜底（连续多次零增长后主动放弃）。必须排在「不响应/超时」这类
+  // 可自愈文案前面：这时候引擎**已经不再自动重试**了，再跟用户说「会自动重试」
+  // 就是让他干等一个永远不会发生的动作。
+  {
+    test: /stalled|no byte progress/i,
+    title: '下载停滞，已停止自动重试',
+    advice:
+      '引擎连续多次重试都没有任何字节进展，已停止自动重试：检查网络或代理后直接点「重试」，或者稍后再试。已下载的断点会保留。',
+  },
   { test: /did not reply within/i, title: '服务器迟迟不响应', advice: '对方过载或你已断网，检查网络后点重试。' },
   { test: /read timeout/i, title: '连接长时间没有数据', advice: '站点速度慢或掉线，会自动重试。' },
 
@@ -220,6 +229,15 @@ const codeRules: Record<string, { title: string; advice: string }> = {
   // ---- 传输中断 ----
   truncated: { title: '传到一半被掐断了', advice: '网络或站点不稳定，会自动重连续传。' },
   truncated_every_attempt: { title: '服务器每次都少发数据，链接不可靠', advice: RETRY_MIRROR },
+  // 引擎的停滞兜底：连续多次重试一个字节都没多下，引擎已判死并**停止自动重试**。
+  // 不能复用 no_reply —— 那句 advice 是「检查网络后点重试」，读起来像引擎还在后台
+  // 重试、用户只需等着；实际状态是 error 且不会再有任何动作。必须点明「已停止」，
+  // 否则用户会盯着一个永远不会变的进度条等到失去耐心。
+  stalled: {
+    title: '下载停滞，已停止自动重试',
+    advice:
+      '引擎连续多次重试都没有任何字节进展，已停止自动重试：检查网络或代理后直接点「重试」，或者稍后再试。已下载的断点会保留。',
+  },
 
   // ---- 磁盘与文件 ----
   no_space: {

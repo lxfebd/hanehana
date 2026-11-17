@@ -839,10 +839,14 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                             s.status = "error".into();
                         }
                         g.fail(
-                            // 复用 no_reply 而不是造新码：errors.ts 的码表不在引擎
-                            // 侧可改范围，no_reply（「服务器迟迟不响应」）正是这个
-                            // 场景的用户视角文案，advice 也已经是「检查网络后重试」。
-                            "no_reply",
+                            // 独立的 `stalled` 码，不复用 no_reply：两者的用户处置
+                            // 完全不同——no_reply 是「这一次请求没人应答，引擎还在
+                            // 重试」，而这里引擎**已经停止自动重试**、状态落到 error。
+                            // 复用 no_reply 会让界面说「检查网络后点重试」，用户以为
+                            // 后台还在跑，一直等一个永远不会再发生的事件。
+                            // 原文保留 stalled/零增长窗口/重试次数，键名带前缀，
+                            // 供排查时和单流那条区分（见 worker_stream 的同名码）。
+                            "stalled",
                             format!(
                                 "stalled: no byte progress for {}s after {} retries (last: {})",
                                 stall_at.elapsed().as_secs(),
@@ -852,6 +856,9 @@ async fn worker(task: Arc<Mutex<Task>>, index: usize, gen: usize) {
                             json!({
                                 "stalled_secs": stall_at.elapsed().as_secs(),
                                 "attempts": attempt,
+                                // 标明是哪条驱动报的：分段（多 worker）与单流（长度未知）
+                                // 的判据不一样，日志里必须能一眼分开。
+                                "mode": "segmented",
                             }),
                         );
                     }
@@ -903,6 +910,60 @@ fn stalled(attempts: usize, since_last_growth: Duration) -> bool {
     attempts >= STALL_ATTEMPTS && since_last_growth >= STALL_WINDOW
 }
 
+/// 单流（长度未知）判定「这条链接已经死了」所需的连续**零字节**尝试次数。
+///
+/// 单流用不了 `stalled()` 那套全局 `downloaded` 零增长判据：未知长度不支持续传，
+/// 每次尝试都从文件头覆盖重写、进度计数器在尝试开始时归零，于是「全局下载量」
+/// 每次都回到 0，`since_last_growth` 的判据恒不成立（永远看不出停滞），
+/// `stalled()` 也永远等不到「有字节落账、重开窗口」那一步。所以单流必须换一把尺子：
+/// **数连续几次尝试一个字节都没写进文件**。
+///
+/// 取值依据（为什么是 5，而不是 2、3 或 8）：
+///  - 1~2 次必然误判。握手成功但还没发出第一块数据就断（TLS 重协商、服务端连接池
+///    抖动、机器刚从睡眠里醒来、代理刚重连）在正常网络上很常见，第一次重试往往就恢复。
+///  - 3 次仍偏敏感：退避是 2s→4s→8s（见 retry_backoff），前 3 次零字节加起来才十几秒，
+///    不足以把「偶发」和「确定性故障」分开。
+///  - 5 次对应约 2+4+8+16 ≈ 30s 的退避累计。故障若是「立即失败」型（DNS 解析失败、
+///    连接被拒、代理端口没人听），30 秒左右就会走到第 5 次；若是「卡住不动」型
+///    （握手或首包不回来），每次尝试还要叠加头部超时（30s）或块间无数据超时（60s），
+///    实际要几分钟才判死。两种形态都给了「一次性抖动」足够的自愈机会，又都不会
+///    把确定性故障无限挂在 downloading。
+///  - 已知代价：短时断网（几十秒量级）碰上立即失败型错误时，会被这条判据提前
+///    判死。这个误判的代价只有「用户点一次重试」——任务落 error、.part 与 sidecar
+///    都保留着，重试会从 0 重下（长度未知本来就没法续传），浪费的只是这次没下完的
+///    流量；而反过来（不设上限）的代价是任务永远卡在 downloading、只能删任务重来。
+///  - 不取更大值：确定性故障每多重试一次，就多把任务钉在 downloading 几分钟，
+///    用户只能看着进度条不动，最后还是得删任务。
+///  - 不取更小值：越靠近 2~3，把「抖动一下但马上能下」的站点判死的概率越高。
+///
+/// 会不会误伤正常网络抖动/断流重连：不会。只要某一次尝试真的写进了 >0 字节，
+/// 计数立刻清零（见 `worker_stream` 的 Err 分支）——「慢启动但最终能下」的站点
+/// 每轮至少会出几个字节，永远攒不到 5 次连续零字节。
+/// 已知的残余盲区：每次都只写进几个字节后再断的站点，这条判据抓不住（它每轮都在
+/// 产出证据，证明链路是通的），那种情况由 `CHUNK_IDLE` 读超时负责在单次尝试内收尾。
+const STREAM_STALL_ATTEMPTS: usize = 5;
+
+/// 单流停滞判据（纯函数，便于单测）：连续 `zero_streak` 次尝试一个字节都没写。
+///
+/// 只数「零字节」，不掺时间：长度未知的单流无法续传，一次大文件重下本身就可能跑
+/// 几十分钟——那是在进展，不是停滞；用时间当判据只会误杀慢速但健康的下载。
+fn stream_stalled(zero_streak: usize) -> bool {
+    zero_streak >= STREAM_STALL_ATTEMPTS
+}
+
+/// 单流零字节连击的递推（纯函数，便于单测）：本次尝试一字节未写才 +1，写过就清零。
+///
+/// 清零这一步是「不误伤慢启动」的关键：慢速站点、偶发断流每轮都会写进一些字节，
+/// 计数必须回到 0，否则「总共失败过 5 次」会被当成「连续 5 次零字节」，
+/// 一个正常但慢的任务也会在第五次重试时被处决。
+fn stream_zero_streak(prev: usize, attempt_bytes: u64) -> usize {
+    if attempt_bytes == 0 {
+        prev + 1
+    } else {
+        0
+    }
+}
+
 /// 长度未知（探测不出 `Content-Length`、也没有真正的 206）时的驱动：一条流顺序读到 EOF。
 ///
 /// 与 `worker` 必须分开写的原因：
@@ -914,6 +975,11 @@ fn stalled(attempts: usize, since_last_growth: Duration) -> bool {
 ///    （上一轮只写了半截、或服务器把文件换掉了都看不出来），所以每次 run 都从 0
 ///    覆盖重写，`ensure_part` 也绝不 `set_len`；
 ///  - EOF 后把 `total` 回填成实际写入字节数，界面与落盘的任务记录才有正确大小。
+///
+/// 重试策略：可恢复错误默认无限重试（网络抖动该自愈就自愈），但有一条下界——
+/// 连续 `STREAM_STALL_ATTEMPTS` 次尝试**一个字节都没写进文件**就落 `stalled` fatal。
+/// 没有这条下界，域名永久解析失败/代理配错/403 会让任务永远停在 downloading，
+/// 用户只能删任务。
 async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
     // 未知长度只有一个段，索引恒 0。
     const IDX: usize = 0;
@@ -955,6 +1021,9 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
     let counter = Arc::new(AtomicU64::new(0));
     let mut written = 0u64;
     let mut attempt = 0usize;
+    // 连续「一个字节都没写」的尝试次数，见 STREAM_STALL_ATTEMPTS。
+    // 跨尝试累积：只有写进过字节才清零，所以它数的是「连续零字节」而不是总失败数。
+    let mut zero_streak = 0usize;
     let mut interval_start = Instant::now();
     let mut interval_bytes = 0u64;
 
@@ -1032,6 +1101,12 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
                 break n.max(written);
             }
             Err(e) => {
+                // 本次尝试真正写进文件的字节数：counter 在尝试开始时已 store(0)、
+                // base 恒为 0，所以它的终值就是这个 attempt 的增量（等价于「开始时
+                // 记 basetick、结束时看增量」，单流每次从 0 重写，basetick 恒为 0）。
+                // 必须在 written 归零**之前**取：counter 只在 write_all 成功后才自增，
+                // 它就是「有没有字段落账」的权威证据。
+                let attempt_bytes = counter.load(Ordering::Relaxed);
                 // 下一次尝试从 0 重写，进度计数器与折算量都要归零。
                 written = 0;
                 interval_bytes = 0;
@@ -1051,6 +1126,32 @@ async fn worker_stream(task: Arc<Mutex<Task>>, gen: usize) {
                         s.downloaded = 0;
                         s.speed = 0.0;
                     }
+                }
+                // ---- 单流的零字节兜底：给「无限重试」一个下界 ----
+                // `stalled()` 的全局零增长判据在这里不成立（上面刚把 downloaded 归零，
+                // 见 STREAM_STALL_ATTEMPTS 的注释），于是域名永久解析失败、代理配错、
+                // 403 这类确定性故障会在这里无限重试、把任务永远钉在 downloading。
+                // 判据是「连续多少次尝试一个字节都没写」：只要有一轮写进了字节，
+                // 就证明链路是通的，计数立刻清零——正常断流重连不会累积。
+                zero_streak = stream_zero_streak(zero_streak, attempt_bytes);
+                if stream_stalled(zero_streak) {
+                    mark_error(
+                        &task,
+                        gen,
+                        // 与分段侧的 stalled 共用同一个码（文案见 errors.ts）：
+                        // 这里引擎同样**已经停止自动重试**，绝不能复用 no_reply。
+                        "stalled",
+                        format!(
+                            "stalled: zero bytes on {} consecutive attempts (last: {})",
+                            zero_streak, e.msg
+                        ),
+                        json!({
+                            "attempts": zero_streak,
+                            "mode": "stream",
+                        }),
+                    )
+                    .await;
+                    return;
                 }
                 attempt += 1;
                 tokio::time::sleep(retry_backoff(attempt, IDX)).await;
@@ -2181,5 +2282,38 @@ mod tests {
         assert!(stalled(STALL_ATTEMPTS + 5, STALL_WINDOW * 2));
         // 窗口必须显著大于退避封顶，否则每次正常重试的间隙都会被算成停滞。
         assert!(STALL_WINDOW > Duration::from_secs(RETRY_BACKOFF_CAP * 2));
+    }
+
+    // ---- 单流零字节兜底：连续 5 次一个字节都没写才判死 ----
+    #[test]
+    fn stream_stall_needs_five_consecutive_zero_byte_attempts() {
+        // 0~4 次零字节都不判：TLS 重协商、刚唤醒、代理重连都可能连丢几次，
+        // 第 5 次之前必须还留着自愈机会。
+        for n in 0..STREAM_STALL_ATTEMPTS {
+            assert!(!stream_stalled(n), "zero_streak={n} 不该判死");
+        }
+        // 恰好到阈值才判死，再多只会更确定。
+        assert!(stream_stalled(STREAM_STALL_ATTEMPTS));
+        assert!(stream_stalled(STREAM_STALL_ATTEMPTS + 1));
+        // 阈值必须 > 1，否则第一次失败就判死，等于把「无限重试」换成「零重试」。
+        assert!(STREAM_STALL_ATTEMPTS > 1);
+    }
+
+    #[test]
+    fn stream_zero_streak_resets_as_soon_as_any_byte_lands() {
+        // 连续零字节才累积。
+        assert_eq!(stream_zero_streak(0, 0), 1);
+        assert_eq!(stream_zero_streak(4, 0), STREAM_STALL_ATTEMPTS);
+        // 只要某一轮写进过字节（哪怕只有 1 字节），连击立刻清零：
+        // 「慢启动但最终能下」的站点每轮都产出证据，永远攒不到 5 次。
+        assert_eq!(stream_zero_streak(4, 1), 0);
+        assert_eq!(stream_zero_streak(4, 1 << 20), 0);
+        // 走一遍抖动序列：零、零、有字节、零、零、零、零 → 只有 4，不该判死。
+        let mut streak = 0usize;
+        for bytes in [0u64, 0, 512, 0, 0, 0, 0] {
+            streak = stream_zero_streak(streak, bytes);
+        }
+        assert_eq!(streak, 4);
+        assert!(!stream_stalled(streak));
     }
 }

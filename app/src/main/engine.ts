@@ -191,6 +191,11 @@ export class EngineTask {
    * 暂停看门狗的判据之一：引擎正常时每 100ms 吐一帧，9 秒一帧都没有才算卡死。
    * 用**收到事件**而不是「本地状态没变」来判定，是因为本地状态本来就不可信——
    * pause() 会先乐观地置成 paused，之后再拿它当证据就是循环论证。
+   *
+   * 0 是「还没收到过任何进度帧」的哨兵，不是 1970 年的时间戳：绝不能把它直接
+   * 当 Date.now() 的被减数用——`Date.now() - 0` 恒大于任何窗口，会把
+   * 「还没有任何进度」误判成「已经卡死了很久」。没有基准时按「刚刚挂上
+   * 看门狗」算（见 armPauseWatchdog / progressIdleMs），而不是按 1970 年算。
    */
   private lastProgressAt = 0
   /** probe 发出后的心跳看门狗，见 sendStartCommands()。 */
@@ -576,7 +581,25 @@ export class EngineTask {
   private armPauseWatchdog(): void {
     this.clearPauseWatchdog()
     this.pauseWatchdogRounds = 0
+    // 还没有任何进度记录时，以「挂上看门狗的这一刻」为基准。
+    // 为什么不干脆让 lastProgressAt 保持 0：判据是 `Date.now() - lastProgressAt > 窗口`，
+    // `Date.now() - 0` 恒大于窗口，第一轮检查就会把「这个任务还一帧进度都没吐过」
+    // 误判成「卡死了很久」并立刻 terminate 一个可能健康的引擎。今天这条路径
+    // 靠「能进入 paused 的 downloading 状态必然先收到过带 downloaded 的快照」
+    // 侥幸不可达，但那是对上游（引擎先发快照、主进程先 handleEvent）的隐性依赖，
+    // 不在本函数的契约里；在这里补基准，契约就闭合了。
+    if (this.lastProgressAt <= 0) this.lastProgressAt = Date.now()
     this.pauseStallCheck()
+  }
+
+  /**
+   * 距上一帧进度过去了多久（ms）；从未收到过进度帧时返回 0。
+   *
+   * 哨兵 0 走「刚发生」而不是「很久以前」：漏了基准的代价必须是「不误杀」，
+   * 而不是「立刻杀」——没有证据说明它卡死时，看门狗最多跑满轮数后放弃并记 warn。
+   */
+  private progressIdleMs(): number {
+    return this.lastProgressAt > 0 ? Date.now() - this.lastProgressAt : 0
   }
 
   private pauseStallCheck(): void {
@@ -584,7 +607,7 @@ export class EngineTask {
       this.pauseWatchdog = null
       // 用户已经继续/取消：这条看门狗的语义（保证暂停真的停住）已经不成立了。
       if (this.state !== 'paused') return
-      if (Date.now() - this.lastProgressAt > PAUSE_STALL_MS) {
+      if (this.progressIdleMs() > PAUSE_STALL_MS) {
         // 既没等到确认、这一整段窗口里也没有任何进度事件 = 引擎进程卡死。
         // terminate 不发 stop，断点保留在 .part + sidecar 里，用户点「继续」
         // 会重新拉起进程从断点续传。
