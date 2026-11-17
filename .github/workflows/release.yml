@@ -81,9 +81,22 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: dist:dir smoke（解包产物可启动 + hello 通）
+      # 解包产物验收（发版前必过闸）：smoke_packaged.mjs 验的是
+      # app/release/win-unpacked/hanehana.exe —— 起真实打包进程、CDP 里调
+      # window.hh.hello()，顺带证明 extraResources 里的引擎/host/扩展都在位。
+      # 上一步 dist 其实已经产出该目录，这里仍显式跑一次 dist:dir：把「被测
+      # 产物怎么来的」收进这一步，闸就不依赖 dist 步骤的目标配置——将来 dist
+      # 改成别的产物形态时，smoke 不会悄无声息地对着旧目录跑绿。多一次构建
+      # 换来「打包态真的被起过」：此前打包态从未被验过，日常闸（typecheck/
+      # 单测/静态）与 dist 只证明「构建成功」，不证明 asar/extraResources
+      # 布局下应用能起来。失败即停，下面的 publish 不会执行（draft 已建但
+      # 未发布，用户看不到）。
+      - name: 解包产物验收（dist:dir + smoke）
+        timeout-minutes: 20
         working-directory: app
-        run: npx electron-builder --dir && node scripts/smoke_packaged.mjs
+        run: |
+          npm run dist:dir
+          npm run smoke
         env:
           PYTHONIOENCODING: utf-8
 

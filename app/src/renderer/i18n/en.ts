@@ -317,6 +317,13 @@ export const en: Record<I18nKey, string> = {
     'Restoring overwrites save files with the same name in the game folder (current saves are moved to .pre-restore first). Continue?',
   backup_restore_ok: 'Restore',
   backup_restored: 'Restored {n} save files',
+  // Extra note on success: the snapshot was already missing files (only the meta files list is restored)
+  backup_restored_skip: '; another {n} file(s) ({size}) were not included in this snapshot and were not restored',
+  // Inline hint in the snapshot list: make it clear before restoring that this snapshot is not a full set
+  backup_snap_skip: 'This snapshot is missing {n} file(s) ({size}); restoring will not bring them back',
+  // Skip notice after creating a snapshot: {mb}/{gb} come from shared/snapshotLimits, no hardcoded numbers
+  backup_skip_notice:
+    "{count} file(s) ({size}) were not included in this snapshot: they exceed the {mb}MB per-file limit or the {gb}GB per-snapshot budget. They are recorded in the snapshot's meta.json (skipped list) and will not be silently ignored; copy them manually if you need a full backup.",
   backup_del_title: 'Delete snapshot',
   backup_del_confirm: 'Delete this snapshot? This cannot be undone.',
   backup_del_fail: 'Delete failed',

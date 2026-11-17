@@ -28,6 +28,7 @@ import type { BackupStats, CloudSyncResult, Game, SnapshotInfo, SnapshotMeta, Sn
 import { isSaveFile, webdavUrlError, relToRemote, bigBodyRe } from './saveRules'
 import { dataDir } from './store'
 import { sha1File } from '../shared/sha1File'
+import { SNAPSHOT_MAX_FILE_BYTES, SNAPSHOT_MAX_TOTAL_BYTES } from '../shared/snapshotLimits'
 
 // ---------------------------------------------------------------- 类型
 
@@ -38,29 +39,10 @@ export type { SnapshotMeta, SnapshotSkipEntry }
 
 // ---------------------------------------------------------------- 快照闸门
 
-/**
- * 单文件入快照上限（200 MiB）。为什么是 200MB：
- * - galgame 的存档本体（.sav/.dat/.ksd）普遍是 KB~MB 级；超过 200MB 的
- *   「存档目录里的文件」几乎总是混进来的资源包/语音/视频（游戏本体的一
- *   部分），不是进度数据。把这类文件整份 copyFileSync 进每个快照、再乘
- *   上自动备份的保留份数，备份盘会被直接吃满——上一版把「>200MB 跳过」
- *   整个删掉，修掉了静默丢件，却引入了静默涨盘。
- * - 代价：极少数真有 >200MB 存档的游戏，该文件不进快照本体；但它会进
- *   meta.json 的 skipped[] 留痕并在 UI 提示（不静默丢），用户可手动把
- *   这棵目录整份复制兜底。
- */
-export const SNAPSHOT_MAX_FILE_BYTES = 200 * 1024 * 1024
-
-/**
- * 单次快照拷贝总量上限（2 GiB）。为什么是 2GB：
- * - 备份是全量拷贝（明确不做硬链接/去重/增量：硬链接会让游戏原地改写
- *   存档直接改掉历史快照，等于制造更隐蔽的数据损坏），快照体积只能靠
- *   总量闸约束。2GiB × 自动保留份数（默认个位数）≈ 每游戏十几 GiB 封顶，
- *   是「常见存档量级够用、又不会被一个 5GB 存档目录×保留策略吃满盘」的折中。
- * - 超预算的文件进 skipped[]（reason='budget'）并提示，不静默丢；这些
- *   文件的进度不在本快照里，恢复后需用户自行处理。
- */
-export const SNAPSHOT_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+// 闸门真值在 shared/snapshotLimits.ts（为什么搬出去见那里的注释：渲染层的
+// 提示文案要插同一组数字）。这里 re-export 保持既有导入面——saves.ts 一直
+// 是这两个常量的对外出口，别处 import 不用跟着动。
+export { SNAPSHOT_MAX_FILE_BYTES, SNAPSHOT_MAX_TOTAL_BYTES }
 
 // ---------------------------------------------------------------- 路径
 
@@ -328,6 +310,10 @@ export function listAllBackups(games: Game[]): BackupStats[] {
  * 恢复快照：当前存档先挪成 .pre-restore-<ts>（防恢复错找不回），
  * 再把快照文件按清单拷回游戏目录。
  *
+ * 返回值带 skippedCount/skippedBytes：恢复只回拷 files 清单里的文件，
+ * 快照创建时被闸门拦下的那些不会凭空出现——渲染层据此在成功提示里补一句，
+ * 免得用户以为「恢复完 = 全部拿回来了」。
+ *
  * f.rel 来自快照目录里的 meta.json（可能被篡改/损坏/从不可信来源导入）：
  * 每个 rel 必须 resolve 后仍落在快照目录与游戏目录内才放行，`../`/绝对路径/
  * 空串一律拒绝——否则一次恢复就能把任意文件写到游戏目录之外（路径穿越写）。
@@ -346,7 +332,7 @@ function isRelInside(root: string, rel: string): boolean {
 export function restoreSnapshot(
   game: Game,
   snapshotDir: string,
-): { ok: true; restored: number } | { ok: false; error: string } {
+): { ok: true; restored: number; skippedCount: number; skippedBytes: number } | { ok: false; error: string } {
   const metaPath = join(snapshotDir, 'meta.json')
   if (!existsSync(metaPath)) return { ok: false, error: '快照缺少 meta.json' }
   let meta: SnapshotMeta
@@ -364,9 +350,14 @@ export function restoreSnapshot(
   // 中途失败（磁盘满/权限）时逆序回滚：删掉已拷入的新档、把原档 rename 回来，
   // 让游戏目录回到恢复前的状态——不做的话快照会停在「半恢复」的坏状态。
   const rolled: { dst: string; pre: string | null }[] = []
-  // 旧版/被改坏的 meta 可能缺 files（skipped 是新字段，恢复时不需要它）：
-  // 清单缺失就按空快照处理（恢复 0 个），不能因为读旧快照把恢复流程崩掉。
+  // 旧版/被改坏的 meta 可能缺 files（skipped 同样可能缺）：清单缺失就按空
+  // 快照处理（恢复 0 个），不能因为读旧快照把恢复流程崩掉。
   const files = Array.isArray(meta.files) ? meta.files : []
+  // 快照本来就少了文件（meta.skipped）：恢复只按 files 清单回拷，用户最需要
+  // 知道的是「没全拿回来」。摘要随返回值带出去，渲染层在成功提示里补一句——
+  // 只读 meta.json 既有字段，不改落盘 schema（旧快照没有 skipped 就是 0）。
+  const skipped = Array.isArray(meta.skipped) ? meta.skipped : []
+  const skippedBytes = skipped.reduce((a, s) => a + (s?.size ?? 0), 0)
   for (const f of files) {
     if (!f || typeof f.rel !== 'string') continue
     // 双重限域：src 必须真的在快照目录里、dst 必须真的在游戏目录里
@@ -408,7 +399,7 @@ export function restoreSnapshot(
         : { ok: false, error: mainErr }
     }
   }
-  return { ok: true, restored }
+  return { ok: true, restored, skippedCount: skipped.length, skippedBytes }
 }
 
 export function deleteSnapshot(gameId: string, snapshotDir: string): boolean {

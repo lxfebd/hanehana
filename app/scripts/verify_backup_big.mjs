@@ -1,4 +1,4 @@
-// 存档备份「不丢件、不涨盘」回归靶（M1）。
+// 存档备份「不丢件、不涨盘」回归靶（M1 + M7 收口）。
 //
 // 断言链（真实 Electron + 真实 IPC，不是单元桩）：
 //  1. save/big.dat（210MB 稀疏文件）不进快照本体 → 它出现在 meta.json 的
@@ -7,6 +7,10 @@
 //  3. backupCreate 的返回值能看出「有跳过」：skippedCount / skippedBytes；
 //  4. backupsList（列表读取路径）同样读得到跳过摘要——旧 meta 没有 skipped
 //     字段时按 0 兜底、不能崩。
+//  5. 渲染层（CDP）：备份对话框对 skippedCount>0 的快照显示「该快照有 N 个
+//     文件未纳入」，恢复二次确认里再提醒一次——恢复前就得知道这份快照不是全集；
+//  6. 恢复成功提示补一句「另有 N 个文件未纳入、未恢复」（主进程返回值带摘要），
+//     不再让人以为「恢复完 = 全都拿回来了」。
 //
 // 为什么用 ftruncate 造 210MB：要真实触发 200MB 单文件闸门，但为一个「一定
 // 会被跳过」的文件真写 210MB 数据既慢又费盘；ftruncateSync 只改文件长度。
@@ -23,6 +27,7 @@ import {
   ftruncateSync,
   mkdirSync,
   openSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -31,6 +36,7 @@ import {
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { killTree, pickFreePort } from './lib/probePort.mjs'
+import { tryWaitFor } from './lib/waitFor.mjs'
 
 // 从脚本位置推 APP_ROOT：既支持 `node scripts/verify_backup_big.mjs`（cwd=app/），
 // 也支持仓库根目录调 `node app/scripts/verify_backup_big.mjs`——不能信 process.cwd()。
@@ -299,6 +305,119 @@ async function main() {
       '列表里的快照体量只含小存档',
       !!listed && listed.totalBytes === SMALL_BYTES,
       `totalBytes=${listed && listed.totalBytes}`,
+    )
+
+    // ---- 项② 的 CDP 断言：快照「本来就少了文件」必须在恢复前就被看见 ----
+    // 路径：库页 → 封面（g1）→ 详情「存档」页签 → 备份入口 → 快照行 → 恢复确认。
+    // 定位一律走 data-testid / 语义类名，不按中文文案匹配（文案随语言变，钩子不变）。
+    // 为什么不直接置 library.backupOpen：library 是渲染进程模块内的 reactive，
+    // CDP 里拿不到句柄；走 UI 顺带把「入口存在」也覆盖了。
+    const uiTrace = []
+    // 先等侧栏挂载再点：渲染层刚 boot 完时 nav 可能还没画出来，点击会返回 false，
+    // 下游三条 UI 断言就跟着红（实测连续快速跑两次时命中过一次：14/17）。
+    // 这是「等条件」，不是重试——点不到就是没就绪，等它出现。
+    const navReady = await tryWaitFor(() => ev(`!!document.querySelector('[data-testid="nav-library"]')`), {
+      timeoutMs: 30000,
+      label: '侧栏 nav-library 就绪',
+    })
+    uiTrace.push('nav-ready=' + navReady)
+    const navClicked = await ev(
+      `(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return true } return false })()`,
+    )
+    ck('侧栏就绪后能进入库页', navClicked === true, 'navReady=' + navReady + ' navClicked=' + navClicked)
+    const readTestId = (id) =>
+      ev(
+        `JSON.stringify((() => {
+          const el = document.querySelector('[data-testid="${id}"]')
+          return { has: !!el, visible: !!el && el.getBoundingClientRect().height > 0, text: el ? el.textContent.trim() : '' }
+        })())`,
+      ).then((s) => JSON.parse(s || '{"has":false,"visible":false,"text":""}'))
+
+    uiTrace.push(
+      'cover-wall=' +
+        (await tryWaitFor(() => ev(`!!document.querySelector('.cover-card')`), {
+          timeoutMs: 20000,
+          label: '库页封面墙',
+        })),
+    )
+    // 封面卡片没有 data-testid：种子库里只有 g1 的标题含「万华镜」，按标题定位
+    // 不受虚拟列表滚动/排序变化影响（它是第一屏第一个）。
+    await ev(`(() => {
+      const card = [...document.querySelectorAll('.cover-card')].find(
+        (c) => ((c.querySelector('.cover-title') || {}).textContent || '').includes('万华镜'),
+      )
+      if (card) card.click()
+      return !!card
+    })()`)
+    uiTrace.push(
+      'detail-panel=' +
+        (await tryWaitFor(() => ev(`!!document.querySelector('.detail-panel')`), {
+          timeoutMs: 10000,
+          label: '详情面板',
+        })),
+    )
+    await ev(
+      `(() => { const b = document.querySelector('[data-testid="tab-saves"]'); if (b) b.click(); return !!b })()`,
+    )
+    uiTrace.push(
+      'backup-entry=' +
+        (await tryWaitFor(() => ev(`!!document.querySelector('[data-testid="act-backup-records"]')`), {
+          timeoutMs: 10000,
+          label: '备份入口',
+        })),
+    )
+    await ev(
+      `(() => { const b = document.querySelector('[data-testid="act-backup-records"]'); if (b) b.click(); return !!b })()`,
+    )
+    uiTrace.push(
+      'snap-skip=' +
+        (await tryWaitFor(() => ev(`!!document.querySelector('[data-testid="backup-snap-skip"]')`), {
+          timeoutMs: 15000,
+          label: '快照行未纳入提示',
+        })),
+    )
+
+    // 快照行提示：必须有「1 个文件」+ 210MB 体量（数字来自本靶的 fixture，不是文案匹配）
+    const hint = await readTestId('backup-snap-skip')
+    ck(
+      '备份对话框里快照行显示「有 1 个文件未纳入（210MB）」',
+      hint.visible && /\b1\b/.test(hint.text) && hint.text.includes('210'),
+      `hint=${JSON.stringify(hint)} 路径=${uiTrace.join(' ')}`,
+    )
+
+    // 点该行「恢复」→ 二次确认里必须再说一次同一句（两次渲染自同一 i18n 键，文本应完全一致）
+    await ev(
+      `(() => { const b = document.querySelector('[data-testid="backup-snap-restore"]'); if (b) b.click(); return !!b })()`,
+    )
+    const confirmShown = await tryWaitFor(() => ev(`!!document.querySelector('[data-testid="backup-restore-skip"]')`), {
+      timeoutMs: 10000,
+      label: '恢复确认弹窗里的未纳入提示',
+    })
+    const confirmSkip = await readTestId('backup-restore-skip')
+    ck(
+      '恢复二次确认里再提醒一次（同一句）',
+      confirmShown && confirmSkip.visible && confirmSkip.text === hint.text,
+      `confirm=${JSON.stringify(confirmSkip)} hint.text=${JSON.stringify(hint.text)}`,
+    )
+
+    // 确认恢复：点 antd 确认框主按钮（语义类名，不按「继续/恢复」文案找）
+    await ev(`(() => {
+      const btns = [...document.querySelectorAll('.ant-modal-confirm-btns button')]
+      const ok = btns.find((b) => b.classList.contains('ant-btn-primary'))
+      if (ok) ok.click()
+      return !!ok
+    })()`)
+    const toastShown = await tryWaitFor(() => ev(`!!document.querySelector('[data-testid="backup-restore-toast"]')`), {
+      timeoutMs: 15000,
+      label: '恢复成功提示',
+    })
+    const toast = await readTestId('backup-restore-toast')
+    // .pre-restore-* 落盘 = 恢复真的跑过（不是只弹了一句文案）
+    const preRestore = readdirSync(join(snap.dirPath, '..')).some((n) => n.startsWith('.pre-restore-'))
+    ck(
+      '恢复成功提示补上「另有 1 个文件未纳入」',
+      toastShown && toast.visible && /\b1\b/.test(toast.text) && toast.text.includes('210') && preRestore,
+      `toast=${JSON.stringify(toast)} preRestore=${preRestore}`,
     )
 
     console.log(

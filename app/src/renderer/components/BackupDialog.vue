@@ -6,13 +6,14 @@
  * 手动创建、恢复、删除；配置了 WebDAV 后每条快照可一键同步到云端。
  * 所有写操作走 window.hh 桥，失败用弹窗内置错误条展示（不滥用全局 message）。
  */
-import { computed, ref, watch } from 'vue'
+import { computed, h, ref, watch } from 'vue'
 import { CloudUpload, DatabaseBackup, HardDriveDownload, RefreshCw, Trash2 } from 'lucide-vue-next'
 import { Modal, message } from 'ant-design-vue'
 import DialogShell from './DialogShell.vue'
 import { library } from '../stores/library'
 import type { BackupStats, SnapshotInfo } from '../../shared/types'
-import { t, tf, lang } from '../i18n'
+import { SNAPSHOT_MAX_FILE_MB, SNAPSHOT_MAX_TOTAL_GB } from '../../shared/snapshotLimits'
+import { t, tf } from '../i18n'
 
 const open = defineModel<boolean>('open')
 
@@ -62,20 +63,38 @@ function fmtTime(ts: number): string {
 }
 
 /**
- * 跳过提示文案（只在 skipped 非空时出现）。为什么不用 i18n 词典：本次改动
- * 白名单只允许动本文件，词典加键要同时改 zh/en 两个文件；在组件内按当前
- * 语言就地分派，行为与 t()/tf() 一致（语言切换时随 lang 响应式重渲染）。
+ * 跳过提示文案（只在 skipped 非空时出现）。
+ * 「200MB / 2GB」不再写死在这里：数字来自 shared/snapshotLimits（与主进程闸门
+ * 同一份真值），改上限时文案自动跟着变。此前这两处各写一份，改常量文案就漂移
+ * ——用户看到的规则与实际闸门对不上。
  */
 function skipNoticeText(count: number, bytes: number): string {
-  const size = fmtSize(bytes)
-  if (lang.value === 'zh') {
-    return `本次快照有 ${count} 个文件未纳入（共 ${size}）：超过单文件 200MB 上限或单次快照 2GB 总量预算。这些文件已记入快照目录 meta.json 的 skipped 清单，不会被静默忽略；如需完整备份请手动复制它们。`
-  }
-  return `${count} file(s) (${size}) were not included in this snapshot: they exceed the 200MB per-file limit or the 2GB per-snapshot budget. They are recorded in the snapshot's meta.json (skipped list) and will not be silently ignored; copy them manually if you need a full backup.`
+  return tf('backup_skip_notice', {
+    count,
+    size: fmtSize(bytes),
+    mb: SNAPSHOT_MAX_FILE_MB,
+    gb: SNAPSHOT_MAX_TOTAL_GB,
+  })
 }
 
 /** 可见提示文案：由跳过摘要计算得出，切语言时跟着变（空串 = 不显示）。 */
 const skipNotice = computed(() => (skipStats.value ? skipNoticeText(skipStats.value.count, skipStats.value.bytes) : ''))
+
+/**
+ * 单条快照的「未纳入」提示：快照创建时被闸门拦下的文件不会记进 files 清单，
+ * 恢复也回拷不到它们。列表里先亮出来，用户才知道这份快照不是全集——否则
+ * 恢复完看到「已恢复 N 个」，会以为全部拿回来了。
+ */
+function snapSkipText(snap: SnapshotInfo): string {
+  return tf('backup_snap_skip', { n: snap.skippedCount ?? 0, size: fmtSize(snap.skippedBytes ?? 0) })
+}
+
+/** 恢复成功提示：已恢复 N 个 +（快照本来有跳过时）「另有 N 个未纳入、未恢复」。 */
+function restoreSuccessText(r: { restored: number; skippedCount?: number; skippedBytes?: number }): string {
+  const base = tf('backup_restored', { n: r.restored })
+  const skipped = r.skippedCount ?? 0
+  return skipped > 0 ? base + tf('backup_restored_skip', { n: skipped, size: fmtSize(r.skippedBytes ?? 0) }) : base
+}
 
 async function createBackup(): Promise<void> {
   const g = game.value
@@ -108,9 +127,24 @@ async function createBackup(): Promise<void> {
 function restoreSnapshot(snap: SnapshotInfo): void {
   const g = game.value
   if (!g || busy.value || !snap.dirPath) return
+  const skipped = snap.skippedCount ?? 0
   Modal.confirm({
     title: t('backup_restore_title'),
-    content: t('backup_restore_confirm'),
+    // 有跳过时把「这份快照本来就少了文件」写进确认文案：不写的话，用户恢复完
+    // 只看到「已恢复 N 个」，会以为全都拿回来了。content 用 h() 包一层，只为
+    // 给这句挂 data-testid——回归靶按语义钩子断言，不按中文文案匹配（文案随
+    // 语言/措辞调整会假红）。仍然复用现有 Modal.confirm，不新增对话框组件。
+    content:
+      skipped > 0
+        ? h('div', [
+            h('div', t('backup_restore_confirm')),
+            h(
+              'div',
+              { 'data-testid': 'backup-restore-skip', style: 'margin-top: 6px; color: var(--hh-color-warning)' },
+              snapSkipText(snap),
+            ),
+          ])
+        : t('backup_restore_confirm'),
     okText: t('backup_restore_ok'),
     cancelText: t('common_cancel'),
     okButtonProps: { danger: true },
@@ -123,7 +157,11 @@ function restoreSnapshot(snap: SnapshotInfo): void {
         if (!r.ok) {
           error.value = r.error
         } else {
-          message.success(tf('backup_restored', { n: r.restored }))
+          // 主进程随返回值带出 skippedCount/skippedBytes：恢复只回拷 files 清单，
+          // 快照缺的那些不会回来，成功提示里必须补一句（toast 挂 data-testid 供回归靶断言）。
+          message.success({
+            content: h('span', { 'data-testid': 'backup-restore-toast' }, restoreSuccessText(r)),
+          })
         }
       } catch (e) {
         error.value = e instanceof Error ? e.message : String(e)
@@ -215,13 +253,23 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
           <div class="snap-info">
             <div class="snap-time">{{ fmtTime(snap.createdAt) }}</div>
             <div class="snap-meta">{{ fmtCount(snap.files) }} · {{ fmtSize(snap.totalBytes) }}</div>
+            <!-- 不是全集的快照要在这里就说清：恢复只回拷 files 清单里的文件 -->
+            <div v-if="snap.skippedCount && snap.skippedCount > 0" class="snap-skip" data-testid="backup-snap-skip">
+              {{ snapSkipText(snap) }}
+            </div>
           </div>
           <div class="snap-actions">
             <button class="btn ghost" :disabled="busy" :title="t('backup_sync_btn')" @click="syncSnapshot(snap)">
               <CloudUpload :size="13" />
               {{ busy && busyAction === 'sync-' + snap.dirPath ? t('backup_syncing') : t('backup_cloud') }}
             </button>
-            <button class="btn ghost" :disabled="busy" :title="t('backup_restore_ok')" @click="restoreSnapshot(snap)">
+            <button
+              class="btn ghost"
+              data-testid="backup-snap-restore"
+              :disabled="busy"
+              :title="t('backup_restore_ok')"
+              @click="restoreSnapshot(snap)"
+            >
               <HardDriveDownload :size="13" />
               {{ busy && busyAction === 'restore-' + snap.dirPath ? t('backup_restoring') : t('backup_restore_ok') }}
             </button>
@@ -332,6 +380,12 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
 .snap-meta {
   font-size: var(--hh-font-caption-size);
   color: var(--hh-color-text-dim);
+}
+/* 未纳入提示用小字 + 警告色：是提醒，不是错误条（错误条另有 .error-bar） */
+.snap-skip {
+  font-size: 11.5px;
+  color: var(--hh-color-warning);
+  line-height: 1.4;
 }
 .snap-actions {
   display: flex;

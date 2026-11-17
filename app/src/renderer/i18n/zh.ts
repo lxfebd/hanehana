@@ -327,6 +327,13 @@ export const zh = {
   backup_restore_confirm: '恢复会覆盖游戏目录中同名存档（当前存档先挪到 .pre-restore 备份）。继续？',
   backup_restore_ok: '恢复',
   backup_restored: '已恢复 {n} 个存档文件',
+  // 恢复成功时的补充提醒：快照本来就少了文件（只回拷 files 清单里的那些）
+  backup_restored_skip: '；另有 {n} 个文件未纳入本快照（共 {size}），未恢复',
+  // 快照列表行内提示：恢复前就要知道这份快照不是全集
+  backup_snap_skip: '该快照有 {n} 个文件未纳入（共 {size}），恢复不会带回它们',
+  // 新建快照的跳过提示：{mb}/{gb} 来自 shared/snapshotLimits，文案不写死数字
+  backup_skip_notice:
+    '本次快照有 {count} 个文件未纳入（共 {size}）：超过单文件 {mb}MB 上限或单次快照 {gb}GB 总量预算。这些文件已记入快照目录 meta.json 的 skipped 清单，不会被静默忽略；如需完整备份请手动复制它们。',
   backup_del_title: '删除快照',
   backup_del_confirm: '删除这份快照？该操作不可恢复。',
   backup_del_fail: '删除失败',
