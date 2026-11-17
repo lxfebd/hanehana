@@ -105,7 +105,7 @@ await send('Page.enable')
 for (let i = 0; i < 60; i++) {
   if (await ev('!!(window.hh && document.querySelector(".nav-item"))')) {
     const clicked = await ev(`(() => {
-      const item = [...document.querySelectorAll('.nav-item')].find((e) => (e.textContent||'').includes('全部游戏'))
+      const item = document.querySelector('[data-testid="nav-library"]')
       if (item) item.click()
       return !!item
     })()`)
@@ -123,7 +123,7 @@ async function openScrapeFor(title) {
   })()`)
   await sleep(400)
   const btn = await ev(`(() => {
-    const b = [...document.querySelectorAll('.actions-sub .ghost-btn')].find(x => (x.textContent||'').includes('刮削'))
+    const b = document.querySelector('[data-testid="act-scrape"]')
     if (!b) return 'NOT FOUND'; b.click(); return 'clicked scrape'
   })()`)
   if (btn === 'NOT FOUND') throw new Error('scrape button not found')

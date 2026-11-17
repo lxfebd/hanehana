@@ -209,9 +209,9 @@ function heroStateExpr() {
   })())`
 }
 
-/** B8：hero 在首页、封面墙在库页——跨页断言要先导航 */
-const navHome = (app) => app.ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('首页') || (x.textContent || '').includes('Home')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-const navLibrary = (app) => app.ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+/** B8：hero 在首页、封面墙在库页——跨页断言要先导航（按 testid 点，不认文案） */
+const navHome = (app) => app.ev(`(() => { const b = document.querySelector('[data-testid="nav-home"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+const navLibrary = (app) => app.ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
 
 function pass(name, ok, extra = '') {
   console.log(`  ${ok ? '[PASS]' : '[FAIL]'} ${name}${extra ? '  — ' + extra : ''}`)
@@ -294,14 +294,14 @@ console.log('== D：主题切换 ==')
 const accentBefore = await app1.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
 console.log('  初始 accent =', accentBefore, '(starnight 默认)')
 
-// 打开设置对话框（侧栏 nav-item 上的设置按钮，文本=nav_settings）
-await app1.ev(`(() => { const b=[...document.querySelectorAll('.nav-item')].find(x=>(x.textContent||'').includes('设置')||(x.textContent||'').includes('Settings')); if(b){b.click();return 'nav clicked'} return 'nav miss' })()`)
+// 打开设置对话框（侧栏 nav-item 的 data-testid 入口）
+await app1.ev(`(() => { const b=document.querySelector('[data-testid="nav-settings"]'); if(b){b.click();return 'nav clicked'} return 'nav miss' })()`)
 await app1.waitFor('!!document.querySelector(".dlg-foot")', '设置对话框打开')
 console.log('  设置对话框开？', await app1.ev(`!!document.querySelector('.dlg-foot')`))
 console.log('  标签页列表：', await app1.ev(`[...document.querySelectorAll('.ant-tabs-tab')].map(x=>x.textContent.trim()).join(',')`))
 console.log('  primary 按钮：', await app1.ev(`[...document.querySelectorAll('.ant-btn-primary')].map(x=>x.textContent.trim()).join(',')`))
-// 切到「外观」标签页
-const tabRes = await app1.ev(`(() => { const t=[...document.querySelectorAll('.ant-tabs-tab')].find(x=>(x.textContent||'').includes('外观')||(x.textContent||'').includes('Appearance')); if(t){t.click();return 'tab clicked'} return 'tab miss' })()`)
+// 切到「外观」标签页（TabPane 的 #tab 槽挂了 tab-ui 钩子）
+const tabRes = await app1.ev(`(() => { const t=document.querySelector('[data-testid="tab-ui"]'); if(t){t.click();return 'tab clicked'} return 'tab miss' })()`)
 await app1.waitFor('document.querySelectorAll(".preset-card").length === 5', '外观主题卡 5 张就位')
 console.log('  切外观标签：', tabRes, '| preset-card 数=', await app1.ev(`document.querySelectorAll('.preset-card').length`))
 
@@ -319,45 +319,49 @@ await app1.shot('D0_theme_preview_cards.png')
 
 // 点保存（保存按钮在 .dlg-foot，稳定定位，不依赖文本）
 const openSettingsDialog = () => app1.ev(`(() => {
-  const b=[...document.querySelectorAll('.nav-item')].find(x=>(x.textContent||'').includes('设置')||(x.textContent||'').includes('Settings'))
+  const b=document.querySelector('[data-testid="nav-settings"]')
   if(b){b.click();return 'nav clicked'} return 'nav miss'
 })()`)
 const openAppearanceTab = () => app1.ev(`(() => {
-  const t=[...document.querySelectorAll('.ant-tabs-tab')].find(x=>(x.textContent||'').includes('外观')||(x.textContent||'').includes('Appearance'))
+  const t=document.querySelector('[data-testid="tab-ui"]')
   if(t){t.click();return 'tab clicked'} return 'tab miss'
 })()`)
-const applyPreset = (label) => app1.ev(`(() => {
-  const c=[...document.querySelectorAll('.preset-card')].find(x=>(x.textContent||'').includes(${JSON.stringify(label)}))
-  if(!c) return 'NO_CARD:'+${JSON.stringify(label)}
+// 主题卡按 tokens.ts 的预设 id 定位（cinema / aurora），不按中文预设名匹配
+const applyPreset = (presetId) => app1.ev(`(() => {
+  const c=document.querySelector('[data-testid="preset-${presetId}"]')
+  if(!c) return 'NO_CARD:${presetId}'
   c.click()
-  return 'picked:'+${JSON.stringify(label)}
+  return 'picked:${presetId}'
 })()`)
 const clickSave = () => app1.ev(`(() => { const sv=document.querySelector('.dlg-foot .ant-btn-primary'); if(!sv) return 'no-save-btn'; sv.click(); return 'save clicked' })()`)
 
 // 套件 accent 按当前深浅模式取值（DEFAULT_DARK=false：启动默认浅色，
-// 套件切过去读的是浅色种子；脚本不再假设启动模式，按 data-theme 取期望值）
+// 套件切过去读的是浅色种子；脚本不再假设启动模式，按 data-theme 取期望值）。
+// 预设按 tokens.ts 的 id（cinema / aurora）定位，展示名只进日志/截图名——
+// 这样改预设中文名不会假红，切英文 locale 也能跑。
 const PRESET_ACCENT = {
-  '影院': { dark: '#D8B36A', light: '#A97F2E' },
-  '极光': { dark: '#8FB7E8', light: '#3E6FB0' },
+  cinema: { name: '影院', dark: '#D8B36A', light: '#A97F2E' },
+  aurora: { name: '极光', dark: '#8FB7E8', light: '#3E6FB0' },
 }
-for (const label of ['影院', '极光']) {
+for (const presetId of ['cinema', 'aurora']) {
+  const preset = PRESET_ACCENT[presetId]
   // 每次先重新打开设置（保存后对话框会关闭）+ 切到外观标签
   await openSettingsDialog()
   await app1.waitFor('!!document.querySelector(".dlg-foot")', '设置对话框打开')
   await openAppearanceTab()
   await app1.waitFor('document.querySelectorAll(".preset-card").length === 5', '外观主题卡 5 张就位')
-  const pick = await applyPreset(label)
+  const pick = await applyPreset(presetId)
   const sv = await clickSave()
   // 等保存生效：accent 变成该主题按当前深浅模式的期望色（原固定 900ms）
   await app1.waitFor(
-    '(function () { var m = document.documentElement.dataset.theme; var t = ' + JSON.stringify(PRESET_ACCENT[label]) + '; var e = t[m] || t.dark; return getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === e.toLowerCase() })()',
-    '切' + label + '后 accent 生效',
+    '(function () { var m = document.documentElement.dataset.theme; var t = ' + JSON.stringify({ dark: preset.dark, light: preset.light }) + '; var e = t[m] || t.dark; return getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === e.toLowerCase() })()',
+    '切' + preset.name + '后 accent 生效',
   )
   const mode = await app1.ev(`document.documentElement.dataset.theme`)
-  const expectAccentHex = PRESET_ACCENT[label][mode] ?? PRESET_ACCENT[label].dark
+  const expectAccentHex = preset[mode] ?? preset.dark
   const accent = await app1.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
-  pass(`切${label}：accent 变量更新为预期色（${mode}）`, accent.toLowerCase() === expectAccentHex.toLowerCase(), `${pick}/${sv} → accent=${accent}（期望 ${expectAccentHex}）`)
-  await app1.shot(`D_theme_${label}.png`)
+  pass(`切${preset.name}：accent 变量更新为预期色（${mode}）`, accent.toLowerCase() === expectAccentHex.toLowerCase(), `${pick}/${sv} → accent=${accent}（期望 ${expectAccentHex}）`)
+  await app1.shot(`D_theme_${presetId}.png`)
 }
 console.log('  html[data-theme] =', await app1.ev(`document.documentElement.dataset.theme`))
 console.log('  html color-scheme =', await app1.ev(`document.documentElement.style.colorScheme`))
@@ -374,11 +378,11 @@ const app1b = await launchApp()
 await app1b.waitFor('!!(window.hh && document.querySelector(".hero"))', 'app1b + hero (home)')
 // 等重启后的主题真的应用（accent = 极光按当前深浅模式的期望值），原固定 700ms
 await app1b.waitFor(
-  '(function () { var m = document.documentElement.dataset.theme; var t = ' + JSON.stringify(PRESET_ACCENT['极光']) + '; var e = t[m] || t.dark; return getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === e.toLowerCase() })()',
+  '(function () { var m = document.documentElement.dataset.theme; var t = ' + JSON.stringify({ dark: PRESET_ACCENT.aurora.dark, light: PRESET_ACCENT.aurora.light }) + '; var e = t[m] || t.dark; return getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === e.toLowerCase() })()',
   '重启后主题持久化（accent 已应用）',
 )
 const restartMode = await app1b.ev(`document.documentElement.dataset.theme`)
-const expectRestartAccent = (PRESET_ACCENT['极光'][restartMode] ?? PRESET_ACCENT['极光'].dark).toLowerCase()
+const expectRestartAccent = (PRESET_ACCENT.aurora[restartMode] ?? PRESET_ACCENT.aurora.dark).toLowerCase()
 const accentAfterRestart = await app1b.ev(`getComputedStyle(document.documentElement).getPropertyValue('--hh-color-accent').trim()`)
 pass('重启后 accent 仍为极光色（持久化生效）', accentAfterRestart.toLowerCase() === expectRestartAccent, `mode=${restartMode} accent=${accentAfterRestart}（期望 ${expectRestartAccent.toUpperCase()}）`)
 // 持久化主题下 hero 仍正常渲染
@@ -390,12 +394,13 @@ await app1b.shot('F_theme_persist_restart.png')
 
 // ---- 浅色模式验证（极光浅色）：设置→外观→切"浅色"radio→保存 ----
 console.log('== D2：极光浅色模式 ==')
-await app1b.ev(`(() => { const b=[...document.querySelectorAll('.nav-item')].find(x=>(x.textContent||'').includes('设置')||(x.textContent||'').includes('Settings')); if(b){b.click();return 'nav clicked'} return 'nav miss' })()`)
+await app1b.ev(`(() => { const b=document.querySelector('[data-testid="nav-settings"]'); if(b){b.click();return 'nav clicked'} return 'nav miss' })()`)
 await app1b.waitFor('!!document.querySelector(".dlg-foot")', '设置对话框打开')
-await app1b.ev(`(() => { const t=[...document.querySelectorAll('.ant-tabs-tab')].find(x=>(x.textContent||'').includes('外观')||(x.textContent||'').includes('Appearance')); if(t){t.click();return 'tab clicked'} return 'tab miss' })()`)
+await app1b.ev(`(() => { const t=document.querySelector('[data-testid="tab-ui"]'); if(t){t.click();return 'tab clicked'} return 'tab miss' })()`)
 await app1b.waitFor('document.querySelectorAll(".preset-card").length === 5', '外观主题卡 5 张就位')
-// 点"浅色" radio（Radio.Button → .ant-radio-button-wrapper）
-const lightRes = await app1b.ev(`(() => { const r=[...document.querySelectorAll('.ant-radio-button-wrapper')].find(x=>(x.textContent||'').includes('浅色')||(x.textContent||'').includes('Light')); if(!r) return 'no-light-radio'; r.click(); return 'light radio clicked' })()`)
+// 点"浅色" radio：Radio.Button 的 input value 就是 theme_mode 的语义值（system/dark/light），
+// 不按「浅色 / Light」文案找 label
+const lightRes = await app1b.ev(`(() => { const r=document.querySelector('input[type=radio][value="light"]'); if(!r) return 'no-light-radio'; r.click(); return 'light radio clicked' })()`)
 const svRes = await app1b.ev(`(() => { const sv=document.querySelector('.dlg-foot .ant-btn-primary'); if(!sv) return 'no-save-btn'; sv.click(); return 'save clicked' })()`)
 // 等保存生效：极光浅色 accent = #3E6FB0（原固定 300+900ms）
 await app1b.waitFor('getComputedStyle(document.documentElement).getPropertyValue("--hh-color-accent").trim().toLowerCase() === "#3e6fb0"', '切浅色后 accent 生效')

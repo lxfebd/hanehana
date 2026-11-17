@@ -132,7 +132,7 @@ async function main() {
     // 先等应用就绪（原来这里是固定 2500ms）：慢机上侧栏还没渲染就点导航，
     // 会拿到 'no'，接着在整个 15s 里等封面墙——那是时序假红，不是产品问题。
     await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
-    const nav = await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    const nav = await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     if (nav !== 'ok') console.log('  [warn] 未能导航到库页：', nav)
     // 切页后等封面墙真的渲染（固定 800+1000ms 和手拉循环都换成条件等待）
     await waitFor(() => ev('!!document.querySelector(".cover-card")'), { timeoutMs: 15000, label: '库页封面墙出现（.cover-card）' })
@@ -153,7 +153,9 @@ async function main() {
         const tagSearch = document.querySelector('.dp-tags-search input')
         const tabs = [...document.querySelectorAll('.dp-tab')]
         const activeTab = document.querySelector('.dp-tab.active')
-        const favBtn = [...document.querySelectorAll('.fav-btn')].find(b => (b.textContent||'').includes('收藏'))
+        // 语义钩子：收藏按钮由 DetailBanner 暴露 data-testid，状态看 aria-pressed；
+        // 不再按「收藏」文案找按钮——文案随 locale 变，钩子不变。
+        const favBtn = document.querySelector('[data-testid="act-fav"]')
         return {
           panel: !!panel, banner: !!banner, bannerH: banner ? banner.offsetHeight : 0,
           title: title ? title.textContent.trim().slice(0, 20) : '',
@@ -163,7 +165,7 @@ async function main() {
           tagsExpand: !!document.querySelector('.dp-tags-toggle'),
           tabCount: tabs.length,
           tabLabels: tabs.map(t => t.textContent.trim()),
-          activeTabText: activeTab ? activeTab.textContent.trim() : '',
+          activeTabId: activeTab ? activeTab.getAttribute('data-testid') : '',
           hasRange: document.querySelectorAll('.pc-range .range-chip').length,
           hasRangeSub: !!document.querySelector('.pc-range-sub'),
           hasChart: !!document.querySelector('.play-chart'),
@@ -225,7 +227,7 @@ async function main() {
 
     // ---- 分页 ----
     ck('四个分页齐（游玩数据/简介/编辑/存档）', st.tabCount === 4, 'tabs=' + st.tabCount + ' ' + JSON.stringify(st.tabLabels))
-    ck('默认激活「游玩数据」', st.activeTabText.includes('游玩数据') || st.activeTabText.includes('Game Stats'), 'active=' + st.activeTabText)
+    ck('默认激活「游玩数据」', st.activeTabId === 'tab-stats', 'active=' + st.activeTabId)
     // ---- 游玩数据页：区间 + 曲线 + 小统计 ----
     ck('区间切换 7D/30D/1Y/ALL 四枚', st.hasRange === 4, 'chips=' + st.hasRange)
     ck('区间副行（play_range）存在', st.hasRangeSub === true, 'sub=' + st.hasRangeSub)
@@ -240,12 +242,12 @@ async function main() {
     ck('工具与开关分组常驻（LE/Magpie）', st.hasTools === true && st.switches >= 2, 'switches=' + st.switches)
     ck('收藏按钮存在', st.favBtn, 'fav=' + st.favText)
     // ---- 交互：区间切换后副行/曲线仍在 ----
-    await ev(`(() => { const c=[...document.querySelectorAll('.pc-range .range-chip')].find(x=>(x.textContent||'').trim()==='全部'||(x.textContent||'').trim()==='ALL'); if(c){c.click();return 'ok'} return 'no' })()`)
+    await ev(`(() => { const c=document.querySelector('[data-testid="range-play_all"]'); if(c){c.click();return 'ok'} return 'no' })()`)
     await waitFor(() => ev('(() => { const s = (document.querySelector(".pc-range-sub")||{}).textContent||""; return !!s && s.includes("–") })()'), { timeoutMs: 5000, label: 'ALL 区间副行更新' })
     const afterRange = await ev(`(() => ({ sub: (document.querySelector('.pc-range-sub')||{}).textContent||'', svg: !!document.querySelector('.play-chart svg') }))()`)
     ck('切到 ALL 区间后副行更新且曲线仍在', afterRange && afterRange.svg === true && (afterRange.sub || '').includes('–'), JSON.stringify(afterRange))
     // ---- 交互：切到简介页（BBCode 清洗后的正文）----
-    await ev(`(() => { const t=[...document.querySelectorAll('.dp-tab')].find(x=>(x.textContent||'').includes('简介')||(x.textContent||'').includes('Introduction')); if(t){t.click();return 'ok'} return 'no' })()`)
+    await ev(`(() => { const t=document.querySelector('[data-testid="tab-intro"]'); if(t){t.click();return 'ok'} return 'no' })()`)
     await waitFor(() => ev('!!document.querySelector(".desc")'), { timeoutMs: 5000, label: '简介页正文出现' })
     const intro = await ev(`(() => {
       const d = document.querySelector('.desc')
@@ -255,25 +257,31 @@ async function main() {
     ck('简介页渲染正文', intro && (intro.hasDesc === true || (intro.text || '').length > 0), JSON.stringify(intro))
     ck('简介无 BBCode 残留（对基准的优势项）', !intro || intro.bb === false, JSON.stringify(intro && intro.text))
     // ---- 交互：切到存档页（备份开关 + 记录入口）----
-    await ev(`(() => { const t=[...document.querySelectorAll('.dp-tab')].find(x=>(x.textContent||'').includes('存档')||(x.textContent||'').includes('Save')); if(t){t.click();return 'ok'} return 'no' })()`)
+    await ev(`(() => { const t=document.querySelector('[data-testid="tab-saves"]'); if(t){t.click();return 'ok'} return 'no' })()`)
     await waitFor(() => ev('!!document.querySelector(".dp-switch input[type=checkbox]")'), { timeoutMs: 5000, label: '存档页渲染（备份开关）' })
-    const saves = await ev(`(() => ({ switch: !!document.querySelector('.dp-switch input[type=checkbox]'), btn: !![...document.querySelectorAll('.dp-pane-btn')].find(b=>(b.textContent||'').includes('备份')) }))()`)
+    const saves = await ev(`(() => ({ switch: !!document.querySelector('.dp-switch input[type=checkbox]'), btn: !!document.querySelector('[data-testid="act-backup-records"]') }))()`)
     ck('存档页有备份开关与记录入口', saves && saves.switch === true && saves.btn === true, JSON.stringify(saves))
-    // ---- 收藏切换交互：点收藏 → 文案翻转 ----
+    // ---- 收藏切换交互：点收藏 → aria-pressed 翻面 ----
     // 不能假定初始是「未收藏」：seed_layout.mjs 会给部分游戏打 favorite，
     // 断言写成「点后必须变成已收藏」在已收藏的种子上会反向失败。
-    // 要验的是「点了文案就翻面」这个交互本身，所以先读初始态再比翻转。
-    const favBefore = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
-    await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
-    // 等文案真的翻转（乐观更新生效）再回读，原来固定 800ms
+    // 要验的是「点了状态就翻面」这个交互本身，所以先读初始态再比翻转。
+    // 状态读 aria-pressed（语义状态），不比中文/英文文案——文案随 locale 变，状态不变。
+    const readFav = () =>
+      ev(`(() => { const b = document.querySelector('[data-testid="act-fav"]'); return b ? String(b.getAttribute('aria-pressed')) : 'no-btn' })()`)
+    const favBefore = await readFav()
+    await ev(`(() => { const b = document.querySelector('[data-testid="act-fav"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    // 等状态真的翻转（乐观更新生效）再回读，原来固定 800ms
     await waitFor(
-      () => ev('(() => { const b = [...document.querySelectorAll(".fav-btn")].find(x => (x.textContent||"").includes("收藏")); return b ? b.textContent.trim() : "" })()').then((t) => !!t && t !== favBefore),
-      { timeoutMs: 5000, label: '收藏按钮文案翻转' },
+      async () => {
+        const s = await readFav()
+        return s !== 'no-btn' && s !== favBefore
+      },
+      { timeoutMs: 5000, label: '收藏按钮 aria-pressed 翻转' },
     )
-    const favAfter = await ev(`(() => { const b = [...document.querySelectorAll('.fav-btn')].find(x => (x.textContent||'').includes('收藏')); return b ? b.textContent.trim() : 'no-btn' })()`)
+    const favAfter = await readFav()
     ck(
-      '收藏切换交互正常（文案翻转 = 乐观更新生效）',
-      favBefore !== 'no-btn' && favBefore !== favAfter && ((favAfter || '').includes('收藏') || (favAfter || '').includes('Faved')),
+      '收藏切换交互正常（aria-pressed 翻转 = 乐观更新生效）',
+      favBefore !== 'no-btn' && favBefore !== favAfter,
       'before=' + favBefore + ' after=' + favAfter,
     )
     // ---- 右栏弹性（回归靶：右栏死咬 400、窗口拖窄后右栏占掉半个窗口 / 中栏被挤没）----

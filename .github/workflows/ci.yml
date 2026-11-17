@@ -11,6 +11,9 @@ on:
 jobs:
   verify:
     runs-on: windows-latest
+    # 整 job 上限：下载 e2e 单项最多 20min，其余步骤（typecheck/build/单测/cargo）
+    # 正常几分钟内结束；60min 防「卡死挂到 runner 默认 6 小时」白烧分钟数。
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -82,6 +85,8 @@ jobs:
       # 此前 PR 主链路只跑 static + layers，下载回归出问题合进来线上不拦。
       - name: regression download (e2e, CDP + HTTPS fixture + real engine)
         working-directory: app
+        # 本地实测 2–4 分钟；卡住时（引擎握手/端口/磁盘）不给它拖满整个 job 预算。
+        timeout-minutes: 20
         run: npm run regression:download
         env:
           PYTHONIOENCODING: utf-8

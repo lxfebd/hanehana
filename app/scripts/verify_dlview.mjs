@@ -12,6 +12,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
+import { waitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = join(process.cwd())
 const PORT = await pickFreePort()
@@ -127,9 +128,10 @@ async function main() {
     if (r.result?.exceptionDetails) return { __err: String(r.result.exceptionDetails.exception?.description ?? '') }
     return r.result?.result?.value
   }
-  const clickNav = async (label) =>
+  // 侧栏导航：按 data-testid 点（nav-downloads / nav-favorites），不认中文文案
+  const clickNav = async (testid) =>
     ev(
-      `(() => { const b = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('${label}')); if (b) { b.click(); return 'ok' } return 'no-nav' })()`,
+      `(() => { const b = document.querySelector('[data-testid="${testid}"]'); if (b) { b.click(); return 'ok' } return 'no-nav' })()`,
     )
   try {
     let pass = 0
@@ -143,32 +145,36 @@ async function main() {
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }
-    for (let i = 0; i < 20; i++) {
-      const e = await ev('!!window.hh')
-      if (e) break
-      await new Promise((r) => setTimeout(r, 500))
-    }
-    await new Promise((r) => setTimeout(r, 800))
+    // 等应用真正就绪（hh 桥 + 侧栏已挂载）而不是固定 800ms：冷启动慢机时
+    // 侧栏还没渲染就点导航会拿到 no-nav，后面整页断言全红——那是探针跑早了，
+    // 不是产品坏了。与 verify_detail_panel 等脚本同一口径。
+    await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), {
+      timeoutMs: 30000,
+      label: '应用就绪（hh + 侧栏导航）',
+    })
     // 启动编排诊断：useBoot 的 catch 会把失败原因写进标题栏（refreshGames/initTasks
     // 任一 reject 会让 initTasks 整体不执行 → 任务行空）。断言前先看它。
     const boot = await ev(`(document.querySelector('.titlebar .tag')||{}).textContent?.trim() || ''`)
     console.log('  [diag] boot:', JSON.stringify(boot))
 
     // ============ 下载页（B6-1） ============
-    await clickNav('下载')
+    await clickNav('nav-downloads')
     await new Promise((r) => setTimeout(r, 1100))
     const dl = JSON.parse(
       await ev(`JSON.stringify((() => {
         const root = document.querySelector('.dl-layout')
-        const crumbs = [...document.querySelectorAll('.dl-layout .ph-crumb span, .dl-layout .ph-crumb button')].map(x => x.textContent.trim()).filter(Boolean)
+        // 语义钩子：面包屑/标题按 i18n 键（crumb-<key> / page-title-<key>），
+        // 不比中文文案——文案随 locale 变，键不变。
+        const crumbOk = (k) => !!document.querySelector('.dl-layout [data-testid="crumb-' + k + '"]')
         const kpis = [...document.querySelectorAll('.dl-layout .kpi-strip .kpi-card')]
         const newBtn = [...document.querySelectorAll('.dl-layout .ph-actions .dl-btn')].find(b => (b.textContent||'').trim().length > 0)
         return {
           root: !!root,
           title: (document.querySelector('.dl-layout .ph-title')||{}).textContent?.trim() || '',
           sub: (document.querySelector('.dl-layout .ph-sub')||{}).textContent?.trim() || '',
-          crumbs,
-          kpiLabels: kpis.map(c => (c.querySelector('.kpi-label')||{}).textContent?.trim() || ''),
+          crumbs: ['nav_home', 'nav_downloads'].map(crumbOk),
+          titleTid: !!document.querySelector('.dl-layout [data-testid="page-title-nav_downloads"]'),
+          kpiKeys: ['dl_kpi_active','dl_kpi_done','dl_kpi_failed','dl_kpi_speed'].filter(k => !!document.querySelector('.dl-layout [data-testid="' + k + '"]')),
           kpiValues: kpis.map(c => (c.querySelector('.kpi-value')||{}).textContent?.trim() || ''),
           newBtnText: newBtn ? newBtn.textContent.trim() : '',
           rows: document.querySelectorAll('.task-row').length,
@@ -181,15 +187,15 @@ async function main() {
       })())`),
     )
     ck('下载页页头渲染', dl.root === true && dl.title.length > 0)
-    ck('页头面包屑 首页 / 下载任务', dl.crumbs.length === 2 && dl.crumbs[0].includes('首页') && dl.crumbs[1].includes('下载'), JSON.stringify(dl.crumbs))
-    ck('页头标题为下载任务', dl.title.includes('下载'), dl.title)
+    ck('页头面包屑 首页 / 下载任务', dl.crumbs.length === 2 && dl.crumbs.every(Boolean), JSON.stringify(dl.crumbs))
+    ck('页头标题为下载任务', dl.titleTid === true, dl.title)
     ck('页头副标题渲染', dl.sub.length > 0, dl.sub)
     ck('新建下载按钮带文字（主操作不是纯图标）', dl.newBtnText.length > 0, JSON.stringify(dl.newBtnText))
-    ck('下载页 KPI 4 张', dl.kpiLabels.length === 4, 'n=' + dl.kpiLabels.length)
+    ck('下载页 KPI 4 张', dl.kpiKeys.length === 4, 'n=' + dl.kpiKeys.length)
     ck(
       'KPI 标签齐全（进行中/已完成/失败/总速度）',
-      ['进行中', '已完成', '失败', '总速度'].every(l => dl.kpiLabels.some(x => x.includes(l))),
-      JSON.stringify(dl.kpiLabels),
+      dl.kpiKeys.length === 4,
+      JSON.stringify(dl.kpiKeys),
     )
     ck('KPI 数值渲染（总速度为速率文本）', dl.kpiValues.length === 4 && dl.kpiValues.every(v => v.length > 0), JSON.stringify(dl.kpiValues))
     // 诊断：任务行不渲染时区分「数据没来」与「虚拟列表容器高度为 0」
@@ -212,7 +218,7 @@ async function main() {
     ck('总速度位存在（无流量时隐藏是正确行为）', dl.speed.length >= 0, 'speed=' + dl.speed)
 
     // ============ 收藏夹页（B6-2） ============
-    await clickNav('收藏')
+    await clickNav('nav-favorites')
     await new Promise((r) => setTimeout(r, 1100))
     const coll = JSON.parse(
       await ev(`JSON.stringify((() => {
@@ -223,32 +229,38 @@ async function main() {
         const q = (sel) => (root ? root.querySelector(sel) : null)
         const qa = (sel) => (root ? [...root.querySelectorAll(sel)] : [])
         const cards = qa('.coll-card')
+        // 语义钩子：面包屑/标题看 crumb-<key> / page-title-<key>；维度切换看 dim-*；
+        // 「未分类」组由 coll-card-other 标记（只在这种 fallback 组上挂）。
+        const crumbOk = (k) => !!q('[data-testid="crumb-' + k + '"]')
         return {
           root: !!root,
           title: (q('.ph-title')||{}).textContent?.trim() || '',
           sub: (q('.ph-sub')||{}).textContent?.trim() || '',
-          crumbs: qa('.ph-crumb span, .ph-crumb button').map(x => x.textContent.trim()).filter(Boolean),
-          dimBtns: qa('.dim-seg .seg-chip').map(b => ({ t: b.textContent.trim(), on: b.classList.contains('active') })),
+          crumbs: ['nav_home', 'nav_favorites'].map(crumbOk),
+          titleTid: !!q('[data-testid="page-title-nav_favorites"]'),
+          dimBtns: ['dim-developer','dim-series'].map(id => { const b = q('[data-testid="' + id + '"]'); return { id, on: !!(b && b.classList.contains('active')) } }),
           cardCount: cards.length,
           cardNames: cards.map(c => (c.querySelector('.card-name')||{}).textContent?.trim() || ''),
+          cardOther: cards.map(c => c.classList.contains('is-other')),
           cardCounts: cards.map(c => (c.querySelector('.card-count')||{}).textContent?.trim() || ''),
           cardIcons: qa('.coll-card .card-ic svg').length,
           hasEmpty: !!q('.coll-empty'),
+          otherCard: !!q('[data-testid="coll-card-other"]'),
           otherClickable: cards.filter(c => c.classList.contains('is-other')).length,
           totalFavInSub: /\\d/.test((q('.ph-sub')||{}).textContent || '')
         }
       })())`),
     )
     ck('收藏夹页渲染', coll.root === true)
-    ck('页头面包屑 首页 / 收藏夹', coll.crumbs.length === 2 && coll.crumbs[0].includes('首页') && coll.crumbs[1].includes('收藏'), JSON.stringify(coll.crumbs))
-    ck('页头标题为收藏夹', coll.title.includes('收藏'), coll.title)
+    ck('页头面包屑 首页 / 收藏夹', coll.crumbs.length === 2 && coll.crumbs.every(Boolean), JSON.stringify(coll.crumbs))
+    ck('页头标题为收藏夹', coll.titleTid === true, coll.title)
     ck('页头副标题带收藏总数', coll.totalFavInSub === true, coll.sub)
-    ck('维度切换按钮 按开发商 / 按系列', coll.dimBtns.length === 2 && coll.dimBtns[0].t === '按开发商' && coll.dimBtns[1].t === '按系列', JSON.stringify(coll.dimBtns))
+    ck('维度切换按钮 按开发商 / 按系列', coll.dimBtns.length === 2 && coll.dimBtns[0].id === 'dim-developer' && coll.dimBtns[1].id === 'dim-series', JSON.stringify(coll.dimBtns))
     ck('默认按开发商分组', coll.dimBtns[0] && coll.dimBtns[0].on === true, JSON.stringify(coll.dimBtns))
     ck('分组卡渲染（>=3 组：开发商维度）', coll.cardCount >= 3, 'n=' + coll.cardCount + ' names=' + JSON.stringify(coll.cardNames))
     ck('每组有文件夹图标', coll.cardIcons === coll.cardCount, 'icons=' + coll.cardIcons + '/' + coll.cardCount)
     ck('每组带数量「n 款」', coll.cardCounts.length === coll.cardCount && coll.cardCounts.every(v => /款$/.test(v)), JSON.stringify(coll.cardCounts))
-    ck('未分类组存在且标记为不可点（无真实筛选值）', coll.cardNames.includes('未分类') && coll.otherClickable === 1, JSON.stringify(coll.cardNames))
+    ck('未分类组存在且标记为不可点（无真实筛选值）', coll.otherCard === true && coll.otherClickable === 1, JSON.stringify({ otherCard: coll.otherCard, names: coll.cardNames }))
 
     // 点一个真实组：应跳到库页并带上 developer meta 筛选
     const jump1 = JSON.parse(
@@ -276,17 +288,17 @@ async function main() {
     ck('库页按该组筛出封面卡', afterJump1.coverCards > 0, JSON.stringify(afterJump1))
 
     // 切到系列维度后分组集应变化
-    await clickNav('收藏')
-    await new Promise((r) => setTimeout(r, 1000))
+    await clickNav('nav-favorites')
+    await new Promise((r) => setTimeout(r, 1200))
     await ev(
       `(() => {
         const pages = [...document.querySelectorAll('.collection-page')]
         const root = pages.find(p => p.getBoundingClientRect().height > 0) || pages[0]
-        const b = root && [...root.querySelectorAll('.dim-seg .seg-chip')].find(x => x.textContent.trim() === '按系列')
+        const b = root && root.querySelector('[data-testid="dim-series"]')
         if (b) { b.click(); return 'ok' } return 'no-series'
       })()`,
     )
-    await new Promise((r) => setTimeout(r, 900))
+    await new Promise((r) => setTimeout(r, 1200))
     const series = JSON.parse(
       await ev(`JSON.stringify((() => {
         const pages = [...document.querySelectorAll('.collection-page')]
@@ -296,16 +308,17 @@ async function main() {
         return {
           n: cards.length,
           names: cards.map(c => (c.querySelector('.card-name')||{}).textContent?.trim() || ''),
+          other: cards.map(c => c.classList.contains('is-other')),
           counts: cards.map(c => (c.querySelector('.card-count')||{}).textContent?.trim() || ''),
-          active: qa('.dim-seg .seg-chip').find(b => b.classList.contains('active'))?.textContent?.trim() || '',
+          active: qa('.dim-seg .seg-chip').filter(b => b.classList.contains('active')).map(b => b.getAttribute('data-testid')).join(','),
           pressed: qa('.dim-seg .seg-chip').map(b => b.getAttribute('aria-pressed'))
         }
       })())`),
     )
-    ck('切到按系列分组（组集不同）', series.n >= 1 && series.active === '按系列', JSON.stringify(series))
-    // 维度切换是否真的换了分组：组名集合必须不同（除了都可能出现的「未分类」兜底）
-    const onlyDev = coll.cardNames.filter((n) => n !== '未分类')
-    const onlySeries = series.names.filter((n) => n !== '未分类')
+    ck('切到按系列分组（组集不同）', series.n >= 1 && series.active === 'dim-series', JSON.stringify(series))
+    // 维度切换是否真的换了分组：组名集合必须不同（「未分类」兜底组由 is-other 标记，不按组名筛）
+    const onlyDev = coll.cardNames.filter((n, i) => !coll.cardOther[i])
+    const onlySeries = series.names.filter((n, i) => !series.other[i])
     const differs = onlyDev.length !== onlySeries.length || onlyDev.some((n) => !onlySeries.includes(n))
     ck(
       '系列维度组名与开发商维度不同（维度切换生效）',
@@ -313,7 +326,7 @@ async function main() {
       'dev=' + JSON.stringify(coll.cardNames) + ' series=' + JSON.stringify(series.names) + ' pressed=' + JSON.stringify(series.pressed),
     )
 
-    console.log('  下载页:', JSON.stringify({ kpi: dl.kpiLabels.length, rows: dl.rows, segs: dl.segs.length, btns: dl.btns }))
+    console.log('  下载页:', JSON.stringify({ kpi: dl.kpiKeys.length, rows: dl.rows, segs: dl.segs.length, btns: dl.btns }))
     console.log('  收藏夹:', JSON.stringify({ groups: coll.cardCount, seriesGroups: series.n, devNames: coll.cardNames, seriesNames: series.names }))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {

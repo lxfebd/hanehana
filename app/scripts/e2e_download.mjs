@@ -96,18 +96,22 @@ async function launchElectron() {
   const exe = join(APP_ROOT, 'node_modules', 'electron', 'dist', 'electron.exe')
   // 必须用 electron 主入口跑 out/main/index.js（打包产物），真实模拟生产链路。
   // 开发模式 electron-vite dev 会再起一个 dev server，反而多一层不确定性。
+  // ELECTRON_RUN_AS_NODE 若从本进程继承，electron 会退化成 node 模式（起不了窗口）——
+  // 其余探针都在 spawn 前 delete，这里补齐同一个防御，不改其它行为。
+  const env = {
+    ...process.env,
+    HANEHANA_DEBUG_PORT: String(DEBUG_PORT),
+    HANEHANA_DATA_DIR: DATA_DIR,
+    // 引擎由 Electron 主进程 spawn、默认继承环境 → 这里设一次就到引擎。
+    // 必须是 **CA**（不是服务端那张叶证书），否则引擎不认签发者 → UnknownIssuer。
+    HANE_EXTRA_CA: FIXTURE_CA,
+    // 不设 HANEHANA_ROOT：enginePath() 用 dirname(cwd) 定位 engine-rs，
+    // cwd=app 目录时正好落在仓库根的 engine-rs 下。
+  }
+  delete env.ELECTRON_RUN_AS_NODE
   const proc = spawn(exe, ['.'], {
     cwd: APP_ROOT,
-    env: {
-      ...process.env,
-      HANEHANA_DEBUG_PORT: String(DEBUG_PORT),
-      HANEHANA_DATA_DIR: DATA_DIR,
-      // 引擎由 Electron 主进程 spawn、默认继承环境 → 这里设一次就到引擎。
-      // 必须是 **CA**（不是服务端那张叶证书），否则引擎不认签发者 → UnknownIssuer。
-      HANE_EXTRA_CA: FIXTURE_CA,
-      // 不设 HANEHANA_ROOT：enginePath() 用 dirname(cwd) 定位 engine-rs，
-      // cwd=app 目录时正好落在仓库根的 engine-rs 下。
-    },
+    env,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
   })

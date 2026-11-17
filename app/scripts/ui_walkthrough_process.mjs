@@ -128,10 +128,12 @@ await ev(`window.__pushes = []; window.hh.onProcessChanged((e) => { window.__pus
 const clickRes = await ev(`(() => { const b = document.querySelector('.hero-play'); if(!b) return 'no-btn'; b.click(); return 'clicked' })()`)
 console.log('  [diag] click =', clickRes)
 // 立即采一次（抓 starting 或已经推进到 running）
-const earlyRaw = await ev(`Promise.all([window.hh.processStates()]).then(([s]) => JSON.stringify({ states: s, btn: (document.querySelector('.hero-play')||{}).textContent||'', disabled: (document.querySelector('.hero-play')||{}).disabled })).catch(e => 'ERR:' + (e && e.message))`)
+// running 状态用 .hero.running（LibraryHero 由 runningGames 派生的语义类）读，
+// 不比按钮中文/英文文案——文案随 locale 变，状态类不变。
+const earlyRaw = await ev(`Promise.all([window.hh.processStates()]).then(([s]) => JSON.stringify({ states: s, btn: (document.querySelector('.hero-play')||{}).textContent||'', disabled: (document.querySelector('.hero-play')||{}).disabled, running: !!document.querySelector('.hero.running') })).catch(e => 'ERR:' + (e && e.message))`)
 console.log('  [diag] 点击后立即 =', earlyRaw)
 await sleep(1500)
-const laterRaw = await ev(`Promise.all([window.hh.processStates()]).then(([s]) => JSON.stringify({ states: s, btn: (document.querySelector('.hero-play')||{}).textContent||'', disabled: (document.querySelector('.hero-play')||{}).disabled, pushes: window.__pushes })).catch(e => 'ERR:' + (e && e.message))`)
+const laterRaw = await ev(`Promise.all([window.hh.processStates()]).then(([s]) => JSON.stringify({ states: s, btn: (document.querySelector('.hero-play')||{}).textContent||'', disabled: (document.querySelector('.hero-play')||{}).disabled, running: !!document.querySelector('.hero.running'), pushes: window.__pushes })).catch(e => 'ERR:' + (e && e.message))`)
 console.log('  [diag] 1.5s 后 =', laterRaw)
 const later = laterRaw.startsWith('OK:') || laterRaw.startsWith('{') ? (laterRaw.startsWith('{') ? JSON.parse(laterRaw) : JSON.parse(laterRaw)) : null
 const st = later ? later.states : {}
@@ -140,13 +142,13 @@ pass('B1 状态机有该游戏条目', !!st.g1, `g1=${JSON.stringify(st.g1)}`)
 pass('B2 状态为 running（进程已落定）', !!(st.g1 && st.g1.status === 'running'), `status=${st.g1 && st.g1.status}`)
 pass('B3 pid 已下发', typeof pid1 === 'number' && pid1 > 0, `pid=${pid1}`)
 pass('B4 按钮显示「运行中」',
-  !!(later && (later.btn.includes('运行中') || later.btn.includes('Running'))),
-  `btn=${later && later.btn}`)
+  !!(later && later.running === true),
+  `running=${later && later.running} btn=${later && later.btn}`)
 pass('B5 推送真的收到了（starting→running）', !!(later && later.pushes.length >= 1), `pushes=${later && JSON.stringify(later.pushes)}`)
 
 console.log('== C 主进程与渲染层一致 ==')
 // 封面墙（运行角标）在库页：导航过去数角标；D 段的 hero-play 再回首页
-await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
 await sleep(900)
 const bothRaw = await ev(`window.hh.runningGames().then(r => JSON.stringify({ mainRunning: r, renderRunning: document.querySelectorAll('.cover-running').length })).catch(e => 'ERR:' + (e && e.message))`)
 console.log('  [diag] =', bothRaw)
@@ -155,8 +157,8 @@ pass('C1 主进程 runningGames 含 g1', both.mainRunning.includes('g1'), `main=
 pass('C2 渲染层封面墙有运行角标', both.renderRunning >= 1, `marks=${both.renderRunning}`)
 
 console.log('== D 状态不会永久卡在启动中 ==')
-// 回首页：D2 看的是 hero 启动按钮文案
-await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('首页') || (x.textContent || '').includes('Home')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+// 回首页：D2 看的是 hero 的运行状态类
+await ev(`(() => { const b = document.querySelector('[data-testid="nav-home"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
 await sleep(700)
 // notepad 开着窗口不会自己退出——走查自己 taskkill 靶进程，
 // 主进程监听 exit → 状态转 exited / 清条目 → 按钮恢复。
@@ -165,12 +167,12 @@ if (typeof pid1 === 'number' && pid1 > 0) {
   spawn('taskkill', ['/pid', String(pid1), '/f'], { stdio: 'ignore' })
 }
 await sleep(3000)
-const finalRaw = await ev(`window.hh.processStates().then(s => JSON.stringify({ states: s, btn: (document.querySelector('.hero-play')||{}).textContent||'' })).catch(e => 'ERR:' + (e && e.message))`)
+const finalRaw = await ev(`window.hh.processStates().then(s => JSON.stringify({ states: s, btn: (document.querySelector('.hero-play')||{}).textContent||'', disabled: (document.querySelector('.hero-play')||{}).disabled, running: !!document.querySelector('.hero.running') })).catch(e => 'ERR:' + (e && e.message))`)
 console.log('  [diag] 退出后 =', finalRaw)
 const final = finalRaw.startsWith('{') ? JSON.parse(finalRaw) : { states: {}, btn: '' }
 const fs2 = final.states
 pass('D1 退出后状态不是 running（或转为 exited）', !fs2.g1 || fs2.g1.status !== 'running', `g1=${JSON.stringify(fs2.g1)}`)
-pass('D2 按钮离开「运行中/启动中…」', !/运行中|启动中|Starting|Running/.test(final.btn), `btn=${final.btn}`)
+pass('D2 按钮离开「运行中/启动中…」', final.running === false && final.disabled === false, `running=${final.running} disabled=${final.disabled} btn=${final.btn}`)
 
 console.log('== E 无异常 ==')
 pass('E1 无 Runtime.exceptionThrown', errs.length === 0, JSON.stringify(errs.slice(0, 2)))

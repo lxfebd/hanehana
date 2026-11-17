@@ -97,23 +97,33 @@ console.log(dupeOk ? 'PASS 未经确认的同款零入库' : 'FAIL 自动入库�
 if (!dupeOk) process.exitCode = 1
 
 // 扫描结果浮层是否真的渲染出 dupe 区块 + 按钮
-const ui = JSON.parse(await ev(`(async () => {
-  const btn = [...document.querySelectorAll('button')].find(b => (b.textContent||'').includes('扫描'))
-  if (btn) btn.click()
-  await new Promise(r => setTimeout(r, 500))
-  const input = document.querySelector('.scan-body .path-input')
-  if (input) { input.value = ${JSON.stringify(F)}; input.dispatchEvent(new Event('input')) }
-  await new Promise(r => setTimeout(r, 300))
-  const start = [...document.querySelectorAll('.scan-btn')].find(b => (b.textContent||'').includes('开始扫描'))
-  if (start) start.click()
-  await new Promise(r => setTimeout(r, 4000))
-  return JSON.stringify({
-    dupeBlock: !!document.querySelector('.dupes'),
-    dupeTitle: (document.querySelector('.dupes .hits-title')||{}).textContent,
-    dupeRows: document.querySelectorAll('.dupe-row').length,
-    addBtns: [...document.querySelectorAll('.dupe-add')].map(b => b.textContent.trim()),
-  })
-})()`))
+// 打开/输入/开始拆成有条件的步骤（而不是一次 async 里固定 500/300/4000ms 白等）：
+// 冷启动时 Teleport 挂载可能晚于 500ms，输入框还没出现就去赋值 = 扫的是默认目录，
+// dupe 区块当然不出现。这里的等待只等「控件/结果到位」，断言口径不变。
+await ev(`document.querySelector('[data-testid="nav-scan"]')?.click(); true`)
+for (let i = 0; i < 40; i++) {
+  if (await ev('!!document.querySelector(".scan-body .path-input")')) break
+  await sleep(250)
+}
+const inputSet = await ev(`(() => { const i = document.querySelector('.scan-body .path-input'); if (!i) return 'no-input'; i.value = ${JSON.stringify(F)}; i.dispatchEvent(new Event('input', { bubbles: true })); return i.value })()`)
+for (let i = 0; i < 20; i++) {
+  if ((await ev(`(document.querySelector('.scan-body .path-input')||{}).value`)) === F) break
+  await sleep(100)
+}
+const startClicked = await ev(`(() => { const b = document.querySelector('[data-testid="act-scan-start"]'); if (!b) return 'no-start'; b.click(); return 'clicked' })()`)
+let dupesReady = false
+for (let i = 0; i < 60; i++) {
+  if (await ev('!!document.querySelector(".dupes")')) { dupesReady = true; break }
+  await sleep(250)
+}
+const ui = JSON.parse(await ev(`JSON.stringify({
+  inputSet: ${JSON.stringify(inputSet)}, startClicked: ${JSON.stringify(startClicked)}, dupesReady: ${dupesReady},
+  inputValue: (document.querySelector('.scan-body .path-input')||{}).value || '',
+  resultText: (document.querySelector('.scan-body .result')||{}).textContent || '',
+  dupeBlock: !!document.querySelector('.dupes'),
+  dupeRows: document.querySelectorAll('.dupe-row').length,
+  addBtns: [...document.querySelectorAll('.dupe-add')].map(b => b.textContent.trim()),
+})`))
 console.log('[扫描浮层 UI]', JSON.stringify(ui))
 // 浮层是这条链唯一面向用户的产物：区块没出来 / 行数为 0 / 没有「也加进来」按钮，
 // 都等于「去重提示在界面上不存在」——不报红就等于这条回归网自己漏了。

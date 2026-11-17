@@ -114,8 +114,8 @@ async function main() {
       await new Promise((r) => setTimeout(r, 500))
     }
     await new Promise((r) => setTimeout(r, 800))
-    // 打开设置（侧栏「设置」）
-    await ev(`(() => { const b = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('设置') || (x.textContent||'').includes('Settings')); if (b) { b.click(); return 'ok' } return 'no-nav' })()`)
+    // 打开设置（侧栏 data-testid 入口，不认中文/英文文案）
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-settings"]'); if (b) { b.click(); return 'ok' } return 'no-nav' })()`)
     await new Promise((r) => setTimeout(r, 900))
     const dlg = JSON.parse(
       await ev(`JSON.stringify((() => {
@@ -127,14 +127,15 @@ async function main() {
     ck('设置对话框打开', dlg.dlg === true, 'dlg=' + dlg.dlg)
     ck('页签 ≥ 7（下载/通知/网络/外观/备份/工具/新作/关于）', (dlg.tabs || []).length >= 7, 'tabs=' + JSON.stringify(dlg.tabs))
     // 切到外观页 → 主题卡
-    // 与上面「设置」入口一致：中文文案 + 英文兜底（英文界面下只认中文会假红）
-    await ev(`(() => { const t = [...document.querySelectorAll('.ant-tabs-tab')].find(x => (x.textContent||'').includes('外观') || (x.textContent||'').includes('Appearance')); if (t) { t.click(); return 'ok' } return 'no' })()`)
+    // 页签由 SettingsDialog 的 #tab 槽挂了 data-testid（tab-<key>），不再匹配「外观/Appearance」
+    await ev(`(() => { const t = document.querySelector('[data-testid="tab-ui"]'); if (t) { t.click(); return 'ok' } return 'no' })()`)
     await new Promise((r) => setTimeout(r, 600))
     const ui = JSON.parse(
       await ev(`JSON.stringify((() => ({
         presetCards: document.querySelectorAll('.preset-card').length,
         previews: document.querySelectorAll('.preset-preview').length,
-        langBtns: [...document.querySelectorAll('.ant-radio-button-wrapper')].filter(b => /中文|English|语言/.test((b.textContent||''))).length,
+        // 语言切换控件：Radio.Button 的 input value 是语义值（zh/en），不按「中文/English」文案数
+        langBtns: document.querySelectorAll('input[type=radio][value="zh"], input[type=radio][value="en"]').length,
       }))())`),
     )
     ck('外观页主题卡（5 套）', ui.presetCards >= 5, 'cards=' + ui.presetCards)

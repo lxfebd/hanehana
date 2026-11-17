@@ -180,7 +180,7 @@ async function main() {
     }
     // 启动页是 home 仪表盘——先等应用就绪再导航，慢机上侧栏没渲染就点导航是时序假红
     await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
-    await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     await waitFor(() => ev('!!document.querySelector(".cover-card")'), { timeoutMs: 15000, label: '库页封面墙出现（.cover-card）' })
     await ev(`(() => { const c = document.querySelector('.cover-card'); if (c) { c.click(); return 'ok' } return 'no-card' })()`)
     await waitFor(() => ev('!!document.querySelector(".detail-panel .banner")'), { timeoutMs: 8000, label: '选中后详情面板 + banner 出现' })
@@ -213,7 +213,7 @@ async function main() {
     // 布局与过渡结束态是同一份，只是没有快照层来干扰命中测试。
     await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] })
     await waitFor(() => ev('matchMedia("(prefers-reduced-motion: reduce)").matches'), { timeoutMs: 5000, label: '减少动效仿真生效' })
-    const clicked = await ev(`(() => { const b = [...document.querySelectorAll('.detail-panel .dp-icon-btn')].find(x => (x.getAttribute('aria-label') || '').includes('展开整页')); if (b) { b.click(); return 'ok' } return 'no-btn' })()`)
+    const clicked = await ev(`(() => { const b = document.querySelector('[data-testid="act-expand-full"]'); if (b) { b.click(); return 'ok' } return 'no-btn' })()`)
     await waitFor(() => ev('!!document.querySelector(".detail-panel.is-expanded")'), { timeoutMs: 8000, label: '整页展开生效（.is-expanded）' })
     const full = await settled(read, '整页态布局读数落定')
     ck('整页展开可点（找到「展开整页」按钮）', clicked === 'ok', 'click=' + clicked)

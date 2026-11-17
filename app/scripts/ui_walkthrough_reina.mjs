@@ -133,7 +133,7 @@ async function main() {
     await shot('01-home')
 
     const navLib = () =>
-      ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     // 02 库页（基准 Game Library 分工：页头+工具栏+封面墙，没有 KPI/hero）
     await navLib()
     await wait(1000)
@@ -164,15 +164,15 @@ async function main() {
     console.log('DETAIL:', dp)
     await shot('03-detail')
 
-    // 统计页：经侧栏「更多」→ 统计
+    // 统计页：经侧栏「更多」→ 统计（按 data-testid 点）
     await ev(`(() => {
-      const t = [...document.querySelectorAll('.more-toggle')].find(b => (b.textContent||'').includes('更多'))
+      const t = document.querySelector('[data-testid="nav-more"]')
       t?.click()
       return !!t
     })()`)
     await wait(400)
     await ev(`(() => {
-      const b = [...document.querySelectorAll('.more-menu .nav-item')].find(x => (x.textContent||'').includes('统计'))
+      const b = document.querySelector('[data-testid="nav-stats"]')
       if (b) { b.click(); return 'ok' } return 'no'
     })()`)
     await wait(1200)
@@ -184,7 +184,7 @@ async function main() {
 
     // 收藏夹：侧栏收藏夹入口
     await ev(`(() => {
-      const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent||'').includes('收藏夹'))
+      const b = document.querySelector('[data-testid="nav-favorites"]')
       if (b) { b.click(); return 'ok' } return 'no'
     })()`)
     await wait(900)

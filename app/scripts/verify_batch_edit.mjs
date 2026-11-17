@@ -113,7 +113,7 @@ async function main() {
     // 启动页现在是 home 仪表盘（B8）——封面墙/工具栏在库页，先导航过去
     // 先等应用就绪（原来这里是固定 2500ms）：慢机上侧栏还没渲染就点导航会拿到 'no'。
     await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
-    await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     // 切页后等封面墙真的渲染（固定 800+800ms 和手拉循环都换成条件等待）
     await waitFor(() => ev('!!document.querySelector(".cover-card")'), { timeoutMs: 15000, label: '库页封面墙出现（.cover-card）' })
     // 首屏被页头 + KPI 条 + hero + 续读条占满：先滚到封面墙再点选
@@ -121,11 +121,11 @@ async function main() {
     await ev(`(() => { document.querySelector('.cover-card')?.scrollIntoView({ block: 'center' }); return true })()`)
     // 等滚动真正落位（卡片中心进视口）再取坐标点击：CDP 点视口外等于没点
     await waitFor(() => ev('(() => { const c = document.querySelector(".cover-card"); if (!c) return false; const r = c.getBoundingClientRect(); return r.top >= 0 && r.bottom <= window.innerHeight })()'), { timeoutMs: 5000, label: '封面墙滚动落位' })
-    // 进入多选模式。按**文案**定位而不是 aria-pressed（toolbar 里多个 toggle
-    // 都带 aria-pressed，取「第一个 aria-pressed」会命中正则搜索）。
-    const multi = await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-pressed') !== null) && ((x.title || '') + (x.textContent || '')).includes('多选')); if (b) { b.click(); return 'ok' } return 'no-multi-btn' })()`)
+    // 进入多选模式。按 data-testid 定位（toolbar 里多个 toggle 都带 aria-pressed，
+    // 取「第一个 aria-pressed」会命中正则搜索）。
+    const multi = await ev(`(() => { const b = document.querySelector('[data-testid="act-multi"]'); if (b) { b.click(); return 'ok' } return 'no-multi-btn' })()`)
     ck('进入多选模式', multi === 'ok', 'multi=' + multi)
-    await waitFor(() => ev('(() => { const b = [...document.querySelectorAll("button")].find(x => x.getAttribute("aria-pressed") === "true"); return !!b })()'), { timeoutMs: 5000, label: '多选按钮进入按下态' })
+    await waitFor(() => ev('document.querySelector("[data-testid=act-multi]").getAttribute("aria-pressed") === "true"'), { timeoutMs: 5000, label: '多选按钮进入按下态' })
     // 选 2 款（CDP 完整鼠标序列：moved → pressed → released，点击卡片中心）
     const cardRects = await ev(`JSON.stringify([...document.querySelectorAll('.cover-card')].slice(0, 2).map(c => { const r = c.getBoundingClientRect(); return { x: r.x + r.width/2, y: r.y + r.height/2 } }))`)
     const rects = JSON.parse(cardRects)
@@ -141,8 +141,9 @@ async function main() {
       await ev(`JSON.stringify((() => {
         const panel = document.querySelector('.batch-overlay')
         const count = (document.querySelector('.batch-count')||{}).textContent?.trim() || ''
-        const favBtn = [...document.querySelectorAll('.batch-panel button')].find(b => (b.textContent||'').includes('收藏'))
-        const removeBtn = [...document.querySelectorAll('.batch-panel button')].find(b => (b.textContent||'').includes('移除'))
+        // 面板按钮按 data-testid 定位：收藏 / 移除
+        const favBtn = document.querySelector('[data-testid="act-batch-fav"]')
+        const removeBtn = document.querySelector('[data-testid="act-batch-remove"]')
         const sel = document.querySelectorAll('.cover-card.checked').length
         return { panel: !!panel, count, fav: !!favBtn, remove: !!removeBtn, sel }
       })())`),
@@ -152,7 +153,7 @@ async function main() {
     ck('收藏/移除按钮在面板', st.fav && st.remove, 'fav=' + st.fav + ' remove=' + st.remove)
     ck('两张卡呈选中态', st.sel >= 2, 'sel=' + st.sel)
     // 点收藏 → 回读两款都收藏
-    await ev(`(() => { const b = [...document.querySelectorAll('.batch-panel button')].find(x => (x.textContent||'').includes('收藏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await ev(`(() => { const b = document.querySelector('[data-testid="act-batch-fav"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     // 等批量收藏真正落到数据层（乐观更新 + IPC 回读），原来固定 900ms
     await waitFor(() => ev('window.hh.listGames().then(gs => gs.filter(g => g.favorite).length >= 2)'), { timeoutMs: 8000, label: '批量收藏落库（favorite ≥ 2）' })
     // Runtime.evaluate 顶层不能用 await（awaitPromise 只消化返回的 promise）——用 .then 链

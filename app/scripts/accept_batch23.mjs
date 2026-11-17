@@ -75,9 +75,13 @@ function assert(name, cond, extra = '') {
 
   const st = readFileSync(join(APP_ROOT, 'src/renderer/components/SettingsDialog.vue'), 'utf8')
   assert('SettingsDialog 接 t()', st.includes("from '../i18n'"))
+  // 页签文案仍走 t()：TabPane 的 #tab 槽里是 {{ t('set_tab_*') }}，
+  // 槽里挂 data-testid 只是给闸门当语义钩子，不改「文案必须来自词典」这条规则。
   assert(
     'SettingsDialog 页签用 t()',
-    st.includes(':tab="t(\'set_tab_download\')"') && st.includes(':tab="t(\'set_tab_about\')"'),
+    st.includes('<template #tab>') &&
+      st.includes("t('set_tab_download')") &&
+      st.includes("t('set_tab_about')"),
   )
   assert('SettingsDialog 循环变量不再占用 t', !/v-for="t in trackList"/.test(st))
 }
@@ -186,7 +190,7 @@ async function main() {
 
     // 切 en（直接调 setLanguage 绑定不可从 window 拿——走设置页语言单选）
     const opened = await evalJs(`(() => {
-      const btn = [...document.querySelectorAll('.sidebar .nav-item')].find(b => (b.textContent || '').includes('设置') || (b.textContent || '').includes('Settings'))
+      const btn = document.querySelector('[data-testid="nav-settings"]')
       if (!btn) return { step: 'no-btn' }
       btn.click()
       return { step: 'ok' }
@@ -201,13 +205,14 @@ async function main() {
 
     // 切到外观页签 → English radio
     await evalJs(`(() => {
-      const tab = [...document.querySelectorAll('.ant-tabs-tab')].find(el => (el.textContent || '').includes('外观') || (el.textContent || '').includes('Appearance'))
+      const tab = document.querySelector('[data-testid="tab-ui"]')
       tab?.click()
       return !!tab
     })()`)
     await wait(400)
     const switchEn = await evalJs(`(() => {
-      const btn = [...document.querySelectorAll('.ant-radio-button-wrapper')].find(el => (el.textContent || '').includes('English'))
+      // Radio.Button 的 input value 是 locale 的语义值（en），不按「English」文案找按钮
+      const btn = document.querySelector('input[type=radio][value="en"]')
       if (!btn) return { step: 'no-en' }
       btn.click()
       return { step: 'clicked' }
@@ -257,7 +262,7 @@ async function main() {
     )
 
     await evalJs(`(() => {
-      const btn = [...document.querySelectorAll('.sidebar .nav-item')].find(b => (b.textContent || '').includes('Downloads') || (b.textContent || '').includes('下载'))
+      const btn = document.querySelector('[data-testid="nav-downloads"]')
       btn?.click()
       return !!btn
     })()`)

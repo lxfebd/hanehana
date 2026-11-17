@@ -220,7 +220,7 @@ async function main() {
     const hiddenImgs = (s) => (s ? s.imgs.filter((i) => i.display === 'none') : [])
     // 启动页是 home 仪表盘——先等应用就绪再导航，慢机上侧栏没渲染就点导航是时序假红
     await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
-    await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     await waitFor(() => ev('!!document.querySelector(".cover-card")'), { timeoutMs: 15000, label: '库页封面墙出现（.cover-card）' })
     await waitFor(
       async () => {

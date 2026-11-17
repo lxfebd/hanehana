@@ -143,11 +143,11 @@ async function main() {
     await new Promise((r) => setTimeout(r, 800))
     // 切到统计页（侧栏「更多 → 统计」）
     await ev(
-      `(() => { const m = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('更多')); if (m) { m.click(); return 'ok' } return 'no-more' })()`,
+      `(() => { const m = document.querySelector('[data-testid="nav-more"]'); if (m) { m.click(); return 'ok' } return 'no-more' })()`,
     )
     await new Promise((r) => setTimeout(r, 500))
     await ev(
-      `(() => { const t = [...document.querySelectorAll('.more-menu .nav-item')].find(x => (x.textContent||'').includes('统计')); if (t) { t.click(); return 'ok' } return 'no-stats' })()`,
+      `(() => { const t = document.querySelector('[data-testid="nav-stats"]'); if (t) { t.click(); return 'ok' } return 'no-stats' })()`,
     )
     await new Promise((r) => setTimeout(r, 1500))
 
@@ -155,44 +155,50 @@ async function main() {
     const head = JSON.parse(
       await ev(`JSON.stringify((() => {
         const ph = document.querySelector('.stats-page .page-header')
-        const crumbs = [...document.querySelectorAll('.stats-page .ph-crumb span, .stats-page .ph-crumb button')].map(x => x.textContent.trim()).filter(Boolean)
+        // 语义钩子：面包屑/标题按 i18n 键断言（crumb-<key> / page-title-<key>），
+        // 不比中文文案——文案随 locale 变，键不变。
+        const crumbOk = (k) => !!document.querySelector('.stats-page [data-testid="crumb-' + k + '"]')
         return {
           hasPh: !!ph,
           title: (document.querySelector('.stats-page .ph-title')||{}).textContent?.trim() || '',
-          crumbs,
+          crumbs: ['nav_home', 'nav_stats'].map(crumbOk),
+          titleTid: !!document.querySelector('.stats-page [data-testid="page-title-nav_stats"]'),
           sub: (document.querySelector('.stats-page .ph-sub')||{}).textContent?.trim() || '',
           hasPosterBtn: !!document.querySelector('.stats-page .poster-btn')
         }
       })())`),
     )
     ck('页头 PageHeader 渲染', head.hasPh === true)
-    ck('面包屑 首页 / 统计', head.crumbs.length === 2 && head.crumbs[0].includes('首页') && head.crumbs[1].includes('统计'), JSON.stringify(head.crumbs))
-    ck('页头标题为统计', head.title.includes('统计'), head.title)
+    ck('面包屑 首页 / 统计', head.crumbs.length === 2 && head.crumbs.every(Boolean), JSON.stringify(head.crumbs))
+    ck('页头标题为统计', head.titleTid === true, 'title=' + head.title)
     ck('页头副标题渲染', head.sub.length > 0, head.sub)
     ck('海报导出入口在页头 actions', head.hasPosterBtn === true)
 
     // ---- KPI：6 张（B5-2）----
+    // 语义钩子：KpiStrip 把每张卡的 i18n 键写成 data-testid（kpi_<key>），
+    // 断言「六张卡齐全」看键，不比中文标签。
     const kpi = JSON.parse(
       await ev(`JSON.stringify((() => {
         const cards = [...document.querySelectorAll('.stats-page .kpi-strip .kpi-card')]
+        const keys = ['kpi_total_time','kpi_played','kpi_sessions','kpi_new_added','kpi_active_days','kpi_avg_day']
         return {
           n: cards.length,
-          labels: cards.map(c => (c.querySelector('.kpi-label')||{}).textContent?.trim() || ''),
+          keysPresent: keys.filter(k => !!document.querySelector('.stats-page [data-testid="' + k + '"]')),
           values: cards.map(c => (c.querySelector('.kpi-value')||{}).textContent?.trim() || ''),
           subs: cards.filter(c => !!c.querySelector('.kpi-sub')).length
         }
       })())`),
     )
     ck('KPI 卡扩到 6 张', kpi.n === 6, 'n=' + kpi.n)
-    ck('KPI 标签齐全（总时长/已玩/会话场次/新增/活跃天数/日均）', ['总时长','已玩','会话场次','新增','活跃天数','日均'].every(l => kpi.labels.some(x => x.includes(l))), JSON.stringify(kpi.labels))
+    ck('KPI 标签齐全（总时长/已玩/会话场次/新增/活跃天数/日均）', kpi.keysPresent.length === 6, JSON.stringify(kpi.keysPresent))
     ck('KPI 每卡有周期口径副行', kpi.subs === 6, 'subs=' + kpi.subs)
     ck('KPI 数值非空（tabular 数字）', kpi.values.every(v => v.length > 0), JSON.stringify(kpi.values))
 
     // ---- 周期切换：周 / 月（B5-2）----
     const segs = JSON.parse(
-      await ev(`JSON.stringify((() => [...document.querySelectorAll('.stats-page .period-bar .seg-chip')].map(b => ({ t: b.textContent.trim(), on: b.classList.contains('active') })))())`),
+      await ev(`JSON.stringify((() => [...document.querySelectorAll('.stats-page .period-bar .seg-chip')].map(b => ({ id: b.getAttribute('data-testid'), on: b.getAttribute('aria-pressed') === 'true' })))())`),
     )
-    ck('周期切换按钮 周/月', segs.length === 2 && segs[0].t === '周' && segs[1].t === '月', JSON.stringify(segs))
+    ck('周期切换按钮 周/月', segs.length === 2 && segs[0].id === 'seg-week' && segs[1].id === 'seg-month', JSON.stringify(segs))
     ck('默认选中月', segs[1] && segs[1].on === true, JSON.stringify(segs))
 
     // 读月份口径的总时长，切到周后重读：必须变（否则周期切换是假按钮）
@@ -207,7 +213,7 @@ async function main() {
       })()`)
     const monthState = JSON.parse(await readKpi())
     await ev(
-      `(() => { const w = [...document.querySelectorAll('.stats-page .period-bar .seg-chip')].find(b => b.textContent.trim() === '周'); if (w) { w.click(); return 'ok' } return 'no-week' })()`,
+      `(() => { const w = document.querySelector('.stats-page [data-testid="seg-week"]'); if (w) { w.click(); return 'ok' } return 'no-week' })()`,
     )
     await new Promise((r) => setTimeout(r, 900))
     const weekState = JSON.parse(await readKpi())
@@ -226,7 +232,8 @@ async function main() {
         const topThumbs = document.querySelectorAll('.stats-page .top-thumb img').length
         const hourCols = document.querySelectorAll('.stats-page .hour-chart .hour-col').length
         const hourFilled = [...document.querySelectorAll('.stats-page .hour-col')].filter(c => parseFloat((c.title||'').split('·')[1]||'0') > 0).length
-        const panels = [...document.querySelectorAll('.stats-page .panel-title')].map(x => x.textContent.trim())
+        // 语义钩子：三个面板由 panel-trend/rank/hours 暴露，不看面板标题文案
+        const panels = ['trend','rank','hours'].filter(k => !!document.querySelector('.stats-page [data-testid="panel-' + k + '"]'))
         const body = document.body.innerText
         return {
           hasTrend: !!trend,
@@ -245,7 +252,7 @@ async function main() {
     ck('时段分布有非零时段（聚合出数据）', charts.hourFilled > 0, 'filled=' + charts.hourFilled)
     ck(
       '面板标题：总游玩趋势 / 游戏时长排行 / 时段分布',
-      charts.panels.some(p => p.includes('总游玩趋势')) && charts.panels.some(p => p.includes('游戏时长排行')) && charts.panels.some(p => p.includes('时段分布')),
+      charts.panels.length === 3,
       JSON.stringify(charts.panels),
     )
     ck('统计页有内容（时长文本）', charts.hasDuration === true)

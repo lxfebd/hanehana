@@ -2,6 +2,8 @@
 # 为什么不在 PR 主链路：每条闸都要 build + 起一次真实窗口（分钟级、吃 CPU），
 # 且 runner 上偶发抖动（前台窗口被抢、端口占用、字体度量差异）会误伤合入。
 # 定位：nightly + 手动兜底。红 = 视觉/交互回归，人工判读，不阻断合入。
+# 下载 e2e（regression:download）由 PR 主链路阻断（ci.yml 的 regression download 步骤），
+# nightly 不重复跑：真引擎链路已在合入门槛里，这里再跑一遍只是双倍耗时 + 双倍抖动面。
 name: Visual Regression
 
 on:
@@ -63,44 +65,5 @@ jobs:
           npm run regression:track
           npm run regression:ui
           npm run regression:dupe
-        env:
-          PYTHONIOENCODING: utf-8
-
-  # 真实引擎下载链路：reg_all 里的第三件套，PR CI 没覆盖，夜里补上。
-  download:
-    runs-on: windows-latest
-    timeout-minutes: 60
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 24
-          cache: npm
-          cache-dependency-path: app/package-lock.json
-
-      - name: npm ci
-        working-directory: app
-        run: npm ci
-
-      - name: install electron binary
-        working-directory: app
-        run: npx install-electron
-
-      - name: build
-        working-directory: app
-        run: npm run build
-        env:
-          PYTHONIOENCODING: utf-8
-
-      # enginePath() 用 dirname(cwd) 定位 engine-rs：cwd=app 时正好落在仓库根。
-      # 不先 cargo build，e2e_download 会拿不到 fastdrop-engine.exe。
-      - name: cargo build release (引擎)
-        working-directory: engine-rs
-        run: cargo build --release --locked
-
-      - name: real engine download chain
-        working-directory: app
-        run: npm run regression:download
         env:
           PYTHONIOENCODING: utf-8

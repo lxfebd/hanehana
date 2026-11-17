@@ -130,13 +130,13 @@ async function main() {
     ck('库有游戏', Array.isArray(games) && games.length > 0, `len=${Array.isArray(games) ? games.length : 'n/a'}`)
     // 从侧栏「更多 → 全屏模式」进入（走 enterFullscreen 完整链路，设置 ui.fullscreen）
     const entered = await ev(`(() => {
-      const more = [...document.querySelectorAll('.nav-item')].find(b => (b.textContent||'').includes('更多') || (b.textContent||'').includes('More'))
+      const more = document.querySelector('[data-testid="nav-more"]')
       if (more) more.click()
       return 'more-clicked'
     })()`)
     await new Promise((r) => setTimeout(r, 500))
     const fsClicked = await ev(`(() => {
-      const item = [...document.querySelectorAll('.more-menu .nav-item')].find(b => (b.textContent||'').includes('全屏') || (b.textContent||'').includes('Fullscreen'))
+      const item = document.querySelector('[data-testid="nav-fullscreen"]')
       if (item) { item.click(); return 'fs-clicked' }
       return 'fs-miss: ' + [...document.querySelectorAll('.more-menu .nav-item')].map(b=>b.textContent.trim()).join(',')
     })()`)

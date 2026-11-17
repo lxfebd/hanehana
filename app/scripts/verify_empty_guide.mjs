@@ -107,7 +107,7 @@ async function main() {
     // 启动页现在是 home 仪表盘（B8）——空库引导在库页，先导航过去
     // 先等应用就绪（原来这里是固定 2500ms）：慢机上侧栏还没渲染就点导航会拿到 'no'。
     await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
-    const nav = await ev(`(() => { const b = [...document.querySelectorAll('.sidebar .nav-item')].find(x => (x.textContent || '').includes('全部游戏') || (x.textContent || '').includes('Library')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    const nav = await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     if (nav !== 'ok') console.log('  [warn] 未能导航到库页：', nav)
     // 等空库引导页出现，再等三步都挂上（原来固定 800 + 手拉循环 + 800ms）
     await waitFor(() => ev('!!document.querySelector(".empty-wrap")'), { timeoutMs: 15000, label: '空库引导页出现（.empty-wrap）' })

@@ -133,14 +133,15 @@ const LAYOUT_PROBE = `() => {
   return { overflow, cardOverlap, cardCount: cards.length, vw: de.clientWidth, vh: de.clientHeight }
 }`
 
-// 全页面清单：nav 文案（zh）+ 就绪标记 + 是否在"更多"菜单 + 是否有右栏
+// 全页面清单：nav 的 data-testid + 就绪标记 + 是否在"更多"菜单 + 是否有右栏
+// （不写中文文案：文案随 locale 变，testid 不变）
 const PAGES = [
-  { name: 'home', nav: '首页', marker: '.home-view', more: false, rail: true },
-  { name: 'library', nav: '全部游戏', marker: '.cover-wrap', more: false, rail: true },
-  { name: 'collection', nav: '收藏夹', marker: '.collection-page', more: false, rail: false },
-  { name: 'downloads', nav: '下载任务', marker: '.dl-layout', more: false, rail: false },
-  { name: 'stats', nav: '统计', marker: '.stats-page', more: true, rail: false },
-  { name: 'games', nav: '游戏站', marker: '.games', more: false, rail: false },
+  { name: 'home', nav: 'nav-home', marker: '.home-view', more: false, rail: true },
+  { name: 'library', nav: 'nav-library', marker: '.cover-wrap', more: false, rail: true },
+  { name: 'collection', nav: 'nav-favorites', marker: '.collection-page', more: false, rail: false },
+  { name: 'downloads', nav: 'nav-downloads', marker: '.dl-layout', more: false, rail: false },
+  { name: 'stats', nav: 'nav-stats', marker: '.stats-page', more: true, rail: false },
+  { name: 'games', nav: 'nav-games', marker: '.games', more: false, rail: false },
 ]
 
 // 全页面通用布局探针：横向溢出 + 主列（sidebar/content/aside）两两重叠 + 右栏空白 + 封面卡片重叠
@@ -313,7 +314,7 @@ async function main() {
     const gotoLibrary = async () => {
       // 不能 `|| items[0]`：入口改名/被删时点中任意一项，后面所有断言都会在错页上“通过”。
       const hit = await ev(
-        `(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')||(x.textContent||'').includes('Library')); if(!b) return 'no-entry'; b.click(); return 'ok' })()`,
+        `(() => { const b=document.querySelector('[data-testid="nav-library"]'); if(!b) return 'no-entry'; b.click(); return 'ok' })()`,
       )
       if (hit !== 'ok') return false
       return (await tryWaitFor(() => ev('!!document.querySelector(".cover-card")'), {
@@ -321,17 +322,17 @@ async function main() {
         label: '库页封面墙出现（.cover-card）',
       })) === true
     }
-    const goPage = async (nav, more) => {
+    const goPage = async (navTid, more) => {
       if (more) {
-        await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+        await ev(`(() => { const b = document.querySelector('[data-testid="nav-more"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
         // 等「更多」菜单挂上，而不是固定 450ms 后去点菜单项
         await tryWaitFor(() => ev('!!document.querySelector(".more-menu")'), { timeoutMs: 3000, label: '侧栏更多菜单打开' })
-        await ev(`(() => { const items=[...document.querySelectorAll('.more-menu .nav-item')]; const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
+        await ev(`(() => { const b=document.querySelector('.more-menu [data-testid="${navTid}"]'); if(b){b.click();return 'ok'} return 'no' })()`)
         await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 3000, label: '更多菜单关闭（切页点击已生效）' })
         await esc()
         await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 2000, label: '更多菜单收起' })
       } else {
-        await ev(`(() => { const items=[...document.querySelectorAll('.sidebar .nav-item')].filter(x=>!x.closest('.more-menu')); const b=items.find(x=>(x.textContent||'').includes(${JSON.stringify(nav)})); if(b){b.click();return 'ok'} return 'no' })()`)
+        await ev(`(() => { const b=document.querySelector('[data-testid="${navTid}"]'); if(b){b.click();return 'ok'} return 'no' })()`)
       }
     }
     const waitMarker = async (marker, timeoutMs = 12000) => {
@@ -428,15 +429,15 @@ async function main() {
       await tryWaitFor(() => ev('!document.querySelector(".export-menu")'), { timeoutMs: 2000, label: tag + ' 导出下拉收起' })
 
       // ---- 3. 侧栏"更多"菜单 .more-menu ----
-      await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      await ev(`(() => { const b = document.querySelector('[data-testid="nav-more"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await scenario(tag, '侧栏更多菜单 more-menu', '.more-menu', always)
-      await ev(`(() => { const b = document.querySelector('.more-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      await ev(`(() => { const b = document.querySelector('[data-testid="nav-more"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 2000, label: tag + ' 侧栏更多菜单收起' })
 
       // ---- 4. 设置对话框 .ds-panel（DialogShell, Teleport body, modal 层）----
       // 设置的唯一入口在左侧栏底部（带文字的 nav-item）——右上角那颗圆钮（.tb-round）
       // 已撤：它和侧栏入口是同一个动作，两个常驻入口就是重复。
-      await ev(`(() => { const b = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('设置') || (x.textContent||'').includes('Settings')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      await ev(`(() => { const b = document.querySelector('[data-testid="nav-settings"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await scenario(tag, '设置对话框 ds-panel', '.ds-panel', always)
       await esc()
       await tryWaitFor(() => ev('!document.querySelector(".ds-panel")'), { timeoutMs: 2000, label: tag + ' 设置对话框收起' })
@@ -470,7 +471,7 @@ async function main() {
       await tryWaitFor(() => ev('!document.querySelector(".detail-panel.is-expanded")'), { timeoutMs: 5000, label: tag + ' 详情退出整页' })
 
       // ---- 7. 批量编辑浮条 .batch-overlay（absolute, popover 层，在 .cover-wrap 内）----
-      await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-pressed') !== null) && ((x.title || '') + (x.textContent || '')).includes('多选')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      await ev(`(() => { const b = document.querySelector('[data-testid="act-multi"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       // 等多选按钮真的切到按下态（不新增断言：拿不到就照旧往下走，只是不再白等 400ms）
       await tryWaitFor(
         () => ev('(() => { const b = [...document.querySelectorAll("button")].find(x => x.getAttribute("aria-pressed") === "true"); return !!b })()'),
@@ -486,7 +487,7 @@ async function main() {
         label: tag + ' 多选计数到位',
       })
       await scenario(tag, '批量编辑浮条 batch-overlay', '.batch-overlay', always)
-      await ev(`(() => { const b = [...document.querySelectorAll('button')].find(x => (x.getAttribute('aria-pressed') !== null) && ((x.title || '') + (x.textContent || '')).includes('多选')); if (b) { b.click(); return 'ok' } return 'no' })()`)
+      await ev(`(() => { const b = document.querySelector('[data-testid="act-multi"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
       await tryWaitFor(() => ev('!document.querySelector(".cover-card.checked")'), { timeoutMs: 3000, label: tag + ' 退出多选' })
     }
 

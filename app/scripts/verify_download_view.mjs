@@ -115,7 +115,7 @@ async function main() {
     }
     await new Promise((r) => setTimeout(r, 800))
     // 切到下载页（侧栏「下载任务」）
-    await ev(`(() => { const b = [...document.querySelectorAll('.nav-item')].find(x => (x.textContent||'').includes('下载') || (x.textContent||'').includes('Downloads')); if (b) { b.click(); return 'ok' } return 'no-nav' })()`)
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-downloads"]'); if (b) { b.click(); return 'ok' } return 'no-nav' })()`)
     await new Promise((r) => setTimeout(r, 900))
     const st = JSON.parse(
       await ev(`JSON.stringify((() => {

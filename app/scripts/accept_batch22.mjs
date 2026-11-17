@@ -291,9 +291,9 @@ async function main() {
       JSON.stringify(scanBad),
     )
 
-    // DialogShell：打开设置 → .ds-mask → Esc 关
+    // DialogShell：打开设置 → .ds-mask → Esc 关（侧栏入口按 data-testid 点）
     await evalJs(`(() => {
-      const btn = [...document.querySelectorAll('.sidebar .nav-item')].find(b => (b.textContent || '').includes('设置'))
+      const btn = document.querySelector('[data-testid="nav-settings"]')
       btn?.click()
       return !!btn
     })()`)

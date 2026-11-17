@@ -120,6 +120,14 @@ async function main() {
         console.log('  [FAIL] ' + n + ' ' + (x || ''))
       }
     }
+    // 等侧栏就绪（慢机上 hh 桥先于侧栏出现：点早了 nav miss，后面全红）
+    for (let i = 0; i < 20; i++) {
+      const e = await ev('!!document.querySelector("[data-testid=nav-library]")')
+      if (e) break
+      await new Promise((r) => setTimeout(r, 500))
+    }
+    // 启动页是 home 仪表盘（B8）——封面墙/详情在库页，先按 testid 导航过去
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-library"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
     // 等封面墙
     for (let i = 0; i < 20; i++) {
       const e = await ev('!!document.querySelector(".cover-card")')
@@ -130,7 +138,7 @@ async function main() {
     // 打开刮削对话框：点第一个封面卡 → 详情面板点刮削按钮
     await ev(`(() => { const c = document.querySelector('.cover-card'); if (c) { c.click(); return 'ok' } return 'no-card' })()`)
     await new Promise((r) => setTimeout(r, 600))
-    const scrapeBtn = await ev(`(() => { const b = [...document.querySelectorAll('.ghost-btn')].find(x => (x.textContent||'').includes('刮削') || (x.textContent||'').includes('Scrape')); if (b) { b.click(); return 'ok' } return 'no-btn:' + [...document.querySelectorAll('.ghost-btn')].map(x => x.textContent.trim()).join(',') })()`)
+    const scrapeBtn = await ev(`(() => { const b = document.querySelector('[data-testid="act-scrape"]'); if (b) { b.click(); return 'ok' } return 'no-btn:' + [...document.querySelectorAll('.ghost-btn')].map(x => x.textContent.trim()).join(',') })()`)
     console.log('  打开刮削:', scrapeBtn)
     await new Promise((r) => setTimeout(r, 800))
     const dlg = await ev(`!!document.querySelector('.scrape-body')`)
@@ -158,9 +166,11 @@ async function main() {
     console.log('  results providers:', JSON.stringify(provs))
     ck('YMGal 结果出现', ymBadges > 0, 'ymgal=' + ymBadges)
     await new Promise((r) => setTimeout(r, 800))
-    // 汉化 tag 可见（YMGal haveChinese 折成「汉化」tag，用户选候选时一眼看到）
-    const hotTags = await ev(`[...document.querySelectorAll('.r-tag.hot')].map(t => t.textContent.trim())`)
-    ck('汉化 tag 显示在候选卡', hotTags.some((t) => t.includes('汉化')), 'tags=' + JSON.stringify(hotTags))
+    // 汉化 tag 可见（YMGal haveChinese 折成「汉化」tag，ScrapeDialog 给它挂 .r-tag.hot）
+    // 语义：热 tag 存在 = 决定性标记被渲染出来；不对 tag 文案做中文匹配。
+    const hotCount = await ev(`document.querySelectorAll('.r-tag.hot').length`)
+    const hotTags = await ev(`[...document.querySelectorAll('.r-tag')].map(t => t.textContent.trim())`)
+    ck('汉化 tag 显示在候选卡', hotCount >= 1, 'hot=' + hotCount + ' tags=' + JSON.stringify(hotTags))
     const ui = JSON.parse(await ev(`JSON.stringify((() => {
       const badge = document.querySelector('.r-badge.ymgal')
       const cover = document.querySelector('.r-cover')

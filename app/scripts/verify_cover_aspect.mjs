@@ -157,7 +157,7 @@ async function main() {
     // B8：启动页是 home，封面墙在游戏库页——先点「全部游戏」
     // 等侧栏导航挂上再点（重载后侧栏晚于 hh 出现；固定等待换成条件等待）
     await waitFor(() => ev('!!(window.hh && document.querySelector(".sidebar .nav-item"))'), { timeoutMs: 30000, label: '应用就绪（hh + 侧栏导航）' })
-    await ev(`(() => { const b=[...document.querySelectorAll('.sidebar .nav-item')].find(x=>(x.textContent||'').includes('全部游戏')); if(b){b.click();return 'ok'} return 'no' })()`)
+    await ev(`(() => { const b=document.querySelector('[data-testid="nav-library"]'); if(b){b.click();return 'ok'} return 'no' })()`)
     // 首跑偶发 2 红（封面图渲染 {"has":false} / w=undefined）就是断在这里：缩略图还没生成或还没挂上
     // img 就断言了。改成两级条件等待：先等 img 元素出现，再等它解码完成（naturalWidth > 0）。
     await waitFor(() => ev('!!document.querySelector(".cover-thumb img")'), { timeoutMs: 15000, label: '封面墙缩略图 img 出现（.cover-thumb img）' })
