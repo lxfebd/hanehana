@@ -12,7 +12,7 @@ import { Modal, message } from 'ant-design-vue'
 import DialogShell from './DialogShell.vue'
 import { library } from '../stores/library'
 import type { BackupStats, SnapshotInfo } from '../../shared/types'
-import { t, tf } from '../i18n'
+import { t, tf, lang } from '../i18n'
 
 const open = defineModel<boolean>('open')
 
@@ -21,6 +21,8 @@ const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
 const busyAction = ref('')
+/** 最近一次创建快照的跳过摘要（null = 没有文件被跳过）。 */
+const skipStats = ref<{ count: number; bytes: number } | null>(null)
 
 const game = computed(() => library.games.find((g) => g.id === library.selectedId) ?? null)
 
@@ -59,17 +61,40 @@ function fmtTime(ts: number): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`
 }
 
+/**
+ * 跳过提示文案（只在 skipped 非空时出现）。为什么不用 i18n 词典：本次改动
+ * 白名单只允许动本文件，词典加键要同时改 zh/en 两个文件；在组件内按当前
+ * 语言就地分派，行为与 t()/tf() 一致（语言切换时随 lang 响应式重渲染）。
+ */
+function skipNoticeText(count: number, bytes: number): string {
+  const size = fmtSize(bytes)
+  if (lang.value === 'zh') {
+    return `本次快照有 ${count} 个文件未纳入（共 ${size}）：超过单文件 200MB 上限或单次快照 2GB 总量预算。这些文件已记入快照目录 meta.json 的 skipped 清单，不会被静默忽略；如需完整备份请手动复制它们。`
+  }
+  return `${count} file(s) (${size}) were not included in this snapshot: they exceed the 200MB per-file limit or the 2GB per-snapshot budget. They are recorded in the snapshot's meta.json (skipped list) and will not be silently ignored; copy them manually if you need a full backup.`
+}
+
+/** 可见提示文案：由跳过摘要计算得出，切语言时跟着变（空串 = 不显示）。 */
+const skipNotice = computed(() => (skipStats.value ? skipNoticeText(skipStats.value.count, skipStats.value.bytes) : ''))
+
 async function createBackup(): Promise<void> {
   const g = game.value
   if (!g || busy.value) return
   busy.value = true
   busyAction.value = 'create'
   error.value = ''
+  skipStats.value = null
   try {
     const snap = await window.hh.backupCreate(g.id)
     if (!snap) {
       error.value = t('backup_no_dir')
     } else {
+      // 有文件被闸门拦下（超大/超预算/不可读）时必须提示：不提示的话
+      // 「部分备份」看起来就是「全部备份」，等于回到静默丢件。
+      if (snap.skippedCount && snap.skippedCount > 0) {
+        skipStats.value = { count: snap.skippedCount, bytes: snap.skippedBytes ?? 0 }
+        message.warning(skipNotice.value)
+      }
       await reload()
     }
   } catch (e) {
@@ -182,6 +207,7 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
       </div>
 
       <div v-if="error" class="error-bar">{{ error }}</div>
+      <div v-if="skipNotice" class="skip-bar">{{ skipNotice }}</div>
       <div v-if="loading" class="loading">{{ t('backup_loading') }}</div>
 
       <div v-if="!loading && stats?.snapshots.length" class="snap-list">
@@ -255,6 +281,15 @@ async function syncSnapshot(snap: SnapshotInfo): Promise<void> {
   color: var(--hh-color-error-text);
   background: var(--hh-color-error-soft-bg);
   border: 1px solid var(--hh-color-error);
+  border-radius: var(--hh-radius-sm);
+  padding: 8px 10px;
+  word-break: break-all;
+}
+.skip-bar {
+  font-size: 12.5px;
+  color: var(--hh-color-warning);
+  background: var(--hh-color-warning-soft-bg);
+  border: 1px solid var(--hh-color-warning);
   border-radius: var(--hh-radius-sm);
   padding: 8px 10px;
   word-break: break-all;

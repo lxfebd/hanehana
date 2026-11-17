@@ -39,6 +39,23 @@ export interface PlaySession {
 
 // ---------------------------------------------------------------- 存档备份（G1）
 
+/**
+ * 快照单文件跳过原因（不进快照本体，但必须留痕——不允许静默消失）：
+ *  - oversize：单文件超过 SNAPSHOT_MAX_FILE_BYTES（saves.ts，200 MiB）
+ *  - budget：单次快照拷贝总量超过 SNAPSHOT_MAX_TOTAL_BYTES（saves.ts，2 GiB）
+ *  - unreadable：收集到了但 stat/拷贝失败（被占用/权限/磁盘满/刚被删）
+ */
+export type SnapshotSkipReason = 'oversize' | 'budget' | 'unreadable'
+
+/** 快照显式跳过清单的条目（落盘在 meta.json 的 skipped[]）。 */
+export interface SnapshotSkipEntry {
+  /** 相对游戏目录的路径（分隔符跟随系统，Windows 下是反斜杠） */
+  rel: string
+  /** 跳过时的字节数；unreadable 且连 stat 都失败时为 0 */
+  size: number
+  reason: SnapshotSkipReason
+}
+
 /** 一份存档快照的元信息（本地 + WebDAV 共通） */
 export interface SnapshotInfo {
   gameId: string
@@ -49,6 +66,10 @@ export interface SnapshotInfo {
   totalBytes: number
   /** 快照目录的绝对路径（本地才有） */
   dirPath?: string
+  /** 未纳入本快照的文件数（超大/超预算/不可读）；0 = 全部纳入。旧快照无此字段 */
+  skippedCount?: number
+  /** 未纳入本快照的文件总字节，供「N 个文件未纳入（共 X）」提示 */
+  skippedBytes?: number
 }
 
 /** 快照 meta.json 的落盘形状（恢复时按清单回拷） */
@@ -58,6 +79,10 @@ export interface SnapshotMeta {
   dir: string
   createdAt: number
   files: { rel: string; size: number; sha1: string }[]
+  /** 显式跳过的文件。旧版 meta 没有该字段：读取方必须按缺省 [] 兜底，不能崩 */
+  skipped?: SnapshotSkipEntry[]
+  /** 人工可读备注（如 'no save files found'） */
+  note?: string
 }
 
 /** 某游戏的备份总览（备份开关 + 快照列表） */

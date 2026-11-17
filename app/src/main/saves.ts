@@ -21,22 +21,46 @@ import {
   rmSync,
   statSync,
   writeFileSync,
+  type Stats,
 } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import type { BackupStats, CloudSyncResult, Game, SnapshotInfo } from '../shared/types'
+import type { BackupStats, CloudSyncResult, Game, SnapshotInfo, SnapshotMeta, SnapshotSkipEntry } from '../shared/types'
 import { isSaveFile, webdavUrlError, relToRemote, bigBodyRe } from './saveRules'
 import { dataDir } from './store'
 import { sha1File } from '../shared/sha1File'
 
 // ---------------------------------------------------------------- 类型
 
-export interface SnapshotMeta {
-  gameId: string
-  title: string
-  dir: string
-  createdAt: number
-  files: { rel: string; size: number; sha1: string }[]
-}
+// meta.json 的落盘形状收在 shared/types（渲染层/主进程共用一份真值）。
+// 原先这里自带一份重复的 SnapshotMeta：两处定义迟早改一处忘一处，落盘与
+// 读取各信一种形状，所以只留 shared 那份，在本模块 re-export 维持旧导出面。
+export type { SnapshotMeta, SnapshotSkipEntry }
+
+// ---------------------------------------------------------------- 快照闸门
+
+/**
+ * 单文件入快照上限（200 MiB）。为什么是 200MB：
+ * - galgame 的存档本体（.sav/.dat/.ksd）普遍是 KB~MB 级；超过 200MB 的
+ *   「存档目录里的文件」几乎总是混进来的资源包/语音/视频（游戏本体的一
+ *   部分），不是进度数据。把这类文件整份 copyFileSync 进每个快照、再乘
+ *   上自动备份的保留份数，备份盘会被直接吃满——上一版把「>200MB 跳过」
+ *   整个删掉，修掉了静默丢件，却引入了静默涨盘。
+ * - 代价：极少数真有 >200MB 存档的游戏，该文件不进快照本体；但它会进
+ *   meta.json 的 skipped[] 留痕并在 UI 提示（不静默丢），用户可手动把
+ *   这棵目录整份复制兜底。
+ */
+export const SNAPSHOT_MAX_FILE_BYTES = 200 * 1024 * 1024
+
+/**
+ * 单次快照拷贝总量上限（2 GiB）。为什么是 2GB：
+ * - 备份是全量拷贝（明确不做硬链接/去重/增量：硬链接会让游戏原地改写
+ *   存档直接改掉历史快照，等于制造更隐蔽的数据损坏），快照体积只能靠
+ *   总量闸约束。2GiB × 自动保留份数（默认个位数）≈ 每游戏十几 GiB 封顶，
+ *   是「常见存档量级够用、又不会被一个 5GB 存档目录×保留策略吃满盘」的折中。
+ * - 超预算的文件进 skipped[]（reason='budget'）并提示，不静默丢；这些
+ *   文件的进度不在本快照里，恢复后需用户自行处理。
+ */
+export const SNAPSHOT_MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 
 // ---------------------------------------------------------------- 路径
 
@@ -66,7 +90,8 @@ function sanitizeId(id: string): string {
  * 游戏目录里除本体外的可写文件」——但那样会把 10GB 游戏本体也拷进去。
  * 折中策略：优先找常见存档子目录（save/savedata/data/profile/sgdata…），
  * 找不到就整目录拷贝但跳过 exe/dll/pak 等体积大的本体文件。
- * 最终以 meta.json 里的 files 清单为准，恢复时按清单回拷。
+ * 最终以 meta.json 里的 files 清单为准，恢复时按清单回拷；没进 files 的
+ * 文件一律在 skipped[] 里留痕（超大/超预算/不可读），不允许静默消失。
  */
 export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
   const srcDir = game.dir
@@ -77,80 +102,97 @@ export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
 
   // 收集要备份的文件（相对 srcDir 的路径）
   const rels = collectSaveFiles(srcDir)
+  // 排序后再过闸：总量闸（budget）是「先到先得」，裁掉哪个文件由遍历顺序
+  // 决定。readdir 在 NTFS 上恰好近字典序但无契约，不排序的话同一目录两次
+  // 快照可能裁掉不同文件，skipped 清单就没法解释。排序让预算裁剪可复现。
+  rels.sort()
 
   const files: SnapshotMeta['files'] = []
+  const skipped: SnapshotSkipEntry[] = []
   let totalBytes = 0
-  let skipped = 0
   for (const rel of rels) {
     const abs = join(srcDir, rel)
+    let st: Stats
     try {
-      const st = statSync(abs)
+      st = statSync(abs)
       if (!st.isFile()) continue
-      // 分块算 sha1，不再按体积跳过：几百 MB 的存档资源包也照进快照。
-      // 旧实现的「> 200MB 直接 continue」等于「备份报告成功、恢复时才发现少文件」。
-      // 摘要只供人工核对，算不出来不阻止备份（文件本身仍要拷）。
+    } catch {
+      // 连 stat 都失败（刚被删/无权限）：也要留痕，不能静默消失
+      skipped.push({ rel, size: 0, reason: 'unreadable' })
+      continue
+    }
+    // 闸门一（单文件 200MB）：超限的不进快照本体，进 skipped[] 留痕。
+    // 这不是「丢件」——文件仍被显式记录、UI 会提示缺了哪些；把它整份拷进
+    // 每个快照才是真正的涨盘（全量拷贝 × 保留份数）。
+    if (st.size > SNAPSHOT_MAX_FILE_BYTES) {
+      skipped.push({ rel, size: st.size, reason: 'oversize' })
+      continue
+    }
+    // 闸门二（单次快照总量 2GiB）：已拷字节 + 本文件超预算就留痕跳过。
+    // 被闸门一拦下的不占预算（它们本来就不会拷入本体）。
+    if (totalBytes + st.size > SNAPSHOT_MAX_TOTAL_BYTES) {
+      skipped.push({ rel, size: st.size, reason: 'budget' })
+      continue
+    }
+    const dst = join(outDir, rel)
+    try {
+      mkdirSync(dirname(dst), { recursive: true })
+      copyFileSync(abs, dst)
+      // 拷贝成功才进 files 清单：旧实现先 push 清单再拷贝，拷贝失败时清单
+      // 里有它、快照里没有——恢复按清单回拷不存在的文件，又是一次「报告
+      // 成功、实际少文件」。摘要（sha1）只供人工核对，算不出来不阻止备份。
       let sha1 = ''
       try {
         sha1 = sha1File(abs)
       } catch {
-        /* 摘要失败不阻止备份 */
+        /* 摘要失败不阻止备份（文件本体已拷入） */
       }
       files.push({ rel, size: st.size, sha1 })
       totalBytes += st.size
-      // 目标子目录
-      const dst = join(outDir, rel)
-      mkdirSync(dirname(dst), { recursive: true })
-      copyFileSync(abs, dst)
     } catch {
-      // 单文件被占用/删除：跳过，但留痕（不再是静默丢）
-      skipped += 1
+      // 单文件被占用/磁盘满/权限：先清掉可能写了一半的目标文件再留痕。
+      // 半截残件比没有更糟——恢复和云同步都会把它当完整文件。
+      try {
+        rmSync(dst, { force: true })
+      } catch {
+        /* 清不掉就留着；skipped 清单仍是事实来源 */
+      }
+      skipped.push({ rel, size: st.size, reason: 'unreadable' })
       continue
     }
   }
-  if (skipped > 0) console.warn(`[hanehana] 存档快照跳过 ${skipped} 个文件（被占用或不可读）`)
-
-  if (files.length === 0) {
-    // 一个文件都没备份到：目录里可能全是本体。还是留个 meta 说明，避免恢复时空目录
-    writeFileSync(
-      join(outDir, 'meta.json'),
-      JSON.stringify(
-        {
-          gameId: game.id,
-          title: game.title,
-          dir: srcDir,
-          createdAt: Date.now(),
-          files: [],
-          note: 'no save files found',
-        },
-        null,
-        2,
-      ),
-      'utf8',
-    )
-    return {
-      gameId: game.id,
-      title: game.title,
-      dir: srcDir,
-      createdAt: Date.now(),
-      files: 0,
-      totalBytes: 0,
-      dirPath: outDir,
-    }
+  if (skipped.length > 0) {
+    console.warn(`[hanehana] 存档快照跳过 ${skipped.length} 个文件（超大/超预算/不可读），明细见 meta.json 的 skipped`)
   }
 
-  writeFileSync(
-    join(outDir, 'meta.json'),
-    JSON.stringify({ gameId: game.id, title: game.title, dir: srcDir, createdAt: Date.now(), files }, null, 2),
-    'utf8',
-  )
+  const createdAt = Date.now()
+  const meta: SnapshotMeta = {
+    gameId: game.id,
+    title: game.title,
+    dir: srcDir,
+    createdAt,
+    files,
+    // 空清单也固定写 skipped: []：落盘形状稳定。旧版 meta 没有该字段，
+    // 读取侧一律 Array.isArray 兜底（见 listSnapshots/restoreSnapshot），不能崩。
+    skipped,
+  }
+  if (files.length === 0) {
+    // 一个文件都没备份到：目录里可能全是本体。还是留个 meta 说明，避免恢复时空目录
+    meta.note = 'no save files found'
+  }
+  writeFileSync(join(outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8')
   return {
     gameId: game.id,
     title: game.title,
     dir: srcDir,
-    createdAt: Date.now(),
+    createdAt,
     files: files.length,
     totalBytes,
     dirPath: outDir,
+    // 跳过摘要（数量/字节）：上层据此提示「N 个文件未纳入快照（共 X）」。
+    // 0 也要给出来，调用方只需判断 > 0。
+    skippedCount: skipped.length,
+    skippedBytes: skipped.reduce((a, s) => a + s.size, 0),
   }
 }
 
@@ -241,14 +283,21 @@ export function listSnapshots(gameId: string): SnapshotInfo[] {
     if (!existsSync(metaPath)) continue
     try {
       const meta = JSON.parse(readFileSync(metaPath, 'utf8')) as SnapshotMeta
+      // 旧版 meta 没有 skipped 字段（也可能被手改/导入坏）：缺了就是「没有跳过」，
+      // 读旧快照绝不能崩；files 同理做类型兜底。
+      const files = Array.isArray(meta.files) ? meta.files : []
+      const skipped = Array.isArray(meta.skipped) ? meta.skipped : []
       out.push({
         gameId: meta.gameId,
         title: meta.title,
         dir: meta.dir,
         createdAt: meta.createdAt,
-        files: meta.files.length,
-        totalBytes: meta.files.reduce((a, f) => a + f.size, 0),
+        files: files.length,
+        totalBytes: files.reduce((a, f) => a + (f?.size ?? 0), 0),
         dirPath,
+        // 列表页也能看见「这份快照不是全集」，而不只是创建那一刻的返回值和提示
+        skippedCount: skipped.length,
+        skippedBytes: skipped.reduce((a, s) => a + (s?.size ?? 0), 0),
       })
     } catch {
       continue
@@ -315,7 +364,10 @@ export function restoreSnapshot(
   // 中途失败（磁盘满/权限）时逆序回滚：删掉已拷入的新档、把原档 rename 回来，
   // 让游戏目录回到恢复前的状态——不做的话快照会停在「半恢复」的坏状态。
   const rolled: { dst: string; pre: string | null }[] = []
-  for (const f of meta.files) {
+  // 旧版/被改坏的 meta 可能缺 files（skipped 是新字段，恢复时不需要它）：
+  // 清单缺失就按空快照处理（恢复 0 个），不能因为读旧快照把恢复流程崩掉。
+  const files = Array.isArray(meta.files) ? meta.files : []
+  for (const f of files) {
     if (!f || typeof f.rel !== 'string') continue
     // 双重限域：src 必须真的在快照目录里、dst 必须真的在游戏目录里
     if (!isRelInside(snapshotDir, f.rel)) return { ok: false, error: `快照清单含非法路径：${f.rel}` }
