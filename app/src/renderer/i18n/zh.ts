@@ -421,6 +421,8 @@ export const zh = {
   gs_cant_auto: '该链接无法自动下载，请在页面里打开',
   gs_added_one: '已添加到下载列表',
   gs_added_n: '已添加 {n} 个文件',
+  gs_enqueue_done: '共 {n} 个文件已加入队列',
+  gs_enqueue_part: '共 {total} 个文件中 {n} 个已加入队列',
   gs_dup_n: '{n} 个已在下载列表',
   gs_failed_n: '{n} 个失败：{first}',
   gs_added_none: '没有文件被加入下载列表',

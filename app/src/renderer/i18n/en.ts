@@ -412,6 +412,8 @@ export const en: Record<I18nKey, string> = {
   gs_cant_auto: 'This link cannot be downloaded automatically; open it in the page',
   gs_added_one: 'Added to download list',
   gs_added_n: 'Added {n} files',
+  gs_enqueue_done: 'Added {n} files to the download queue',
+  gs_enqueue_part: '{n} of {total} files added to the download queue',
   gs_dup_n: '{n} already in the download list',
   gs_failed_n: '{n} failed: {first}',
   gs_added_none: 'No files were added to the download list',

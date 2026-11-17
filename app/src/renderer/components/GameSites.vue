@@ -20,6 +20,7 @@ import { GAMESITES_PARTITION } from '../../shared/sites'
 import type { WebviewElement } from '../webview'
 import { reportRejection } from '../stores/downloads'
 import { t, tf } from '../i18n'
+import { createThrottledProgress, runPool } from '../../shared/enqueuePool'
 
 const sites = ref<SiteInfo[]>([])
 const activeSiteId = ref<string>('gamer520')
@@ -253,6 +254,13 @@ function refocusSearch(): void {
 const LOADING_KEY = 'gamesites-mirror-loading'
 
 /**
+ * 一批直链里最多几个 sitesAddTask 同时在飞。主进程那一端只是「建任务」的内存
+ * 操作，4 个足以把 120 次 IPC 从 120 轮压到约 30 轮，又不至于让主进程的事件循环
+ * 一下子处理不过来。要调节奏就改这里，不要退回逐条 await（那会重新变成串行刷屏）。
+ */
+const ADD_TASK_CONCURRENCY = 4
+
+/**
  * 一次「点结果 → 选镜像 → 解析网盘 → 排队入列」的完整过程是否正在进行。
  * 网盘列目录能拖十几秒，而这段时间屏幕上什么都不动：用户以为没点上，
  * 再点一次就会并发解析同一个分享页。
@@ -393,23 +401,41 @@ async function handleMirror(m: Mirror): Promise<void> {
     return
   }
   if (outcome.ok && (outcome.files?.length || outcome.url)) {
-    // 一个分享常有多个文件（RAR 分卷），逐个入队；失败的每一个都要报出来
+    // 一个分享常有多个文件（RAR 分卷），120 个分卷就是 120 条直链。
+    // 以前逐条 await + 逐条推「正在加入（i/total）」：120 轮 IPC 排成一条队，
+    // 进度文字几秒内刷 120 次，用户读作「卡住了在刷屏」。改成并发池 + 聚合进度：
+    // 同时在飞 ADD_TASK_CONCURRENCY 个，进度按「每 10% 或每 0.5 秒先到者」降频，
+    // 收尾补一条 total/total，最后只弹一句汇总。
     const list = outcome.files?.length ? outcome.files : [{ url: outcome.url!, filename: outcome.filename ?? '' }]
     let added = 0
     let dups = 0
-    const failed: string[] = []
-    for (let i = 0; i < list.length; i++) {
-      const f = list[i]!
-      if (list.length > 1) showProgress(tf('gs_adding_list', { i: i + 1, total: list.length }))
-      try {
-        const r = await window.hh.sitesAddTask({ url: f.url, filename: f.filename })
-        if (r.ok && !r.duplicate) added++
-        else if (r.ok) dups++
-        else failed.push(`${f.filename || t('gs_that_file')}：${r.error}`)
-      } catch (e) {
-        reportRejection(e)
-      }
-    }
+    let settled = 0
+    // 单个文件不报「正在加入（1/1）」：一闪而过的进度条比没有更烦
+    const progress =
+      list.length > 1
+        ? createThrottledProgress(list.length, (done, total) => {
+            showProgress(tf('gs_adding_list', { i: done, total }))
+          })
+        : null
+    const res = await runPool(
+      list,
+      async (f) => {
+        try {
+          const r = await window.hh.sitesAddTask({ url: f.url, filename: f.filename })
+          if (!r.ok) throw new Error(`${f.filename || t('gs_that_file')}：${r.error}`)
+          if (r.duplicate) dups++
+          else added++
+        } finally {
+          // finally：失败也算「处理完了」，否则进度会永远停在失败的那一步
+          settled++
+          progress?.update(settled)
+        }
+      },
+      ADD_TASK_CONCURRENCY,
+    ).finally(() => {
+      // 时间型/百分比型节流都可能把最后几步压掉：收尾必须把 total/total 补出去
+      progress?.flush()
+    })
     message.destroy(LOADING_KEY)
     // 分享里的文件超过单次解析上限时会被截断。只报「还有 M 个未加入」等于把活儿
     // 丢回给用户——他得自己找回那个分享页。这里直接把分享页摊到右侧浏览器里。
@@ -418,7 +444,7 @@ async function handleMirror(m: Mirror): Promise<void> {
       nav(m.url)
       note = note ? `${note}，${t('gs_opened_right')}` : t('gs_rest_opened')
     }
-    reportResolve(added, dups, failed, note)
+    reportResolve(list.length, added, dups, res.errors, note)
     return
   }
   // 解析失败：网盘类回退到内嵌 webview，让用户用站点自带会话手动下载
@@ -432,25 +458,31 @@ async function handleMirror(m: Mirror): Promise<void> {
 }
 
 /**
- * 把一次解析的结果合成一条提示。
+ * 把一次解析的入队结果合成**一条**收尾提示。
  *
- * 分卷任务一多，逐条弹消息会变成几十条堆叠的 toast（用户只能看着它们排队消失），
- * 所以这里汇总成一条；更要紧的是 outcome.message——主进程解析器在里面写的是
+ * 分卷任务一多，逐条弹消息会变成几十条堆叠的 toast（用户只能看着它们排队消失）；
+ * 120 个文件逐个弹更是换个地方刷屏。这里只说这一批的结局：共几个、进去几个、
+ * 失败几个，只发一次。更要紧的是 outcome.message——主进程解析器在里面写的是
  * 「共 N 个文件（还有 M 个文件未加入，可在分享页查看）」这种截断告知。
  * 60 个分卷只下了一半却不说，用户拿到手才发现缺件。
  */
-function reportResolve(added: number, dups: number, failed: string[], note?: string): void {
+function reportResolve(total: number, added: number, dups: number, failed: string[], note?: string): void {
   const parts: string[] = []
-  if (added) parts.push(added === 1 ? t('gs_added_one') : tf('gs_added_n', { n: added }))
+  // 第一句永远是这一批的结局而不是逐件流水账：全成功说「共 N 个已加入」；
+  // 有重复或失败时带上总数，用户能拿它和解析器说的文件数对上。
+  if (failed.length === 0 && dups === 0) {
+    parts.push(total === 1 ? t('gs_added_one') : tf('gs_enqueue_done', { n: added }))
+  } else {
+    parts.push(tf('gs_enqueue_part', { total, n: added }))
+  }
   if (dups) parts.push(tf('gs_dup_n', { n: dups }))
   if (failed.length) parts.push(tf('gs_failed_n', { n: failed.length, first: failed[0] }))
   if (note) parts.push(note)
-  if (!parts.length) parts.push(t('gs_added_none'))
-  const important = failed.length > 0 || !!note
+  const important = failed.length > 0 || !!note || total >= 20
   message.open({
     content: parts.join(' · '),
     type: failed.length ? 'warning' : added ? 'success' : 'info',
-    // 截断告知和失败明细比「成功了」更需要读完，3 秒不够
+    // 截断告知和失败明细比「成功了」更需要读完，3 秒不够；大分享的收尾数字同理
     duration: important ? 8 : 3,
   })
 }
