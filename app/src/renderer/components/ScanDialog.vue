@@ -86,7 +86,7 @@ async function addDupe(exePath: string): Promise<void> {
       <div class="row">
         <input v-model="dir" class="path-input" :placeholder="t('scan_ph')" @keyup.enter="runScan" />
         <button class="scan-btn ghost" @click="pickDir">{{ t('common_browse') }}…</button>
-        <button class="scan-btn" :disabled="scanning" @click="runScan">
+        <button class="scan-btn" data-testid="act-scan-start" :disabled="scanning" @click="runScan">
           {{ scanning ? t('scan_scanning') : t('scan_start') }}
         </button>
       </div>

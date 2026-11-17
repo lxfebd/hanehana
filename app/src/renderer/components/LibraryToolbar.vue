@@ -108,6 +108,7 @@ onBeforeUnmount(() => {
     <!-- 批量操作开关（基准库页头部口径：文字标签 + 药丸 toggle，主操作不许纯图标） -->
     <button
       class="batch-toggle"
+      data-testid="act-multi"
       :class="{ on: library.selectMode }"
       :title="t('toolbar_select')"
       :aria-pressed="library.selectMode"

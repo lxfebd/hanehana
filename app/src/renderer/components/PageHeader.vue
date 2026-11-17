@@ -40,13 +40,17 @@ function goHome(): void {
     <nav class="ph-crumb" :aria-label="t('nav_home')">
       <template v-for="(item, i) in crumbItems" :key="item.key">
         <span v-if="i > 0" class="ph-sep" aria-hidden="true"><ChevronRight :size="13" /></span>
-        <button v-if="i === 0" class="ph-link" type="button" @click="goHome">{{ item.label }}</button>
-        <span v-else-if="item.current" class="ph-current" aria-current="page">{{ item.label }}</span>
-        <span v-else class="ph-link">{{ item.label }}</span>
+        <button v-if="i === 0" class="ph-link" type="button" :data-testid="'crumb-' + item.key" @click="goHome">
+          {{ item.label }}
+        </button>
+        <span v-else-if="item.current" class="ph-current" :data-testid="'crumb-' + item.key" aria-current="page">
+          {{ item.label }}
+        </span>
+        <span v-else class="ph-link" :data-testid="'crumb-' + item.key">{{ item.label }}</span>
       </template>
     </nav>
     <div class="ph-main">
-      <h1 class="ph-title">{{ t(title) }}</h1>
+      <h1 class="ph-title" :data-testid="'page-title-' + title">{{ t(title) }}</h1>
       <p v-if="subtitle" class="ph-sub">{{ subtitle }}</p>
     </div>
     <div v-if="$slots.actions" class="ph-actions">

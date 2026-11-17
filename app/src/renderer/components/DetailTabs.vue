@@ -210,6 +210,7 @@ watch(() => props.game, () => {
     :key="tb.key"
     class="dp-tab"
     :class="{ active: dpTab === tb.key }"
+    :data-testid="'tab-' + tb.key"
     role="tab"
     :aria-selected="dpTab === tb.key"
     :aria-controls="'dp-pane-' + tb.key"
@@ -229,6 +230,7 @@ watch(() => props.game, () => {
       :key="r.key"
       class="range-chip"
       :class="{ on: range === r.key }"
+      :data-testid="'range-' + r.key"
       type="button"
       :aria-pressed="range === r.key"
       @click="range = r.key"
@@ -365,7 +367,7 @@ watch(() => props.game, () => {
       {{ g.backupEnabled ? t('detail_backup_on') : t('detail_backup') }}
     </span>
   </label>
-  <button class="dp-pane-btn" type="button" :aria-pressed="!!library.backupOpen" @click="openBackups">
+  <button class="dp-pane-btn" data-testid="act-backup-records" type="button" :aria-pressed="!!library.backupOpen" @click="openBackups">
     <DatabaseBackup :size="14" /> {{ t('detail_backup_records') }}
   </button>
 </div>

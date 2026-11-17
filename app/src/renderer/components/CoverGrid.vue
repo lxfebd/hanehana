@@ -358,6 +358,7 @@ function onKeydown(e: KeyboardEvent, idx: number): void {
               <div
                 v-if="isNsfwGame(it.g.tags) && !revealedNsfw.has(it.g.id)"
                 class="cover-nsfw"
+                data-testid="cover-nsfw"
                 :title="t('nsfw_hint')"
                 @click.stop="revealNsfw(it.g.id)"
               >

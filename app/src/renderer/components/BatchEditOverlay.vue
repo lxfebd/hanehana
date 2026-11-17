@@ -170,7 +170,7 @@ onBeforeUnmount(() => {
         </button>
         <span class="b-sep"></span>
       </template>
-      <button class="b-btn" :title="t('batch_toggle_fav')" @click="toggleFav">
+      <button class="b-btn" data-testid="act-batch-fav" :title="t('batch_toggle_fav')" @click="toggleFav">
         <Heart :size="14" /> {{ t('detail_fav') }}
       </button>
       <button class="b-btn" :title="t('batch_toggle_clear')" @click="toggleQuickCat">
@@ -187,7 +187,7 @@ onBeforeUnmount(() => {
         <Star :size="12" :fill="starColor" :stroke-width="0" /> {{ r }}
       </button>
       <span class="b-sep"></span>
-      <button class="b-btn danger" :title="t('batch_remove_title')" @click="removeSel">
+      <button class="b-btn danger" data-testid="act-batch-remove" :title="t('batch_remove_title')" @click="removeSel">
         <Trash2 :size="14" /> {{ t('batch_remove') }}
       </button>
       <button class="b-btn" :title="t('batch_exit_multi')" @click="close">

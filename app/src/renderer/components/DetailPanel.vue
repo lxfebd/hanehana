@@ -233,6 +233,7 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
       </template>
       <button
         class="dp-icon-btn"
+        data-testid="act-expand-full"
         type="button"
         :title="expanded ? t('dp_collapse_panel') : t('dp_expand_panel')"
         :aria-label="expanded ? t('dp_collapse_panel') : t('dp_expand_panel')"
@@ -269,14 +270,18 @@ function onFilterMeta(key: 'series' | 'developer', value: string): void {
         </button>
       </div>
       <div class="actions-sub">
-        <button class="ghost-btn" @click="openScrape(g.id, g.rawTitle || g.title)">
+        <button class="ghost-btn" data-testid="act-scrape" @click="openScrape(g.id, g.rawTitle || g.title)">
           <Wand2 :size="14" /> {{ t('detail_scrape') }}
         </button>
-        <button class="ghost-btn" @click="openEdit(g.id)"><Pencil :size="14" /> {{ t('detail_edit') }}</button>
-        <button class="ghost-btn" @click="openDir"><FolderOpen :size="14" /> {{ t('detail_dir') }}</button>
+        <button class="ghost-btn" data-testid="act-edit" @click="openEdit(g.id)">
+          <Pencil :size="14" /> {{ t('detail_edit') }}
+        </button>
+        <button class="ghost-btn" data-testid="act-open-dir" @click="openDir">
+          <FolderOpen :size="14" /> {{ t('detail_dir') }}
+        </button>
         <!-- 复制信息：给朋友推荐/发群/贴评测时最常用的一步，
              此前要手动选中标题→再翻详情找开发商→再抄标签。 -->
-        <button class="ghost-btn" :title="t('dp_copy_title')" @click="copyGameInfo">
+        <button class="ghost-btn" data-testid="act-copy" :title="t('dp_copy_title')" @click="copyGameInfo">
           <ClipboardCopy :size="14" /> {{ copyDone ? t('dp_copied') : t('dp_copy') }}
         </button>
       </div>

@@ -89,6 +89,7 @@ function openGroup(name: string): void {
         <div class="dim-seg">
           <button
             class="seg-chip"
+            data-testid="dim-developer"
             :class="{ active: dim === 'developer' }"
             :aria-pressed="dim === 'developer'"
             @click="dim = 'developer'"
@@ -97,6 +98,7 @@ function openGroup(name: string): void {
           </button>
           <button
             class="seg-chip"
+            data-testid="dim-series"
             :class="{ active: dim === 'series' }"
             :aria-pressed="dim === 'series'"
             @click="dim = 'series'"
@@ -121,6 +123,7 @@ function openGroup(name: string): void {
         :key="g.name"
         class="coll-card glass"
         :class="{ 'is-other': g.fallback }"
+        :data-testid="g.fallback ? 'coll-card-other' : 'coll-card'"
         type="button"
         @click="openGroup(g.name)"
       >

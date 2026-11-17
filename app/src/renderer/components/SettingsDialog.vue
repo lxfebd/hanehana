@@ -287,7 +287,8 @@ function save(): void {
 <template>
   <div class="dlg">
     <Tabs defaultActiveKey="download" tab-position="left">
-      <TabPane key="download" :tab="t('set_tab_download')">
+      <TabPane key="download">
+        <template #tab><span data-testid="tab-download">{{ t('set_tab_download') }}</span></template>
         <div v-if="engine && !engine.ok" class="card card-warn">
           <div class="lbl">{{ t('set_engine_unavailable') }}</div>
           <div class="hint">{{ engine.hint }}</div>
@@ -321,7 +322,8 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="notify" :tab="t('set_tab_notify')">
+      <TabPane key="notify">
+        <template #tab><span data-testid="tab-notify">{{ t('set_tab_notify') }}</span></template>
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label=" " :colon="false">
@@ -336,7 +338,8 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="net" :tab="t('set_tab_net')">
+      <TabPane key="net">
+        <template #tab><span data-testid="tab-net">{{ t('set_tab_net') }}</span></template>
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item :label="t('set_proxy')">
@@ -373,7 +376,8 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="ui" :tab="t('set_tab_ui')">
+      <TabPane key="ui">
+        <template #tab><span data-testid="tab-ui">{{ t('set_tab_ui') }}</span></template>
         <div class="card">
           <div class="lbl" style="margin-bottom: 8px">{{ t('set_language') }}</div>
           <Radio.Group v-model:value="form.language">
@@ -402,6 +406,7 @@ function save(): void {
               :key="id"
               class="preset-card"
               :class="{ active: form.theme_preset === id }"
+              :data-testid="'preset-' + id"
               @click="form.theme_preset = id"
             >
               <span class="preset-preview" :style="presetPreview(id)"></span>
@@ -462,7 +467,8 @@ function save(): void {
           <div v-if="form.bg_image" class="bg-path mono">{{ form.bg_image }}</div>
         </div>
       </TabPane>
-      <TabPane key="backup" :tab="t('set_tab_backup')">
+      <TabPane key="backup">
+        <template #tab><span data-testid="tab-backup">{{ t('set_tab_backup') }}</span></template>
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item label=" " :colon="false">
@@ -501,7 +507,8 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="tools" :tab="t('set_tab_tools')">
+      <TabPane key="tools">
+        <template #tab><span data-testid="tab-tools">{{ t('set_tab_tools') }}</span></template>
         <div class="card">
           <Form layout="horizontal" :label-col="{ style: { width: 120 } }" :wrapper-col="{ flex: 1 }">
             <Form.Item :label="t('set_le_exe')">
@@ -531,10 +538,12 @@ function save(): void {
           </Form>
         </div>
       </TabPane>
-      <TabPane key="browser" :tab="t('set_tab_browser')">
+      <TabPane key="browser">
+        <template #tab><span data-testid="tab-browser">{{ t('set_tab_browser') }}</span></template>
         <BrowserExtensionPanel />
       </TabPane>
-      <TabPane key="track" :tab="t('set_tab_track')">
+      <TabPane key="track">
+        <template #tab><span data-testid="tab-track">{{ t('set_tab_track') }}</span></template>
         <div class="card">
           <div class="track-add">
             <Input v-model:value="trackKeyword" :placeholder="t('set_track_ph')" @press-enter="addTrack" />
@@ -561,7 +570,8 @@ function save(): void {
           <div class="hint track-hint">{{ t('set_track_hint') }}</div>
         </div>
       </TabPane>
-      <TabPane key="about" :tab="t('set_tab_about')">
+      <TabPane key="about">
+        <template #tab><span data-testid="tab-about">{{ t('set_tab_about') }}</span></template>
         <div class="card">
           <div class="about-row">
             <span class="about-key">{{ t('set_about_version') }}</span>

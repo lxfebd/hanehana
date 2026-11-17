@@ -200,6 +200,7 @@ function moreAction(fn: () => void): void {
          基准的导航顺序就是 Home 在 Library 前面——仪表盘先行、浏览其次。 -->
     <button
       class="nav-item"
+      data-testid="nav-home"
       :class="{ active: ui.page === 'home' }"
       :aria-current="ui.page === 'home' ? 'page' : undefined"
       :title="t('nav_home')"
@@ -210,6 +211,7 @@ function moreAction(fn: () => void): void {
     </button>
     <button
       class="nav-item"
+      data-testid="nav-library"
       :class="{ active: ui.page === 'library' }"
       :aria-current="ui.page === 'library' ? 'page' : undefined"
       :title="t('nav_library')"
@@ -223,6 +225,7 @@ function moreAction(fn: () => void): void {
          计数 = 收藏数。库内纯收藏筛选仍在工具栏心形 toggle。 -->
     <button
       class="nav-item"
+      data-testid="nav-favorites"
       :class="{ active: ui.page === 'collection' }"
       :aria-current="ui.page === 'collection' ? 'page' : undefined"
       :title="t('nav_favorites')"
@@ -234,6 +237,7 @@ function moreAction(fn: () => void): void {
     </button>
     <button
       class="nav-item"
+      data-testid="nav-downloads"
       :class="{ active: ui.page === 'downloads' }"
       :aria-current="ui.page === 'downloads' ? 'page' : undefined"
       :title="t('nav_downloads')"
@@ -247,6 +251,7 @@ function moreAction(fn: () => void): void {
          提为主栏一级入口，紧挨「下载任务」（浏览站点 → 投递下载是同一件事）。 -->
     <button
       class="nav-item"
+      data-testid="nav-games"
       :class="{ active: ui.page === 'games' }"
       :aria-current="ui.page === 'games' ? 'page' : undefined"
       :title="t('nav_games')"
@@ -257,11 +262,11 @@ function moreAction(fn: () => void): void {
     </button>
 
     <div class="nav-spacer"></div>
-    <button class="nav-item" :title="t('lib_scan')" @click="library.scanOpen = true">
+    <button class="nav-item" data-testid="nav-scan" :title="t('lib_scan')" @click="library.scanOpen = true">
       <ScanSearch :size="16" class="nav-ic" />
       <span>{{ t('lib_scan') }}</span>
     </button>
-    <button class="nav-item" :title="t('nav_settings')" @click="openSettings()">
+    <button class="nav-item" data-testid="nav-settings" :title="t('nav_settings')" @click="openSettings()">
       <Settings :size="16" class="nav-ic" />
       <span>{{ t('nav_settings') }}</span>
     </button>
@@ -271,6 +276,7 @@ function moreAction(fn: () => void): void {
     <div ref="moreWrapRef" class="more-wrap">
       <button
         class="nav-item more-toggle"
+        data-testid="nav-more"
         :class="{ active: moreMenuOpen || ui.page === 'stats' }"
         :aria-expanded="moreMenuOpen"
         :title="t('nav_more')"
@@ -280,11 +286,11 @@ function moreAction(fn: () => void): void {
         <span>{{ t('nav_more') }}</span>
       </button>
       <div v-if="moreMenuOpen" class="more-menu glass">
-        <button class="nav-item" :class="{ active: ui.page === 'stats' }" @click="goPage('stats')">
+        <button class="nav-item" data-testid="nav-stats" :class="{ active: ui.page === 'stats' }" @click="goPage('stats')">
           <BarChart3 :size="16" class="nav-ic" />
           <span>{{ t('nav_stats') }}</span>
         </button>
-        <button class="nav-item" @click="moreAction(() => emit('enter-fullscreen'))">
+        <button class="nav-item" data-testid="nav-fullscreen" @click="moreAction(() => emit('enter-fullscreen'))">
           <Maximize2 :size="16" class="nav-ic" />
           <span>{{ t('nav_fullscreen') }}</span>
         </button>

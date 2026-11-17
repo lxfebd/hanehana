@@ -28,7 +28,7 @@ defineProps<{ items: KpiItem[] }>()
 
 <template>
   <section class="kpi-strip" aria-label="kpi">
-    <article v-for="item in items" :key="item.key" class="kpi-card">
+    <article v-for="item in items" :key="item.key" class="kpi-card" :data-testid="item.key">
       <div class="kpi-label">
         <component :is="item.icon" v-if="item.icon" :size="15" class="kpi-icon" />
         <span>{{ t(item.key) }}</span>

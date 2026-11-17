@@ -375,6 +375,7 @@ async function exportPoster(): Promise<void> {
               v-for="p in (['week', 'month'] as Period[])"
               :key="p"
               class="seg-chip"
+              :data-testid="'seg-' + p"
               :class="{ active: period === p }"
               :aria-pressed="period === p"
               @click="period = p"
@@ -389,7 +390,7 @@ async function exportPoster(): Promise<void> {
         <KpiStrip :items="kpiItems" />
 
         <!-- 总趋势：缺日补零（基准这里 X 轴跳日期，我们补零） -->
-        <section class="panel glass">
+        <section class="panel glass" data-testid="panel-trend">
           <div class="panel-head">
             <h2 class="panel-title">{{ t('st_trend') }}</h2>
             <span class="panel-sub">{{ rangeLabel }}</span>
@@ -398,7 +399,7 @@ async function exportPoster(): Promise<void> {
         </section>
 
         <!-- Top10 by play time（扩到 10 条，缩略图 + 横条） -->
-        <section v-if="topGames.length" class="panel glass">
+        <section v-if="topGames.length" class="panel glass" data-testid="panel-rank">
           <div class="panel-head">
             <h2 class="panel-title">{{ t('st_rank90') }}</h2>
             <span class="panel-sub">{{ t('st_played') }}</span>
@@ -425,7 +426,7 @@ async function exportPoster(): Promise<void> {
         </section>
 
         <!-- 时段分布：0–23 时聚合（基准底部 Play period distribution） -->
-        <section class="panel glass">
+        <section class="panel glass" data-testid="panel-hours">
           <div class="panel-head">
             <h2 class="panel-title">{{ t('st_hour_dist') }}</h2>
             <span class="panel-sub">{{ t('st_hour_axis_hint') }}</span>

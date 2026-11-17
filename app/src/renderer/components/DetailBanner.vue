@@ -79,6 +79,7 @@ function bannerFallback(): string {
            verify 的收藏断言不换靶。 -->
       <button
         class="fav-btn chip chip-fav"
+        data-testid="act-fav"
         :class="{ on: g.favorite }"
         :aria-pressed="g.favorite"
         @click="toggleFavorite(g.id)"

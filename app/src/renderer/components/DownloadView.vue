@@ -185,6 +185,7 @@ function onAll(action: string): void {
             v-for="f in FILTERS"
             :key="f.key"
             class="seg-chip"
+            :data-testid="'filter-' + f.key"
             :class="{ active: downloads.taskFilter === f.key }"
             @click="downloads.taskFilter = f.key"
           >
