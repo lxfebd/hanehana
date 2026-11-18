@@ -407,10 +407,27 @@ async function main() {
       await moveAway()
       await sleep(200) // 鼠标移开后 :hover 退场，无稳定判据
       ck(tag + ' 封面墙就绪', wallReady)
-      // B4：右栏永远有内容——库页未选中应显示动态流而非空白。
+      // B4：右栏必须是**展开的且有内容**。
       // 右栏宽度是弹性的（App.vue .aside 的 clamp，400 → 300），窄窗不再自动收成
       // 28px 竖条；.aside.collapsed 只在用户手动点「收成竖条」时出现。
-      ck(tag + ' 库页右栏非空白', (await ev(`(() => { const a = document.querySelector('.aside'); if (!a) return false; if (a.classList.contains('collapsed')) return true; return !!a.querySelector('.activity-feed, .detail-panel') })()`)) === true)
+      // 旧断言里的 `if (a.classList.contains('collapsed')) return true` 是恒真后门：
+      // 自动收起删掉后它永远走不到，可一旦走到（右栏只剩 28px 竖条）就放行。
+      // 现在遇到 collapsed 直接判红，并把实测宽度打出来，红了不用再单独量一次。
+      const asideState = await ev(`(() => {
+        const a = document.querySelector('.aside')
+        if (!a) return null
+        const r = a.getBoundingClientRect()
+        return {
+          collapsed: a.classList.contains('collapsed'),
+          w: Math.round(r.width),
+          hasContent: !!a.querySelector('.activity-feed, .detail-panel'),
+        }
+      })()`)
+      ck(
+        tag + ' 库页右栏展开且有内容（.aside 非 collapsed + 动态流/详情）',
+        !!asideState && asideState.collapsed === false && asideState.hasContent === true,
+        '.aside=' + JSON.stringify(asideState),
+      )
       const L = await probeStable('(' + LAYOUT_PROBE + ')()', tag + ' 库页布局探针')
       ck(tag + ' 无横向溢出', !!L && (L.overflow || []).length === 0, JSON.stringify(L && L.overflow))
       ck(tag + ' 封面卡片互不重叠', !!L && L.cardOverlap === 0, 'overlapPairs=' + (L && L.cardOverlap) + ' cards=' + (L && L.cardCount) + ' vw=' + (L && L.vw) + 'x' + (L && L.vh))

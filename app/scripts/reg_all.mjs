@@ -1,14 +1,16 @@
 // 回归总入口：串起闸门（按顺序，遇错即停）。
 //   1. typecheck          —— vue-tsc 双 tsconfig（零依赖 npm 脚本）
-//   2. regression:static  —— accept_batch21/22/23 静态闸（秒级）
+//   2. regression:static  —— accept_batch21/22/23 + 接线元闸（秒级）
 //   3. regression:layers  —— 真机层叠命中测试（verify_ui_layers.mjs）
-//   4. regression:download—— 真实引擎下载链路（e2e_download.mjs，HTTPS fixture）
+//   4. 四个 CDP 靶        —— 封面破图回退 / 点浮层外收起 / 详情面板头部 / 大存档备份
+//   5. regression:download—— 真实引擎下载链路（e2e_download.mjs，HTTPS fixture）
 // 用法：node scripts/reg_all.mjs [--no-layers] [--no-download]
 //
 // --no-download 是逃生阀：本机没编译 Rust 引擎、或者离线时跑不了真实下载链路。
 // 用它的那次结果**不能**记成「download 闸绿」——2026-10-31 起的 nightly 连红 11 次
 // 期间，CHANGELOG 里一串 ALL PASS 就是这么来的。CI（visual.yml）不带这个参数。
-// --no-layers 同理，只用于没有图形会话的环境。
+// --no-layers 同理，只用于没有图形会话的环境：它同时跳过第 4 步那四个 CDP 靶
+// （同一前提：要真窗口）。
 //
 // 跳着跑的这次以 exit 3 结束：调用方必须能区分「全跑过了」和「跳过一部分」，
 // 否则逃生阀会重新变成「每次都绿」的假绿来源。
@@ -25,6 +27,22 @@ if (!process.argv.includes('--no-layers')) {
   steps.push(['regression:layers', 'node scripts/verify_ui_layers.mjs', (r) => r.status === 0])
 } else {
   skipped.push('regression:layers')
+}
+// 四个新回归靶（B1）：此前它们只在 package.json 里挂着，任何入口都不调用它——
+// 「把 CoverGrid 改回 display:none 也全绿」就是这么来的。都走真窗口 + build 产物，
+// 与 layers 同一前提，所以共用 --no-layers 逃生阀（跳过的名字进 skipped，不算全绿）。
+const CDP_EXTRA = [
+  ['regression:coverfallback', 'node scripts/verify_cover_fallback.mjs'],
+  ['regression:clickoutside', 'node scripts/verify_click_outside.mjs'],
+  ['regression:panelhead', 'node scripts/verify_panel_head.mjs'],
+  ['regression:backup', 'node scripts/verify_backup_big.mjs'],
+]
+for (const [name, cmd] of CDP_EXTRA) {
+  if (process.argv.includes('--no-layers')) {
+    skipped.push(name)
+    continue
+  }
+  steps.push([name, cmd, (r) => r.status === 0])
 }
 if (!process.argv.includes('--no-download')) {
   steps.push(['regression:download', 'node scripts/e2e_download.mjs', (r) => r.status === 0])

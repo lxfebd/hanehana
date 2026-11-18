@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
+import { tryWaitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = join(process.cwd())
 const PORT = await pickFreePort()
@@ -141,6 +142,57 @@ async function main() {
     ck('外观页主题卡（5 套）', ui.presetCards >= 5, 'cards=' + ui.presetCards)
     ck('主题卡氛围预览', ui.previews >= 5, 'previews=' + ui.previews)
     ck('语言切换控件存在', ui.langBtns >= 2, 'lang=' + ui.langBtns)
+
+    // ---- 真切换（B7）：控件存在 ≠ 切换生效 ----
+    // 只数 input 个数的话，词典没接、保存没落盘、radio 只挂样式不挂 v-model 都会绿。
+    // 这里走完整用户路径：点 English → 点保存（emit('save') → 主进程落盘 → setLanguage
+    // 触发重渲染）→ 读侧栏 nav-library 的**文本**必须是 'Library'（词典 en 的真值）；
+    // 再切回中文，确认复原——顺带验证「保存后立即生效、不用重启」这条既有承诺。
+    const navLabel = () =>
+      ev(`(() => { const s = document.querySelector('[data-testid="nav-library"] span'); return s ? (s.textContent || '').trim() : '' })()`)
+    const clickRadio = (lang) =>
+      ev(`(() => { const r = document.querySelector('input[type=radio][value="${lang}"]'); if (!r) return 'no-radio'; r.click(); return 'ok' })()`)
+    const clickSave = () =>
+      ev(`(() => { const b = document.querySelector('.dlg-foot button.ant-btn-primary'); if (!b) return 'no-save'; b.click(); return 'ok' })()`)
+    const reopenUiTab = async () => {
+      await ev(`(() => { const b = document.querySelector('[data-testid="nav-settings"]'); if (b) { b.click(); return 'ok' } return 'no-nav' })()`)
+      await tryWaitFor(() => ev('!!document.querySelector(".dlg-foot")'), { timeoutMs: 5000, label: '再次打开设置' })
+      await ev(`(() => { const t = document.querySelector('[data-testid="tab-ui"]'); if (t) { t.click(); return 'ok' } return 'no' })()`)
+      return tryWaitFor(() => ev('!!document.querySelector(\'input[type=radio][value="zh"]\')'), {
+        timeoutMs: 5000,
+        label: '外观页语言控件重新出现',
+      })
+    }
+    const zhBefore = await navLabel()
+    const enClicked = await clickRadio('en')
+    const enSaved = await clickSave()
+    const toEn = await tryWaitFor(() => ev(`(() => { const s = document.querySelector('[data-testid="nav-library"] span'); return !!s && (s.textContent || '').trim() === 'Library' })()`), {
+      timeoutMs: 8000,
+      label: '界面语言切到英文（nav-library 文案 = Library）',
+    })
+    const enLabel = await navLabel()
+    const uiTabBack = await reopenUiTab()
+    const zhClicked = await clickRadio('zh')
+    const zhSaved = await clickSave()
+    const backToZh = await tryWaitFor(() => ev(`(() => { const s = document.querySelector('[data-testid="nav-library"] span'); return !!s && (s.textContent || '').trim() === '全部游戏' })()`), {
+      timeoutMs: 8000,
+      label: '界面语言切回中文（nav-library 文案 = 全部游戏）',
+    })
+    const zhLabel = await navLabel()
+    ck(
+      '语言真切换：点 English 保存后侧栏文案变 Library，切回中文复原',
+      zhBefore === '全部游戏' &&
+        enClicked === 'ok' &&
+        enSaved === 'ok' &&
+        toEn === true &&
+        enLabel === 'Library' &&
+        uiTabBack === true &&
+        zhClicked === 'ok' &&
+        zhSaved === 'ok' &&
+        backToZh === true &&
+        zhLabel === '全部游戏',
+      JSON.stringify({ zhBefore, enClicked, enSaved, enLabel, toEn, uiTabBack, zhClicked, zhSaved, backToZh, zhLabel }),
+    )
     console.log('  设置页:', JSON.stringify({ tabs: dlg.tabs, presetCards: ui.presetCards, previews: ui.previews }))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {

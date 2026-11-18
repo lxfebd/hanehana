@@ -4,6 +4,11 @@
 # 定位：nightly + 手动兜底。红 = 视觉/交互回归，人工判读，不阻断合入。
 # 下载 e2e（regression:download）由 PR 主链路阻断（ci.yml 的 regression download 步骤），
 # nightly 不重复跑：真引擎链路已在合入门槛里，这里再跑一遍只是双倍耗时 + 双倍抖动面。
+#
+# 逐条失败即停：下面的 CDP 步骤用 shell: bash + `set -euo pipefail`。windows runner
+# 默认 pwsh 在 `run: |` 里**只把最后一条命令的退出码**交给 runner，中间任意一条
+# `npm run regression:*` 红了都会被后面绿的盖掉——那一整步看起来全绿，实际漏挡。
+# 新增闸就往那个 run 块里加一行 npm run，不要退回「单个 run 块 + 合并命令」的写法。
 name: Visual Regression
 
 on:
@@ -42,10 +47,17 @@ jobs:
           PYTHONIOENCODING: utf-8
 
       # Windows runner 中文输出编码崩溃的既有坑：强制 UTF-8
+      # 另外显式压上 shell: bash + set -euo pipefail：默认 pwsh 只在整步结束时看
+      # 最后一条命令的退出码，中间哪条回归红了都不会中断（见文件头的说明）。
       - name: CDP visual gates
         working-directory: app
+        shell: bash
         run: |
-          npm run shots:reina   # 截图脚本，不是闸：无断言、无退出码语义
+          set -euo pipefail
+          # 唯一一条「不是闸」的命令：截图脚本无断言、无退出码语义。保留 `|| true`
+          # 是刻意的——set -e 下它一旦因渲染抖动非零退出，会把后面所有真闸一起跳过；
+          # 它的产出只是 .shots 里的参考图，不值得让整步失败。其余每条都必须失败即停。
+          npm run shots:reina || true
           npm run regression:hero
           npm run regression:accent
           npm run regression:process
@@ -63,6 +75,12 @@ jobs:
           npm run regression:fsstage
           npm run regression:nsfw
           npm run regression:track
+          # 四个新回归靶（B1）：此前只在 package.json 里挂着，ci.yml / 本文件 /
+          # reg_all.mjs 一个都没引用——把 CoverGrid 改回 display:none，CI 全绿。
+          npm run regression:coverfallback
+          npm run regression:clickoutside
+          npm run regression:panelhead
+          npm run regression:backup
           npm run regression:ui
           npm run regression:dupe
         env:

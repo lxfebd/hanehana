@@ -284,6 +284,38 @@ async function main() {
       favBefore !== 'no-btn' && favBefore !== favAfter,
       'before=' + favBefore + ' after=' + favAfter,
     )
+    // ---- 次按钮组：两条正交断言（B6）----
+    // 旧判据是 `.ghost-btn` 的 scrollWidth/scrollHeight 有没有超出——标签本来就允许
+    // 折行（white-space: normal），几乎恒真：抓不到「四颗被压成 63px 窄条」，也证明不了
+    // 「真的折行了」。改成两条各自可证伪的：默认窗口必须**只有一行且四颗不窄**；
+    // 窄窗要么仍是一行不裁切、要么明确折行（断言在下面的窄窗段）。
+    const readActs = () =>
+      ev(`(() => {
+        const box = document.querySelector('.actions-sub')
+        if (!box) return null
+        const btns = [...box.querySelectorAll('.ghost-btn')]
+        return {
+          h: Math.round(box.getBoundingClientRect().height),
+          n: btns.length,
+          widths: btns.map((b) => Math.round(b.getBoundingClientRect().width)),
+          clip: btns.some((b) => b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1),
+        }
+      })()`)
+    const actsDefault = await readActs()
+    ck(
+      '默认窗口 .actions-sub 只有一行（高 ≤ 44）且四颗次按钮齐全',
+      !!actsDefault && actsDefault.h <= 44 && actsDefault.n === 4,
+      JSON.stringify(actsDefault),
+    )
+    ck(
+      '默认窗口四颗次按钮均宽 ≥ 72（没有被压成窄条）',
+      !!actsDefault && actsDefault.widths.length === 4 && actsDefault.widths.every((w) => w >= 72),
+      'widths=' + JSON.stringify(actsDefault && actsDefault.widths),
+    )
+    console.log(
+      '  次按钮（默认窗口 400）:',
+      JSON.stringify({ h: actsDefault && actsDefault.h, widths: actsDefault && actsDefault.widths, clip: actsDefault && actsDefault.clip }),
+    )
     // ---- 右栏弹性（回归靶：右栏死咬 400、窗口拖窄后右栏占掉半个窗口 / 中栏被挤没）----
     // 默认窗口宽下右栏必须还是 token 宽（设计稿口径不能被弹性改掉）；
     // 窄窗下必须跟着收、不越界、内部不出横向滚动。
@@ -302,6 +334,7 @@ async function main() {
       const a = aside.getBoundingClientRect()
       const c = content.getBoundingClientRect()
       const acts = document.querySelector('.actions-sub')
+      const actsBtns = acts ? [...acts.querySelectorAll('.ghost-btn')] : []
       return JSON.stringify({
         iw: innerWidth,
         asideW: Math.round(a.width),
@@ -310,9 +343,11 @@ async function main() {
         docSW: document.documentElement.scrollWidth,
         panelOverX: panel ? panel.scrollWidth - panel.clientWidth : -1,
         actsH: acts ? Math.round(acts.getBoundingClientRect().height) : -1,
-        btnClip: [...document.querySelectorAll('.ghost-btn')].some(
-          (b) => b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1,
-        ),
+        actsN: actsBtns.length,
+        actsWidths: actsBtns.map((b) => Math.round(b.getBoundingClientRect().width)),
+        actsClip: actsBtns.length
+          ? actsBtns.some((b) => b.scrollWidth > b.clientWidth + 1 || b.scrollHeight > b.clientHeight + 1)
+          : true,
         panelFromAside:
           Math.round(panel.getBoundingClientRect().width) === Math.round(a.width),
       })
@@ -325,8 +360,16 @@ async function main() {
     // 面板宽度只有一个权威：抽屉里的面板宽 = .aside 宽（组件自己不写 width）。
     // 以前这里只能验「没越界」，因为宽度由父级覆盖回 100%；现在是同一件事。
     ck('面板宽度由右栏给（组件不再自带 token 宽）', !!fx && fx.panelFromAside === true, JSON.stringify(fx))
-    // 次按钮不再靠 @container 340px 阈值换排：标签放不下就折行，判据是「不叠字/不被裁」。
-    ck('窄窗次按钮不叠字（标签折行或单行放得下）', !!fx && fx.btnClip === false, 'actsH=' + (fx && fx.actsH) + ' clip=' + (fx && fx.btnClip))
+    // 次按钮不再靠 @container 340px 阈值换排：标签放不下就折行。
+    // 窄窗按**当前实现**断言实际行为，不写死未来设计：要么仍是一行且不裁切
+    // （四颗各 ~66px、标签放得下），要么明确折行（高 > 50）。落在中间那段
+    // （45~50 的挤压）或「一行却裁字」都判红——那正是「四颗被压扁」的回归形态。
+    ck(
+      '窄窗次按钮布局明确（一行不裁切，或明确折行）',
+      !!fx && ((fx.actsH <= 44 && fx.actsClip === false) || fx.actsH > 50),
+      'actsH=' + (fx && fx.actsH) + ' clip=' + (fx && fx.actsClip) + ' widths=' + JSON.stringify(fx && fx.actsWidths),
+    )
+    console.log('  次按钮（窄窗 1000）:', JSON.stringify({ h: fx && fx.actsH, widths: fx && fx.actsWidths, clip: fx && fx.actsClip }))
     await send('Emulation.clearDeviceMetricsOverride')
     await waitFor(() => ev('window.innerWidth !== 1000'), { timeoutMs: 5000, label: '恢复视口重排生效' })
     await waitStable(() => ev('Math.round(document.querySelector(".aside").getBoundingClientRect().width)'), '恢复窗口后右栏宽度落定')

@@ -194,6 +194,31 @@ async function main() {
     ck('KPI 每卡有周期口径副行', kpi.subs === 6, 'subs=' + kpi.subs)
     ck('KPI 数值非空（tabular 数字）', kpi.values.every(v => v.length > 0), JSON.stringify(kpi.values))
 
+    // ---- i18n 渲染正确性（B7）----
+    // testid 存在 ≠ 文案正确：词典缺键时 t() 会回落成键名本身（'kpi_total_time'），
+    // 卡片被 display:none / 空串也一样能让「testid 齐全」变绿。这里读**渲染出来的文本**：
+    // 页头标题 + 6 个 KPI 标签必须非空、且不是 i18n 键名的形态（^[a-z0-9_]+$）。
+    const i18nText = JSON.parse(
+      await ev(`JSON.stringify((() => {
+        const labels = [...document.querySelectorAll('.stats-page .kpi-strip .kpi-card .kpi-label')]
+        return {
+          title: ((document.querySelector('.stats-page .ph-title') || {}).textContent || '').trim(),
+          labels: labels.map((e) => (e.textContent || '').trim()),
+          hidden: labels.filter((e) => getComputedStyle(e).display === 'none' || e.offsetParent === null).length,
+        }
+      })())`),
+    )
+    const KEY_SHAPE = /^[a-z0-9_]+$/i
+    const realText = (s) => typeof s === 'string' && s.length > 0 && !KEY_SHAPE.test(s)
+    ck(
+      'i18n 真文案：页头标题与 6 个 KPI 标签非空且不是键名',
+      realText(i18nText.title) &&
+        i18nText.labels.length === 6 &&
+        i18nText.labels.every(realText) &&
+        i18nText.hidden === 0,
+      JSON.stringify(i18nText),
+    )
+
     // ---- 周期切换：周 / 月（B5-2）----
     const segs = JSON.parse(
       await ev(`JSON.stringify((() => [...document.querySelectorAll('.stats-page .period-bar .seg-chip')].map(b => ({ id: b.getAttribute('data-testid'), on: b.getAttribute('aria-pressed') === 'true' })))())`),

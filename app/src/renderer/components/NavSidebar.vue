@@ -50,22 +50,22 @@ const favCount = computed(() => library.games.filter((g) => g.favorite).length)
 const moreMenuOpen = ref(false)
 
 /**
- * 侧栏收起成图标条（144px ⇄ 56px）。
+ * 侧栏收起成图标条（144px ⇄ 56px）。唯一来源：用户点顶部那颗「收起/展开」
+ * → ui.navCollapsed，写 localStorage，重启不丢。
  *
- * 两种触发共用一套样式：
- *  - 用户点顶部那颗「收起/展开」→ ui.navCollapsed，写 localStorage，重启不丢；
- *  - 窗口 ≤860px 时自动收 —— 由**当前宽度**派生（不是一次性开关），拉宽自己回来。
+ * 曾经还有「窗口 ≤860px 时自动收」，已删除。为什么删：
+ *  - 窄窗里那个按钮**只写状态不给反馈**：narrow 为真时 rail 早已成立，
+ *    点一下视觉上什么都不变，却把 navCollapsed='1' 落进 localStorage，
+ *    拉宽后侧栏仍旧收着——正好和注释承诺的「拉宽自己回来」相反；
+ *  - 860 ⇄ 861 是一个断崖：侧栏 56 → 144，主列在一像素内少掉 87px。
+ * 窗口最小宽度是 minWidth:800，800 宽下 144 侧栏 + 右栏 clamp(300px, 32vw, 400px)
+ * 仍排得下（右栏收到 300，主列还留着 220 的下限），不需要自动收这一档。
  *
- * 为什么要：游戏站（下载站）是内嵌 webview 的宽内容页，144px 的侧栏在 1280 窗里
- * 占掉整窗约 10% 的面积；收起后内嵌站点立刻多出 88px 横向空间。
+ * 为什么要这个功能：游戏站（下载站）是内嵌 webview 的宽内容页，144px 的侧栏在
+ * 1280 窗里占掉整窗约 10% 的面积；收起后内嵌站点立刻多出 88px 横向空间。
  */
 const RAIL_KEY = 'hh.nav.rail'
-const narrow = ref(false)
-let narrowMq: MediaQueryList | null = null
-const rail = computed(() => ui.navCollapsed || narrow.value)
-function onNarrow(e: MediaQueryListEvent): void {
-  narrow.value = e.matches
-}
+const rail = computed(() => ui.navCollapsed)
 function toggleRail(): void {
   ui.navCollapsed = !ui.navCollapsed
   try {
@@ -73,6 +73,10 @@ function toggleRail(): void {
   } catch {
     /* 无 localStorage 的环境（纯 node 测试）忽略 */
   }
+  // 收起态顶部内边距是 12px、展开态 10px：条目整体会挪 2px，滑动高亮块是量出来的
+  // 绝对坐标，不重量就会差 2px。放在这里而不是 watch(rail)：rail 现在只有一个
+  // 驱动源（这个按钮），一处触发一处清账，不用两套机制盯同一件事。
+  void nextTick(measureHl)
 }
 onMounted(() => {
   try {
@@ -80,15 +84,6 @@ onMounted(() => {
   } catch {
     /* ignore */
   }
-  if (typeof window !== 'undefined' && 'matchMedia' in window) {
-    narrowMq = window.matchMedia('(max-width: 860px)')
-    narrow.value = narrowMq.matches
-    narrowMq.addEventListener('change', onNarrow)
-  }
-})
-onUnmounted(() => {
-  narrowMq?.removeEventListener('change', onNarrow)
-  narrowMq = null
 })
 
 /**
@@ -118,10 +113,9 @@ watch(
 watch(moreMenuOpen, () => {
   void nextTick(measureHl)
 })
-/* 收起/展开会改变条目纵坐标（顶部多了一颗按钮），指示块要重量 */
-watch(rail, () => {
-  void nextTick(measureHl)
-})
+/* 这里不再 watch 收起态：rail 只由 toggleRail 一处驱动，测量就在那里做
+   （见上）。旧的 watch(rail) 是「自动收起」那套的残留——窗口宽度一变成
+   rail，watch 负责补量；自动收起删掉后它只剩一条冗余路径。 */
 function onResize(): void {
   void nextTick(measureHl)
 }
@@ -313,7 +307,9 @@ function moreAction(fn: () => void): void {
 .sidebar {
   /* 144px：图标 + 中文标签同排不换行（原 108px 下「全部游戏」会被挤到
      图标下一行，侧栏看起来成了竖排——基准 home.png 是横排条目）。
-     窄窗 ≤620px 仍收成 56px 图标条，见文件末尾媒体查询。 */
+     56px 图标条只有一条来源：用户手点「收起」（.sidebar.rail，见文件末尾）。
+     文件末尾没有「窄窗自动收」的媒体查询——别再补一条：自动收起已在
+     B4 删掉（理由见脚本里 toggleRail 上方的注释）。 */
   width: 144px;
   padding: 10px 8px;
   /* 收起/展开时宽度平滑过渡（56 ⇄ 144），不是硬切 */
@@ -469,29 +465,31 @@ function moreAction(fn: () => void): void {
 }
 
 /* ============ 收起态：图标条（56px） ============
-   两种来源共用这一套：用户点收起（ui.navCollapsed，永久）或窗口 ≤860px
-   （由当前宽度派生，拉宽自动回来）。标签隐藏、图标居中、计数降级成右上角
-   小徽章；「更多」菜单本来就向右弹（left: calc(100% + 8px)），56px 宽时照样点得到。
+   只有一条来源：用户点「收起」（ui.navCollapsed，落 localStorage，重启不丢）。
+   选择器必须带 `>`——只打**侧栏自己的**条目。「更多」菜单里的四个条目也带
+   .nav-item，旧写法 `.sidebar.rail .nav-item span` 会把菜单标签一起隐藏，
+   rail 下打开「更多」只剩四个图标、没有任何文字。
    鼠标悬停看名字：每个条目都带 title（rail 态下这是唯一可读的标签）。 */
 .sidebar.rail {
   width: 56px;
   padding: 12px 8px;
   align-items: center;
 }
-.sidebar.rail .nav-item,
-.sidebar.rail .rail-toggle {
+.sidebar.rail > .nav-item,
+.sidebar.rail > .more-wrap > .more-toggle {
   justify-content: center;
   padding: 0 6px;
   gap: 0;
 }
-.sidebar.rail .rail-toggle {
+.sidebar.rail > .rail-toggle {
   align-self: center;
   width: 32px;
 }
-.sidebar.rail .nav-item span {
+.sidebar.rail > .nav-item span,
+.sidebar.rail > .more-wrap > .more-toggle span {
   display: none;
 }
-.sidebar.rail .nav-item .count {
+.sidebar.rail > .nav-item .count {
   display: flex;
   position: absolute;
   top: 3px;
@@ -503,5 +501,14 @@ function moreAction(fn: () => void): void {
   align-items: center;
   justify-content: center;
   font-size: 9px;
+}
+/* rail 下「更多」菜单的锚点必须相对**整条侧栏**，不是相对收窄后的按钮容器。
+   把 .more-wrap 取消定位：.more-menu 的 left: calc(100% + 8px) 于是以
+   .sidebar（position: relative）为基准量——菜单左缘 56 + 8 = 64，侧栏右缘 56，
+   正好留 8px 缝。旧写法保留 .more-wrap 的 position: relative：100% 量的是
+   它的宽度（56 - 16 = 40），菜单左缘落在 56 附近，实测压住侧栏右缘 6px。
+   展开态不走这条：那里 .more-wrap 就是菜单的合理锚点，宽度本来就等于条目宽。 */
+.sidebar.rail .more-wrap {
+  position: static;
 }
 </style>

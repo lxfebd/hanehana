@@ -428,7 +428,14 @@ async function handleMirror(m: Mirror): Promise<void> {
         } finally {
           // finally：失败也算「处理完了」，否则进度会永远停在失败的那一步
           settled++
-          progress?.update(settled)
+          // 进度条是纯展示：它自己抛错不该把这条文件记成失败。runPool 会把
+          // 本项抛出的异常收进 res.errors（=「这个文件没加进去」），所以这里
+          // 就地吞掉——进度没画出来是显示问题，不是入队结果。
+          try {
+            progress?.update(settled)
+          } catch {
+            /* 进度显示失败：不影响入队结果 */
+          }
         }
       },
       ADD_TASK_CONCURRENCY,
@@ -466,6 +473,14 @@ async function handleMirror(m: Mirror): Promise<void> {
  * 「共 N 个文件（还有 M 个文件未加入，可在分享页查看）」这种截断告知。
  * 60 个分卷只下了一半却不说，用户拿到手才发现缺件。
  */
+/**
+ * 组件是否已卸载。网盘解析能拖十几秒（见 mirrorBusy），期间用户完全可以切回
+ * 「下载管理」；那之后 handleMirror 的收尾还会跑完，一次性 toast 就会弹在别人的
+ * 页面上——用户看到的是「我已经离开这一页了，怎么还冒出一条提示」。
+ * 卸载后收尾照算（parts 里是这一批的结局），只是不再弹窗。
+ */
+let disposed = false
+
 function reportResolve(total: number, added: number, dups: number, failed: string[], note?: string): void {
   const parts: string[] = []
   // 第一句永远是这一批的结局而不是逐件流水账：全成功说「共 N 个已加入」；
@@ -478,6 +493,8 @@ function reportResolve(total: number, added: number, dups: number, failed: strin
   if (dups) parts.push(tf('gs_dup_n', { n: dups }))
   if (failed.length) parts.push(tf('gs_failed_n', { n: failed.length, first: failed[0] }))
   if (note) parts.push(note)
+  // 已经离开这一页：结局算完了就不再打扰（仍要往下退订/清理，见 onBeforeUnmount）。
+  if (disposed) return
   const important = failed.length > 0 || !!note || total >= 20
   message.open({
     content: parts.join(' · '),
@@ -488,6 +505,7 @@ function reportResolve(total: number, added: number, dups: number, failed: strin
 }
 
 onBeforeUnmount(() => {
+  disposed = true
   offGsLoad?.()
   offGsLoad = null
   // 浮层挂在 document.body 上，不随组件销毁；不主动摘掉就会留下一层吃掉全窗点击的遮罩

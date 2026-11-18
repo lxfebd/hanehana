@@ -4,6 +4,7 @@ import { spawn, spawnSync } from 'node:child_process'
 import { pickFreePort, killTree } from './lib/probePort.mjs'
 import { join } from 'node:path'
 import { rmSync, mkdirSync } from 'node:fs'
+import { tryWaitFor } from './lib/waitFor.mjs'
 
 const APP_ROOT = join(process.cwd())
 const PORT = await pickFreePort()
@@ -168,6 +169,98 @@ async function main() {
     await new Promise((r) => setTimeout(r, 700))
     const back = JSON.parse(await ev(dimsExpr))
     ck('再点一次展开：侧栏回到 144px', back.sidebar === 144 && back.rail === false, JSON.stringify(back))
+
+    // ---- B4：820 宽不再自动收（自动 rail 已删除）----
+    // 回归靶：旧实现 `rail = ui.navCollapsed || narrow`（matchMedia ≤860px）在窄窗
+    // 把侧栏收成 56——此时点按钮视觉上没有任何变化，却把 navCollapsed='1' 落盘，
+    // 拉宽后侧栏仍旧收着（与注释承诺的「拉宽自己回来」相反）；860→861 那一格
+    // 侧栏 56→144，主列在一像素内少 87px（断崖）。窗口 minWidth 是 800，
+    // 800 宽下 144 侧栏 + 右栏 clamp(300, 32vw, 400) 仍排得下。
+    // 这里在 820 量三件事：不自动收、无横向溢出、按钮两个方向都真的有效果。
+    await send('Emulation.setDeviceMetricsOverride', { width: 820, height: 900, deviceScaleFactor: 1, mobile: false })
+    await tryWaitFor(() => ev('window.innerWidth === 820'), { timeoutMs: 5000, label: '820 视口重排生效' })
+    const at820 = JSON.parse(await ev(dimsExpr))
+    const overflow820 = await ev('document.documentElement.scrollWidth - document.documentElement.clientWidth')
+    ck('820 宽不自动收：侧栏仍是 144px 且未进 rail', at820.sidebar === 144 && at820.rail === false, JSON.stringify(at820))
+    ck('820 宽无横向溢出', typeof overflow820 === 'number' && overflow820 <= 1, 'doc 溢出=' + overflow820)
+    await ev(`(() => { const b = document.querySelector('.rail-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await tryWaitFor(
+      () => ev(`(() => { const sb = document.querySelector('.sidebar'); return !!sb && Math.round(sb.getBoundingClientRect().width) === 56 })()`),
+      { timeoutMs: 4000, label: '820 宽点击后收成 56px' },
+    )
+    const collapsed820 = JSON.parse(await ev(dimsExpr))
+    await ev(`(() => { const b = document.querySelector('.rail-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await tryWaitFor(
+      () => ev(`(() => { const sb = document.querySelector('.sidebar'); return !!sb && Math.round(sb.getBoundingClientRect().width) === 144 })()`),
+      { timeoutMs: 4000, label: '820 宽再点展开回 144px' },
+    )
+    const expanded820 = JSON.parse(await ev(dimsExpr))
+    ck(
+      '820 宽按钮点了能收起/展开（56 ⇄ 144，双向都有反馈）',
+      collapsed820.sidebar === 56 &&
+        collapsed820.rail === true &&
+        expanded820.sidebar === 144 &&
+        expanded820.rail === false,
+      JSON.stringify({ collapsed820, expanded820 }),
+    )
+    await send('Emulation.clearDeviceMetricsOverride')
+    await tryWaitFor(() => ev('window.innerWidth !== 820'), { timeoutMs: 5000, label: '恢复窗口宽度' })
+
+    // ---- B3：rail 下「更多」菜单的锚点与标签 ----
+    // 旧实现两处一起错（都在 NavSidebar.vue 的样式里）：
+    //   1. `.sidebar.rail .nav-item span { display: none }` 不带 `>`，把 .more-menu 里
+    //      四个条目的标签一起隐藏——rail 下打开「更多」只剩四个图标、没有文字；
+    //   2. `.more-menu { left: calc(100% + 8px) }` 相对的是收窄后的 .more-wrap（宽 40），
+    //      菜单左缘落在侧栏右缘附近，实测压住侧栏 6px。
+    // 修法：选择器带 `>` 只打侧栏直属条目；rail 下 .more-wrap 改为 position: static，
+    // 让 100% 以 .sidebar 为基准 → 菜单在侧栏右侧 8px 处。这里两条都钉成断言。
+    await ev(`(() => { const b = document.querySelector('.rail-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await tryWaitFor(
+      () => ev(`(() => { const sb = document.querySelector('.sidebar'); return !!sb && sb.classList.contains('rail') })()`),
+      { timeoutMs: 4000, label: '侧栏进 rail 态' },
+    )
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-more"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await tryWaitFor(() => ev('!!document.querySelector(".more-menu")'), { timeoutMs: 4000, label: 'rail 下更多菜单打开' })
+    const menu = JSON.parse(await ev(`(() => {
+      const sb = document.querySelector('.sidebar')
+      const m = document.querySelector('.more-menu')
+      if (!sb || !m) return JSON.stringify({ found: false })
+      const sr = sb.getBoundingClientRect()
+      const mr = m.getBoundingClientRect()
+      const items = [...m.querySelectorAll('.nav-item')].map((b) => {
+        const s = b.querySelector('span')
+        return { text: s ? (s.textContent || '').trim() : '', shown: s ? getComputedStyle(s).display !== 'none' : false }
+      })
+      // 菜单得真的能点：中心点 elementFromPoint 命中菜单自身/后代，不能是内容区
+      // （menu 在 .sidebar 的层叠上下文里，z-index popover；这条防「画出来了但被盖住」）
+      const hit = document.elementFromPoint(Math.round(mr.left + mr.width / 2), Math.round(mr.top + mr.height / 2))
+      return JSON.stringify({
+        found: true,
+        sbRight: Math.round(sr.right),
+        menuLeft: Math.round(mr.left),
+        gap: Math.round(mr.left - sr.right),
+        w: Math.round(mr.width),
+        hitSelf: !!hit && (hit === m || m.contains(hit)),
+        items,
+      })
+    })()`))
+    ck('rail 下「更多」菜单不被侧栏压住（左缘 ≥ 侧栏右缘 + 6px）', menu.found === true && menu.gap >= 6, JSON.stringify(menu))
+    ck(
+      'rail 下「更多」菜单四条目文字仍可见（rail 规则没误伤菜单）',
+      menu.found === true && menu.items.length === 4 && menu.items.every((i) => i.shown && i.text.length > 0),
+      JSON.stringify(menu.items),
+    )
+    ck('rail 下「更多」菜单真的可点（中心点命中菜单自身，没被内容区盖住）', menu.found === true && menu.hitSelf === true, JSON.stringify(menu))
+    // 恢复现场：先关菜单，再把侧栏展开（后面接手的人/闸门从默认态开始）
+    await ev(`(() => { const b = document.querySelector('[data-testid="nav-more"]'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await tryWaitFor(() => ev('!document.querySelector(".more-menu")'), { timeoutMs: 3000, label: '更多菜单收起' })
+    await ev(`(() => { const b = document.querySelector('.rail-toggle'); if (b) { b.click(); return 'ok' } return 'no' })()`)
+    await tryWaitFor(
+      () => ev(`(() => { const sb = document.querySelector('.sidebar'); return !!sb && !sb.classList.contains('rail') })()`),
+      { timeoutMs: 4000, label: '恢复展开态' },
+    )
+    console.log('  rail 更多菜单:', JSON.stringify({ gap: menu.gap, sbRight: menu.sbRight, menuLeft: menu.menuLeft }))
+    console.log('  820 宽:', JSON.stringify({ at820, overflow820, collapsed820, expanded820 }))
     console.log('  侧栏弹性:', JSON.stringify({ before, after }))
     console.log('\n==== ' + pass + ' passed, ' + fail + ' failed ====')
   } finally {
