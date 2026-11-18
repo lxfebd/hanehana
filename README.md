@@ -196,15 +196,20 @@ engine-rs (Rust)  ·  分段并发下载 + 校验，每任务一个子进程
 | `npm test` | `node:test` 单元测试（引擎行协议 / 错误 / 格式化 / JSON 存储 / 备份 / 刮削 / 判重去重） |
 | `npm run lint` | ESLint（0 error 闸，警告是渐进债务台账） |
 | `npm run regression:static` | 静态验收闸（结构承诺固化，防改回旧风格） |
-| `npm run regression:download` | 真实引擎下载链路 e2e |
+| `npm run regression:download` | 真实引擎下载链路 e2e（起真窗口 + 自签 HTTPS 源 + 真实引擎） |
+| `npm run regression:layers` / `:layers:all` | 层叠/布局闸：真机 `elementFromPoint` 命中 + 无溢出 + 卡片不重叠；`--all` 扫 10 个视口 |
+| `npm run regression:coverfallback` | 封面破图：坏缩略图走占位、不留隐藏 `<img>`、补图后换批次能恢复 |
+| `npm run regression:clickoutside` | 三处「点外面收起」+ 跨页（点击与快捷键）无残留 |
+| `npm run regression:panelhead` | 详情面板头部零高度浮层的几何契约（抽屉 9/13、整页 17/17、命中自身） |
+| `npm run regression:backup` | 快照体积闸：210MB 稀疏文件进 `skipped` 且不落盘、小存档照常备份、跳过摘要在 UI 可见 |
 | `npm run regression:ui` | 真实 App 走查：起进程、像用户一样点封面 → 刮削 → 应用选中，读真实 DOM 与截屏 |
 | `npm run regression:dupe` | 同款不同盘目录扫两次：断言零自动入库 + `dupes` 明细回传 + 「也加进来」真能入库 |
 | `npm run shots:reina` | 五屏对标基准 ReinaManager：**只截图**（不是闸：无数值断言、无退出码语义） |
 | `npm run regression:hero` / `:accent` / `:process` | 主题走查 / 强调色断言 / 启动·进程·计时全链路 |
-| `npm run regression` | 串联 typecheck + 静态闸 + 下载链路，遇错即停 |
-| `npm run dist:dir && npm run smoke` | 解包产物验收：进程可启动 + IPC 通 + 引擎存在 |
+| `npm run regression` | 全量入口：typecheck → 静态闸 → layers → 四个视觉靶 → 下载 e2e，遇错即停（**须在 `app/` 下执行**；直接 `node scripts/reg_all.mjs` 从仓库根跑会因找不到 `package.json` 而失败） |
+| `npm run dist:dir && npm run smoke` | 解包产物验收：进程可启动 + IPC 通 + 引擎存在。**发版闸**：`release.yml` 在 publish 之前会跑这一对 |
 
-CI（`.github/workflows/ci.yml`）在 Windows runner 上跑 typecheck / build / 静态闸 / lint / 单测 / `cargo test` / `cargo build --release`，任一项红即阻断合入。
+CI（`.github/workflows/ci.yml`）在 Windows runner 上跑 typecheck / build / 静态闸（含「新闸必须接线」元闸）/ lint / 单测 / `cargo test` / `cargo build --release` / 下载 e2e，任一项红即阻断合入；nightly（`visual.yml`）跑其余 CDP 视觉闸，步骤用 `bash` + `set -euo pipefail`，中间任一红即停。
 
 ---
 
