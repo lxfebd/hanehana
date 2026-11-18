@@ -203,3 +203,26 @@ test('load: 主文件缺失（写一半进程死）从 .bak 恢复', () => {
     rmSync(dir, { recursive: true, force: true })
   }
 })
+
+test('flush: 写盘失败返回 false 且保留待写内容（退出前最后一次落盘不伪装成功）', () => {
+  const dir = tempDir()
+  try {
+    // 用「父路径是普通文件」制造 writeNow 必抛错的环境：mkdirSync(dirname(file))
+    // 会因中间那段不是目录而失败。为什么不改文件权限：Windows 上 chmod 基本不生效，
+    // 而 jsonStore / A7 的契约是「写失败时返回 false 并保留内容」，与失败原因无关。
+    const blocker = join(dir, 'blocker')
+    writeFileSync(blocker, 'not a directory')
+    const file = join(blocker, 'store.json')
+    const s = createJsonStore<{ n: number }>(file)
+    s.save({ n: 5 })
+    assert.equal(s.flush(), false, '写盘失败必须返回 false，不能伪装成功')
+    assert.equal(existsSync(file), false, '失败时当然没有文件')
+
+    // 修好路径后再 flush：保留的待写内容必须还能落盘（失败没有被吞掉）
+    rmSync(blocker, { force: true })
+    assert.equal(s.flush(), true, '修好路径后保留的待写内容要能重试落盘')
+    assert.deepEqual(JSON.parse(readFileSync(file, 'utf8')), { n: 5 })
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})

@@ -29,6 +29,7 @@ import { isSaveFile, webdavUrlError, relToRemote, bigBodyRe } from './saveRules'
 import { dataDir } from './store'
 import { sha1File } from '../shared/sha1File'
 import { SNAPSHOT_MAX_FILE_BYTES, SNAPSHOT_MAX_TOTAL_BYTES } from '../shared/snapshotLimits'
+import { orderForBudget } from '../shared/snapshotBudget'
 
 // ---------------------------------------------------------------- 类型
 
@@ -82,40 +83,52 @@ export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
   const outDir = dest ?? join(gameBackupDir(game.id), ts)
   mkdirSync(outDir, { recursive: true })
 
-  // 收集要备份的文件（相对 srcDir 的路径）
-  const rels = collectSaveFiles(srcDir)
-  // 排序后再过闸：总量闸（budget）是「先到先得」，裁掉哪个文件由遍历顺序
-  // 决定。readdir 在 NTFS 上恰好近字典序但无契约，不排序的话同一目录两次
-  // 快照可能裁掉不同文件，skipped 清单就没法解释。排序让预算裁剪可复现。
-  rels.sort()
+  // 收集要备份的文件（相对 srcDir 的路径）。
+  // 先按 rel 字典序排一遍：收集顺序来自 readdir，NTFS 上恰好近字典序但没有
+  // 契约；stat 失败的文件也要按确定性顺序进 skipped，否则同一份目录两次快照
+  // 的 skipped 清单顺序都可能变（预算顺序另由 orderForBudget 决定，见下）。
+  const rels = collectSaveFiles(srcDir).sort()
 
   const files: SnapshotMeta['files'] = []
   const skipped: SnapshotSkipEntry[] = []
   let totalBytes = 0
+
+  // 第一遍只量体积：预算分配要按体积排序（小文件优先），排序前必须知道每个
+  // 文件多大。stat 失败的文件在量体积时就留痕，不参与排序。
+  const sized: { rel: string; size: number }[] = []
   for (const rel of rels) {
-    const abs = join(srcDir, rel)
     let st: Stats
     try {
-      st = statSync(abs)
+      st = statSync(join(srcDir, rel))
       if (!st.isFile()) continue
     } catch {
       // 连 stat 都失败（刚被删/无权限）：也要留痕，不能静默消失
       skipped.push({ rel, size: 0, reason: 'unreadable' })
       continue
     }
+    sized.push({ rel, size: st.size })
+  }
+
+  // 预算分配顺序：小文件优先，同尺寸按 rel（规则与理由见 shared/snapshotBudget.ts）。
+  // 为什么不沿用「按 rel 字典序先到先得」：data\*.dat 排在 save\*.sav 前面时，
+  // 资源包会把 2GiB 预算吃满、真存档全部 reason:'budget'，界面却显示备份成功。
+  // 也不能按用途黑名单（.dat 既是存档扩展名又常被资源包占用），体积是唯一
+  // 不需要新名单的判据。
+  for (const { rel, size } of orderForBudget(sized)) {
     // 闸门一（单文件 200MB）：超限的不进快照本体，进 skipped[] 留痕。
     // 这不是「丢件」——文件仍被显式记录、UI 会提示缺了哪些；把它整份拷进
     // 每个快照才是真正的涨盘（全量拷贝 × 保留份数）。
-    if (st.size > SNAPSHOT_MAX_FILE_BYTES) {
-      skipped.push({ rel, size: st.size, reason: 'oversize' })
+    if (size > SNAPSHOT_MAX_FILE_BYTES) {
+      skipped.push({ rel, size, reason: 'oversize' })
       continue
     }
     // 闸门二（单次快照总量 2GiB）：已拷字节 + 本文件超预算就留痕跳过。
     // 被闸门一拦下的不占预算（它们本来就不会拷入本体）。
-    if (totalBytes + st.size > SNAPSHOT_MAX_TOTAL_BYTES) {
-      skipped.push({ rel, size: st.size, reason: 'budget' })
+    if (totalBytes + size > SNAPSHOT_MAX_TOTAL_BYTES) {
+      skipped.push({ rel, size, reason: 'budget' })
       continue
     }
+    const abs = join(srcDir, rel)
     const dst = join(outDir, rel)
     try {
       mkdirSync(dirname(dst), { recursive: true })
@@ -129,8 +142,8 @@ export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
       } catch {
         /* 摘要失败不阻止备份（文件本体已拷入） */
       }
-      files.push({ rel, size: st.size, sha1 })
-      totalBytes += st.size
+      files.push({ rel, size, sha1 })
+      totalBytes += size
     } catch {
       // 单文件被占用/磁盘满/权限：先清掉可能写了一半的目标文件再留痕。
       // 半截残件比没有更糟——恢复和云同步都会把它当完整文件。
@@ -139,7 +152,7 @@ export function createSnapshot(game: Game, dest?: string): SnapshotInfo | null {
       } catch {
         /* 清不掉就留着；skipped 清单仍是事实来源 */
       }
-      skipped.push({ rel, size: st.size, reason: 'unreadable' })
+      skipped.push({ rel, size, reason: 'unreadable' })
       continue
     }
   }
@@ -307,12 +320,7 @@ export function listAllBackups(games: Game[]): BackupStats[] {
 }
 
 /**
- * 恢复快照：当前存档先挪成 .pre-restore-<ts>（防恢复错找不回），
- * 再把快照文件按清单拷回游戏目录。
- *
- * 返回值带 skippedCount/skippedBytes：恢复只回拷 files 清单里的文件，
- * 快照创建时被闸门拦下的那些不会凭空出现——渲染层据此在成功提示里补一句，
- * 免得用户以为「恢复完 = 全部拿回来了」。
+ * rel 是否落在 root 子树内。
  *
  * f.rel 来自快照目录里的 meta.json（可能被篡改/损坏/从不可信来源导入）：
  * 每个 rel 必须 resolve 后仍落在快照目录与游戏目录内才放行，`../`/绝对路径/
@@ -329,6 +337,18 @@ function isRelInside(root: string, rel: string): boolean {
   return full.startsWith(base + sep) && full !== base
 }
 
+/**
+ * 恢复快照：当前存档先挪成 .pre-restore-<ts>（防恢复错找不回），
+ * 再把快照文件按清单拷回游戏目录。
+ *
+ * 返回值带 skippedCount/skippedBytes：恢复只回拷 files 清单里的文件，
+ * 快照创建时被闸门拦下的那些不会凭空出现——渲染层据此在成功提示里补一句，
+ * 免得用户以为「恢复完 = 全部拿回来了」。
+ *
+ * 清单校验是**全量前置**的：files 非数组、或任一条 rel 类型/限域不合法都
+ * 立刻返回错误且不动盘。恢复写的是用户存档目录，校验必须发生在第一个字节
+ * 写下之前（边校验边写会把游戏目录留在半恢复状态，还绕过回滚台账）。
+ */
 export function restoreSnapshot(
   game: Game,
   snapshotDir: string,
@@ -343,6 +363,26 @@ export function restoreSnapshot(
   }
   if (!existsSync(game.dir)) return { ok: false, error: '游戏目录不存在：' + game.dir }
 
+  // 先全量校验清单，再动盘。
+  // 旧实现是「边校验边写」：循环里遇到非法 rel 才 return {ok:false}，可前面几条
+  // 已经 rename/覆盖过了，而且这条失败路径**绕过了回滚台账**（rolled 只在
+  // copyFileSync 的 catch 里用）——游戏目录停在半恢复状态，用户还被告知失败。
+  // 现在把「类型 + 双重限域」全部前置：任何一条不合法就立刻返回，一个字节都不写。
+  if (!Array.isArray(meta.files)) {
+    // files 不是数组 = meta.json 被改坏/导入不完整。旧实现当空清单处理，
+    // 返回 ok:true, restored:0 —— 用户看到「恢复成功」，实际什么都没恢复。
+    return { ok: false, error: '快照清单损坏' }
+  }
+  const files = meta.files
+  for (const f of files) {
+    // 条目结构不对（null / rel 不是字符串）：清单损坏，宁可整批拒绝也不猜。
+    if (!f || typeof f.rel !== 'string') return { ok: false, error: '快照清单损坏' }
+    // 双重限域：src 必须真的在快照目录里、dst 必须真的在游戏目录里
+    if (!isRelInside(snapshotDir, f.rel) || !isRelInside(game.dir, f.rel)) {
+      return { ok: false, error: `快照清单含非法路径：${f.rel}` }
+    }
+  }
+
   const stamp = Date.now()
   const preDir = join(snapshotDir, '..', '.pre-restore-' + stamp)
   let restored = 0
@@ -350,19 +390,12 @@ export function restoreSnapshot(
   // 中途失败（磁盘满/权限）时逆序回滚：删掉已拷入的新档、把原档 rename 回来，
   // 让游戏目录回到恢复前的状态——不做的话快照会停在「半恢复」的坏状态。
   const rolled: { dst: string; pre: string | null }[] = []
-  // 旧版/被改坏的 meta 可能缺 files（skipped 同样可能缺）：清单缺失就按空
-  // 快照处理（恢复 0 个），不能因为读旧快照把恢复流程崩掉。
-  const files = Array.isArray(meta.files) ? meta.files : []
   // 快照本来就少了文件（meta.skipped）：恢复只按 files 清单回拷，用户最需要
   // 知道的是「没全拿回来」。摘要随返回值带出去，渲染层在成功提示里补一句——
   // 只读 meta.json 既有字段，不改落盘 schema（旧快照没有 skipped 就是 0）。
   const skipped = Array.isArray(meta.skipped) ? meta.skipped : []
   const skippedBytes = skipped.reduce((a, s) => a + (s?.size ?? 0), 0)
   for (const f of files) {
-    if (!f || typeof f.rel !== 'string') continue
-    // 双重限域：src 必须真的在快照目录里、dst 必须真的在游戏目录里
-    if (!isRelInside(snapshotDir, f.rel)) return { ok: false, error: `快照清单含非法路径：${f.rel}` }
-    if (!isRelInside(game.dir, f.rel)) return { ok: false, error: `快照清单含非法路径：${f.rel}` }
     const src = join(snapshotDir, f.rel)
     const dst = join(game.dir, f.rel)
     if (!existsSync(src)) continue

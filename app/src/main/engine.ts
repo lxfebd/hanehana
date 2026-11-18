@@ -48,6 +48,15 @@ const STOP_ACK_MS = 1000
 const PROBE_TIMEOUT_MS = 120_000
 
 /**
+ * expectedStateSeq 的「作废期」哨兵（-1；cmdSeq 从 1 起，正常序号不可能是它）。
+ *
+ * 语义：已经进入「要发下一条状态命令」的流程，但那条命令还没写进管道——这段时间
+ * 里引擎没有任何合法理由回带 seq 的状态帧，任何带 seq 的状态帧都是上一条命令的
+ * 迟到回执（典型是 pause 的 paused 应答撞上「继续」）。见 run() 与 handleEvent。
+ */
+const STATE_SEQ_VOID = -1
+
+/**
  * 线上命令的形状：`EngineCommand` + 自增序号。
  *
  * 为什么不把 `seq` 加进 `EngineCommand`（shared/types.ts）：那个文件是主/渲染共用的
@@ -172,7 +181,15 @@ export class EngineTask {
   private pendingRun = false
   /** 当前这个子进程有没有已经 probe 过。换新进程必须重来——引擎是按命令记任务的。 */
   private probed = false
-  private writeBuf: Buffer[] = []
+  /**
+   * 待写命令队列：字节 + 这条命令作为状态类命令的序号（0 = 普通命令）。
+   *
+   * 为什么要带着序号：只有真正交给 stdin.write 的那一行才算「进了管道」，
+   * 清缓冲时要把 expectedStateSeq 回滚到最后一条满足这个条件的命令（见
+   * lastWrittenStateSeq）。只存 Buffer 的话只能重新解析 JSON 反查，既慢又容易
+   * 和实际写出的内容漂移。
+   */
+  private writeBuf: { bytes: Buffer; stateSeq: number }[] = []
   private draining = false
   private stdoutBuf = ''
   /**
@@ -183,8 +200,25 @@ export class EngineTask {
    * 还在不在」猜，猜错就把「已恢复」打回「已暂停」，等于两个真理源。
    */
   private cmdSeq = 0
-  /** 最近一条**状态类**命令（probe/run/pause/stop）的序号。带 seq 的状态回执只有与它相等才被接受，见 handleEvent。 */
+  /**
+   * 最近一条**状态类**命令（probe/run/pause/stop）的序号。带 seq 的状态回执只有
+   * 与它相等才被接受，见 handleEvent。三种取值：
+   *   - 0：还没发过任何状态命令（新任务）；
+   *   - STATE_SEQ_VOID（-1）：作废期——run() 已经开始、下一条状态命令还没发出，
+   *     这段时间没有任何带 seq 的状态帧是合法的（见 run() 与 handleEvent）；
+   *   - 其他：与引擎回执的 seq 正常比对。
+   */
   private expectedStateSeq = 0
+  /**
+   * 最后一条**真正写进管道**的状态类命令序号（0 = 还一条都没写出去）。
+   *
+   * 每次 flush() 把一行交给 stdin.write 后更新。清缓冲（stdin 出错 / 管道不可写 /
+   * terminate）时必须把 expectedStateSeq 回滚到它：否则期望值会永久领先引擎实际
+   * 收到的命令——引擎之后每一帧的 seq 都对不上，连 downloaded/segments 一起被
+   * 整帧丢弃，界面进度冻结；而 lastProgressAt 在序号闸门**之前**更新，暂停看门狗
+   * 又永远等不到「零进度」，没有任何人会收场。
+   */
+  private lastWrittenStateSeq = 0
   /**
    * 最后一次收到「带 downloaded 的进度事件」的时间戳。
    *
@@ -335,7 +369,13 @@ export class EngineTask {
     // 没有这个监听器就是 uncaughtException —— 整个主进程连同所有正在下载的任务
     // 一起没掉，一个任务的取消不该有这种代价。
     proc.stdin?.on('error', () => {
+      // 只处理当前实例：旧进程的 stdin 报错时清掉新进程的缓冲，会连新进程还没
+      // 发出去的命令一起丢掉（然后这批任务的期望序号就永远对不上了）。
+      if (this.proc !== proc) return
       this.writeBuf = []
+      // 缓冲里的状态命令一条都没进管道：期望序号回滚到最后一条真的写进去的命令，
+      // 否则引擎之后每一帧都会因 seq 不符被整帧丢弃（见 lastWrittenStateSeq）。
+      this.rollbackExpectedStateSeq()
     })
 
     proc.on('error', (e) => {
@@ -411,6 +451,17 @@ export class EngineTask {
     this.clearAutoRetryTimer()
     if (!force) this.autoRetryCount = 0
     this.clearError()
+    // 进入作废期：从这一刻到 sendStartCommands() 发出 probe/run 之前，引擎里没有
+    // 「当前待确认」的状态命令。为什么必须在这里就作废、而不是等 send() 覆盖：
+    // 下面 resolveThenSend() 里要 await engineProxyFor()（系统代理解析按目标地址
+    // 进行，可能几十毫秒到几秒），这段窗口里 expectedStateSeq 若不先作废就还指着
+    // 上一条 pause 的序号——迟到的 {"state":"paused","seq":pauseSeq} 与它**相等**，
+    // 通过校验后把准备中的状态打回 paused；resolveThenSend() 随后看到
+    // state !== 'preparing' 直接 return，run 永远发不出去（用户点「继续」没反应）。
+    // pause 的 ack 与 resume 的 run 之间本来就没有合法的状态帧，所以作废期里
+    // 收到带 seq 的状态帧一律按过期处理（见 handleEvent 的三分支）。
+    // resume() 只是 run() 的别名，作废期在这里统一置，别在 resume 里再做一遍。
+    this.expectedStateSeq = STATE_SEQ_VOID
     this.spawnProc()
     // 「引擎到底起没起来」只能看子进程，不能看状态。失败任务的状态本来就是 error，
     // 拿状态当闸门会让「继续下载」「全部开始」「重试全部失败」全部静默变成空操作，
@@ -758,6 +809,10 @@ export class EngineTask {
     this.alive = false
     this.writeBuf = []
     this.draining = false
+    // 进程要没了，缓冲里的命令不会再有人收到：期望序号回滚到最后一条真的写进
+    // 管道的命令（新进程的 probe 会重新覆盖它，这里只是不让「已作废的期望值」
+    // 留在字段里继续吃掉任何一帧——见 lastWrittenStateSeq 的注释）。
+    this.rollbackExpectedStateSeq()
     if (this.drainCb) {
       // 旧进程的 stdin 已经死了，drain 事件永远不会再来；不摘掉这个 once
       // 监听就会泄漏一个闭包，还会让下个进程的第一次写卡在 draining=true。
@@ -794,34 +849,73 @@ export class EngineTask {
     const seq = ++this.cmdSeq
     if (stateClass) this.expectedStateSeq = seq
     const wire: SequencedCommand = { ...cmd, seq }
-    this.writeBuf.push(Buffer.from(JSON.stringify(wire) + '\n', 'utf8'))
+    // 带上序号入队：flush() 只对「真正交给 stdin.write 的那一条」记账，见下方
+    // lastWrittenStateSeq / rollbackExpectedStateSeq。
+    this.writeBuf.push({ bytes: Buffer.from(JSON.stringify(wire) + '\n', 'utf8'), stateSeq: stateClass ? seq : 0 })
     this.flush()
   }
 
+  /**
+   * 把 writeBuf 里的命令尽量写进 stdin。
+   *
+   * stdin.write() 的返回值只表示背压（false = 内部缓冲超过高水位，数据仍会写出），
+   * 所以「已写进管道」的判定是「write 调用成功返回」，不是「返回 true」：
+   *   - 写之前绝不从缓冲里移除（同步抛错时它仍算没进管道，留给清缓冲路径回滚）；
+   *   - 写完立刻记账（lastWrittenStateSeq）并移出缓冲，避免 drain 后重复写同一行
+   *     （旧实现把背压当失败、保留在缓冲里，drain 后会再写一遍同样的命令）；
+   *   - 只有 false（背压）才挂 drain 等下一次 flush。
+   */
   private flush(): void {
     const stdin = this.proc?.stdin
     if (!stdin || !stdin.writable) {
-      // 进程没了，残留在缓冲里的命令也没有接收方了
+      // 进程没了/管道不可写：残留在缓冲里的命令没有任何接收方——一条都没进管道。
+      // 不回滚 expectedStateSeq 的话它会永久指着引擎没见过的命令（见 A3）：
+      // 之后每一帧都因 seq 不符被整帧丢弃，界面进度冻结；而 lastProgressAt 在
+      // 序号闸门之前更新，暂停看门狗也永远等不到「零进度」。
       this.writeBuf = []
       this.draining = false
+      this.rollbackExpectedStateSeq()
       return
     }
     while (this.writeBuf.length) {
-      if (this.draining || !stdin.write(this.writeBuf[0])) {
-        // 管道满：等 'drain' 再续写。没有 drain 监听就会一直漏写或重复挂监听。
-        if (!this.draining) {
-          this.draining = true
-          this.drainCb = () => {
-            this.draining = false
-            this.drainCb = null
-            this.flush()
-          }
-          stdin.once('drain', this.drainCb)
+      // 管道满时只等 drain，不能重写同一行：write() 返回 false 也意味着这行
+      // 已经在 Node 的内部缓冲里，再写一遍就是重复命令。
+      if (this.draining) return
+      const item = this.writeBuf[0]
+      const ok = stdin.write(item.bytes)
+      this.writeBuf.shift()
+      // 这一行已经交给管道。只有真正写出的状态命令才配当「当前期望的回执」，
+      // 上面的清缓冲路径都以它为回滚基准。
+      if (item.stateSeq > 0) this.lastWrittenStateSeq = item.stateSeq
+      if (!ok) {
+        // 背压：挂 drain 等可写。draining 是幂等闸，不重复挂监听。
+        this.draining = true
+        this.drainCb = () => {
+          this.draining = false
+          this.drainCb = null
+          this.flush()
         }
+        stdin.once('drain', this.drainCb)
         return
       }
-      this.writeBuf.shift()
     }
+  }
+
+  /**
+   * 把 expectedStateSeq 回滚到最后一条真正写进管道的状态命令。
+   *
+   * 不变量：expectedStateSeq 必须等于引擎侧 state_seq 的当前值——也就是「最后
+   * 一条引擎真的收到的状态命令」。清缓冲说明缓冲里的命令没进管道，此时若期望值
+   * 还领先，引擎回带的每一个 seq 都对不上；整帧丢弃会连 downloaded/segments
+   * 一起吃掉，而 lastProgressAt 在序号闸门之前更新，暂停看门狗永远等不到
+   * 「零进度」，没有任何人会收场。回滚后下一帧的 seq 就又能对上（引擎的
+   * state_seq 只随状态命令改变）。
+   *
+   * 用回滚而不是置作废期：作废期会把「上一条已写出命令的回执」也丢掉，而那条
+   * 命令可能正是 probe——它的 idle 应答没人认，任务只能等 120s 心跳看门狗判失败。
+   */
+  private rollbackExpectedStateSeq(): void {
+    this.expectedStateSeq = this.lastWrittenStateSeq
   }
 
   /** 消费 stdout 的 JSON 事件，转成内存快照。切行逻辑在 engineLines（纯函数，有契约测试）。 */
@@ -852,19 +946,37 @@ export class EngineTask {
         // 看门狗要区分的正是「引擎慢但活着」和「引擎整个卡住」——把过期的生命
         // 信号也丢掉，就会把慢引擎误判成卡死。
         if (typeof data.downloaded === 'number') this.lastProgressAt = Date.now()
-        // ---- 回执序号核对 ----
+        // ---- 回执序号核对（三分支：legacy / 作废期 / 正常比对） ----
         // 引擎回带 seq（见 send()），主进程只认「最近一条状态类命令」的那一条。
         // 迟到的旧回执整帧丢弃：它反映的是更早命令执行时的事实，摊进快照会让
         // downloaded/segments 一起回跳，只丢 state 又会把两代数据混着用。
-        // seq 缺失 = 旧版引擎二进制（不认识这个字段）：退化为原来的行为，
-        // 见下面 legacy 分支。
+        //
+        // 1) legacy：seq 缺失（null）或为 0 = 旧版引擎二进制不认识这个字段
+        //    （cmdSeq 从 1 起，新引擎不会发 0）。序号核对没法用，退化为看门狗启发式，
+        //    见下面的 legacy 分支。
+        // 2) 作废期：run() 在 await engineProxyFor() 之前把期望值置成 STATE_SEQ_VOID，
+        //    「pause 的 ack 与 resume 的 run 之间」没有任何带 seq 的状态帧是合法的。
+        //    这段时间里只丢它的**状态断言**，downloaded/segments 照常应用——
+        //    作废期只挡状态回退，不冻结进度（纯进度帧本来就没有 state 字段，
+        //    走不到这里，照常应用）。
+        // 3) 正常比对：seq 必须等于当前期望值，否则整帧丢弃（整帧而不是只丢
+        //    state：两代进度混用会让 downloaded/segments 回跳）。这条路径的永久
+        //    冻结风险由 rollbackExpectedStateSeq 兜住：清缓冲时期望值会回落到
+        //    「最后一条真的写进管道的命令」，与引擎 state_seq 重新对齐，下一帧
+        //    就能进来（不变量见那里的注释）。
         const seq = typeof msg.seq === 'number' ? msg.seq : null
         const legacySeq = seq === null || seq === 0
-        if (data.state && !legacySeq && seq !== this.expectedStateSeq) {
-          logAppend(
-            `[engine ${this.logTarget()}] 丢弃迟到的旧回执：seq=${seq}，期望 ${this.expectedStateSeq}（state=${data.state}）`,
-          )
-          break
+        let voidState = false
+        if (data.state && !legacySeq) {
+          if (this.expectedStateSeq === STATE_SEQ_VOID) {
+            voidState = true
+            logAppend(`[engine ${this.logTarget()}] 作废期丢弃状态断言：seq=${seq}（state=${data.state}）`)
+          } else if (seq !== this.expectedStateSeq) {
+            logAppend(
+              `[engine ${this.logTarget()}] 丢弃迟到的旧回执：seq=${seq}，期望 ${this.expectedStateSeq}（state=${data.state}）`,
+            )
+            break
+          }
         }
         // preparing 阶段只发 {"state":"preparing"}，其余字段全缺。用空快照打底
         // 再覆盖，保证 UI 依赖的键永远存在——否则行刷新会在 snap.progress 上炸。
@@ -893,9 +1005,15 @@ export class EngineTask {
         // 校验标志只认当前这一条应答，不继承上一条：preparing 的 ack 不带这个字段，
         // 用展开留下的旧值会让任务从上一轮就一直挂着「校验中」。
         cur.verifying = data.verifying === true
-        if (data.state) cur.state = data.state
+        if (voidState) {
+          // 作废期：状态断言过期（上面已判），但 spread ...data 刚把 cur.state 也
+          // 覆盖成了旧值，这里显式按当前状态保留——作废期只丢状态，进度字段照收。
+          cur.state = this.state
+        } else if (data.state) {
+          cur.state = data.state
+        }
         this.snap = cur
-        if (data.state) {
+        if (data.state && !voidState) {
           // probe 回来的快照状态是 idle。但这一瞬我们其实正卡在「等主进程放行 run」
           // 上：状态要是退成排队中，用户在这毫秒级窗口点暂停会被 pause() 直接 return
           // 掉，命令却照样发出去——所以这一段对外一律显示准备中。
@@ -928,7 +1046,8 @@ export class EngineTask {
         // {"state":"preparing"} 的应答——它里面的 total 是从上一轮继承来的，
         // 拿它当放行时机等于让预检用旧长度把重下瞬间再拦一次，站点根本没被重新
         // 问过（用户腾完空间点继续，看到的还是同一条「磁盘空间不足」）。
-        if (this.pendingRun && data.state === 'idle') this.confirmRun()
+        // voidState 排除：作废期里的 idle 是上一条作废命令的旧应答，不能拿它放行。
+        if (this.pendingRun && data.state === 'idle' && !voidState) this.confirmRun()
         this.emitProgress()
         break
       }

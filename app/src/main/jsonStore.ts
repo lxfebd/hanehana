@@ -53,7 +53,11 @@ export interface JsonStore<T> {
    * 第一次的内容被静默覆盖（游玩会话就是这么丢的）。
    */
   update(_fn: (_prev: T | null) => T): void
-  /** 立即把待写内容落盘（进程退出前调用）。返回是否真的写了。 */
+  /**
+   * 立即把待写内容落盘（进程退出前调用）。
+   * 返回是否真的写了：true = 已落盘；false = 没有待写内容，或写盘失败
+   * （失败时待写内容会保留，下一次 flush/save 会重试——不能伪装成功）。
+   */
   flush(): boolean
 }
 
@@ -179,9 +183,13 @@ export function createJsonStore<T>(file: string, serialize?: (_v: T) => string, 
         try {
           writeNow(v)
         } catch (err) {
+          // 写失败不能返回 true：退出前最后一次落盘失败被伪装成成功，调用方
+          // （gameStore.flush / 进程退出钩子）会以为数据已经安全了。
+          // 与 save() 的定时器路径一致：保留 dirty + pending，下一次重试。
           dirty = true
           pending = v
           console.error('[jsonStore] flush 写入失败', file, err)
+          return false
         }
       }
       return true

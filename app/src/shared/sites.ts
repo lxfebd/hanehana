@@ -91,4 +91,11 @@ export interface ResolveOutcome {
    * 不能靠读 message 里的中文措辞。
    */
   missing?: number
+  /**
+   * 列目录触到翻页上限（CR_MAX_PAGES × CR_PAGE_SIZE 个文件）时为 true：
+   * 分享里还有没被列出来的文件，files 只是前 N 个。以前触顶后直接 break、
+   * 界面却显示「共 N 个文件已全部加入队列」——等于在 1 万阈值上复现了静默
+   * 缺件。缺件原因与 missing（换直链失败）不同，所以单独一个标志位。
+   */
+  truncated?: boolean
 }

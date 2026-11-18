@@ -114,12 +114,27 @@ const CR_BASE = process.env.FD_CLOUDREVE_BASE ?? 'https://pan.nekogal.top/api/v4
  * - 全部换到直链，才允许说「已全部加入队列」；
  * - 换直链失败的那几个（failed）必须点名数量，一个都不许静默消失。
  * missing 是给渲染层的机器可读计数（决定要不要把分享页摊回浏览器），别让它去读中文。
+ *
+ * truncated：列目录撞上翻页上限（CR_MAX_PAGES），分享里还有没列出来的文件。
+ * 这时不能说「已全部加入」——那等于在 1 万阈值上复现静默缺件。文案直说
+ * 「已达单次解析上限 N，请打开分享页取剩余」，并把 missing 留给「换直链失败」
+ * 的语义（截断走 ResolveOutcome.truncated 单独报，两件事别混成一个数）。
  */
 export function crBundleNote(
   shareName: string,
   total: number,
   failed: number,
+  truncated = false,
 ): { message: string; missing: number } {
+  if (truncated) {
+    // 截断与「换直链失败」是两件事：前者是「列都没列完」，后者是「列到了但换不到直链」。
+    // 两个都要说，否则用户以为剩下的只是取直链失败、没想到还有没列出来的文件。
+    const extra = failed > 0 ? `，另有 ${failed} 个取直链失败` : ''
+    return {
+      message: `${shareName} 已达单次解析上限 ${CR_MAX_PAGES * CR_PAGE_SIZE} 个文件${extra}，请打开分享页取剩余`,
+      missing: failed,
+    }
+  }
   const body =
     failed > 0
       ? `共 ${total} 个文件，已加入 ${total - failed} 个，另有 ${failed} 个取直链失败`
@@ -129,7 +144,9 @@ export function crBundleNote(
 
 const CR_MAX_DEPTH = 8
 const CR_PAGE_SIZE = 500
-/** 列目录翻页上限：500/页 × 20 = 一万个文件，远超任何真实分享；防服务端异常。 */
+/** 列目录翻页上限：500/页 × 20 = 一万个文件，远超任何真实分享；防服务端异常。
+ *  触顶不是静默收手：crList 会带 truncated=true，调用方据此提示「已达单次
+ *  解析上限，请打开分享页取剩余」，而不是谎称「已全部加入队列」。 */
 const CR_MAX_PAGES = 20
 
 interface CrEntry {
@@ -163,7 +180,11 @@ async function resolveCloudreve(m: Mirror): Promise<ResolveOutcome> {
       }
     }
 
-    const files = await crCollect(rootUri, [], 0)
+    // 列目录会带一个 truncated：撞上翻页上限（CR_MAX_PAGES）时说明分享里还有
+    // 没列出来的文件。以前这里直接 break、结果看起来像全集——A5 修的正是它。
+    const collected = await crCollect(rootUri, [], 0)
+    const files = collected.entries
+    const truncated = collected.truncated
     if (!files.length) {
       return {
         ok: false,
@@ -181,9 +202,21 @@ async function resolveCloudreve(m: Mirror): Promise<ResolveOutcome> {
     const resolved: ResolvedFile[] = []
     let failed = 0
     for (const f of files) {
-      const url = await crDirectUrl(f.path)
-      if (url) resolved.push({ url, filename: f.name, size: f.size })
-      else failed++
+      // 单个文件换直链失败只算这一条（failed++），绝不能把异常冒到外层 catch：
+      // 外层 catch 会把整个分享判成「访问失败」，连已经换到的直链一起作废——
+      // 失败半径从「1 个文件」放大成「整批」。
+      // 为什么保持串行：resolved 的顺序要与 files 的 numeric 排序一致（分卷
+      // .part1 在前），并发 4 路得额外做一次保序收尾，收益只是解析时间；
+      // 本次修的是爆炸半径，不动行为与请求压力。
+      try {
+        const url = await crDirectUrl(f.path)
+        if (url) resolved.push({ url, filename: f.name, size: f.size })
+        else failed++
+      } catch {
+        // crDirectUrl 内部已经兜住异常；这里再拦一层，保证「一条失败」永远
+        // 不会升级成「整批作废」（防御未来 crDirectUrl 内部改动）。
+        failed++
+      }
     }
     if (!resolved.length) {
       return {
@@ -193,13 +226,17 @@ async function resolveCloudreve(m: Mirror): Promise<ResolveOutcome> {
       }
     }
 
-    const { message, missing } = crBundleNote(shareName, files.length, failed)
+    const { message, missing } = crBundleNote(shareName, files.length, failed, truncated)
     const only = resolved[0]
-    if (resolved.length === 1 && !failed) {
+    // 单文件直返的快速路只在「没有失败且没有截断」时走：触顶时哪怕只解析出
+    // 一个文件，也必须带上 message/truncated，让用户知道分享里还有剩下的。
+    if (resolved.length === 1 && !failed && !truncated) {
       // 一个文件、全部成功：没有要告知的事，别把「共 1 个文件」当成结果播报刷在屏幕上
       return { ok: true, url: only.url, filename: only.filename, size: only.size }
     }
-    return { ok: true, files: resolved, message, missing }
+    const outcome: ResolveOutcome = { ok: true, files: resolved, message, missing }
+    if (truncated) outcome.truncated = true
+    return outcome
   } catch (e) {
     return {
       ok: false,
@@ -226,14 +263,17 @@ function reason(e: unknown): string {
  * 少计——crBundleNote 的「共 N 个文件」和 missing 计数全部偏小，用户以为
  * 全量到位了，解压才发现缺件（正是 crBundleNote 注释里说的那种吞信息）。
  * 翻到「不满一页」为止；页数设上限防异常服务端永远返回满页。
+ *
+ * 返回 truncated：第 CR_MAX_PAGES 页仍是满页时说明还有第 21 页。以前这里
+ * 直接 return，调用方拿到「看起来完整」的清单还说「已全部加入队列」——
+ * 1 万阈值上复现的静默缺件。触顶必须显式标记，由调用方改口提示。
  */
-async function crList(uri: string): Promise<CrEntry[]> {
+async function crList(uri: string): Promise<{ entries: CrEntry[]; truncated: boolean }> {
   const out: CrEntry[] = []
   for (let page = 1; page <= CR_MAX_PAGES; page++) {
-    const r = await fetchText(
-      `${CR_BASE}/file?uri=${encodeURIComponent(uri)}&page_size=${CR_PAGE_SIZE}&page=${page}`,
-      { headers: { accept: 'application/json' } },
-    )
+    const r = await fetchText(`${CR_BASE}/file?uri=${encodeURIComponent(uri)}&page_size=${CR_PAGE_SIZE}&page=${page}`, {
+      headers: { accept: 'application/json' },
+    })
     const why = httpFailureMessage(r)
     if (why) throw new Error(`列目录 ${why}`)
     const j = parseJson(r.text) as {
@@ -251,34 +291,52 @@ async function crList(uri: string): Promise<CrEntry[]> {
       size: f.size ?? 0,
     }))
     out.push(...files)
-    if (files.length < CR_PAGE_SIZE) break
+    if (files.length < CR_PAGE_SIZE) return { entries: out, truncated: false }
+    // 满页翻到上限还满：还有下一页，但这次不翻了
+    if (page === CR_MAX_PAGES) return { entries: out, truncated: true }
   }
-  return out
+  return { entries: out, truncated: false }
 }
 
-/** 递归收集分享内所有文件（跳过目录），限深防止异常递归。 */
-async function crCollect(uri: string, acc: CrEntry[], depth: number): Promise<CrEntry[]> {
-  if (depth > CR_MAX_DEPTH) return acc
-  for (const k of await crList(uri)) {
+/** 递归收集分享内所有文件（跳过目录），限深防止异常递归。
+ *  truncated 会向上传递：任何一层子目录触到翻页上限，整个分享都按截断处理。 */
+async function crCollect(
+  uri: string,
+  acc: CrEntry[],
+  depth: number,
+): Promise<{ entries: CrEntry[]; truncated: boolean }> {
+  if (depth > CR_MAX_DEPTH) return { entries: acc, truncated: false }
+  const listed = await crList(uri)
+  let truncated = listed.truncated
+  for (const k of listed.entries) {
     if (k.type === 1) {
-      await crCollect(`${uri}/${k.name}`, acc, depth + 1)
+      const sub = await crCollect(`${uri}/${k.name}`, acc, depth + 1)
+      truncated = truncated || sub.truncated
     } else if (k.path) {
       acc.push(k)
     }
   }
-  return acc
+  return { entries: acc, truncated }
 }
 
-/** 把文件 path 换成预签名直链（POST /file/url）。失败返回 null。 */
+/** 把文件 path 换成预签名直链（POST /file/url）。失败返回 null。
+ *
+ *  内部兜底：fetchText 在网络层的超时/断连是 **reject**，不接的话异常会冒到
+ *  resolveCloudreve 的 catch，把整批已解析直链一起作废。一个文件取不到直链
+ *  只该让 failed++，不该让整个分享解析失败。 */
 async function crDirectUrl(path: string): Promise<string | null> {
-  const r = await fetchText(`${CR_BASE}/file/url`, {
-    method: 'POST',
-    body: JSON.stringify({ uris: [path], download: true }),
-    headers: { 'content-type': 'application/json', accept: 'application/json' },
-  })
-  if (!r.ok) return null
-  const j = parseJson(r.text) as { code?: number; data?: { urls?: Array<{ url?: string }> } } | null
-  return j?.code === 0 ? (j.data?.urls?.[0]?.url ?? null) : null
+  try {
+    const r = await fetchText(`${CR_BASE}/file/url`, {
+      method: 'POST',
+      body: JSON.stringify({ uris: [path], download: true }),
+      headers: { 'content-type': 'application/json', accept: 'application/json' },
+    })
+    if (!r.ok) return null
+    const j = parseJson(r.text) as { code?: number; data?: { urls?: Array<{ url?: string }> } } | null
+    return j?.code === 0 ? (j.data?.urls?.[0]?.url ?? null) : null
+  } catch {
+    return null
+  }
 }
 
 // --------------------------------------------------------------- 工具

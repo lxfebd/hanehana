@@ -67,21 +67,24 @@ const rules: { test: RegExp; title: string; advice: string }[] = [
   },
 
   // ---- 传输中断 ----
-  {
-    test: /truncated.*every attempt|server truncated/i,
-    title: '服务器每次都少发数据，链接不可靠',
-    advice: '换一台镜像重新下载，这里重试通常没用。',
-  },
-  { test: /truncated/i, title: '传到一半被掐断了', advice: '网络或站点不稳定，会自动重连续传。' },
-  // 引擎的停滞兜底（连续多次零增长后主动放弃）。必须排在「不响应/超时」这类
-  // 可自愈文案前面：这时候引擎**已经不再自动重试**了，再跟用户说「会自动重试」
-  // 就是让他干等一个永远不会发生的动作。
+  // 引擎的停滞兜底（连续多次零增长后主动放弃）必须排在本组**最前**，在 truncated
+  // 之前：引擎给的原文形如 `stalled: no byte progress … (last: …)`，括号里是
+  // 「最后一次失败原因」，很常见就是 truncated / 超时。先命中泛化的 /truncated/
+  // 会告诉用户「会自动重连续传」——而引擎此刻已经停止自动重试并落了 error，
+  // 用户会干等一个永远不会发生的动作。所以只要原文提到停滞，就先用这条更明确
+  // 的规则（它写的是「已停止」），也不给 /truncated/ 抢走的机会。
   {
     test: /stalled|no byte progress/i,
     title: '下载停滞，已停止自动重试',
     advice:
       '引擎连续多次重试都没有任何字节进展，已停止自动重试：检查网络或代理后直接点「重试」，或者稍后再试。已下载的断点会保留。',
   },
+  {
+    test: /truncated.*every attempt|server truncated/i,
+    title: '服务器每次都少发数据，链接不可靠',
+    advice: '换一台镜像重新下载，这里重试通常没用。',
+  },
+  { test: /truncated/i, title: '传到一半被掐断了', advice: '网络或站点不稳定，会自动重连续传。' },
   { test: /did not reply within/i, title: '服务器迟迟不响应', advice: '对方过载或你已断网，检查网络后点重试。' },
   { test: /read timeout/i, title: '连接长时间没有数据', advice: '站点速度慢或掉线，会自动重试。' },
 
