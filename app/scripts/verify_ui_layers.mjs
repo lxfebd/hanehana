@@ -386,6 +386,20 @@ async function main() {
         // 只等一次、且等够 24s。原来「首个 12s 未出现就重点一次」是把偶发超时洗成绿：
         // 既掩盖真回归，又让闸门实际点了两次而没人看得见（waitBoot 修掉时序根因后不再需要）。
         const ready = await waitMarker(p.marker, 24000)
+        // 失败必须自证：只报「标记 24s 未出现」等于让下一个人从零复现。
+        // 2026-11 的全量扫描里出现过一次「1920 连红 4 页、单独跑 3 次全绿」的顺序依赖抖动，
+        // 当时没有现场可查。这里把「当前挂载页 / active nav / 过渡残类 / 弹层 / 是否溢出」
+        // 一并打出来——真回归时也是这些字段先露出线索。
+        if (!ready) {
+          const dbg = await ev(`(() => JSON.stringify({
+            pages: [...document.querySelectorAll('.home-view,.page-col,.collection-page,.dl-layout,.stats-page,.games')].map(n => String(n.className).split(' ')[0]),
+            active: [...document.querySelectorAll('[data-testid^="nav-"].active')].map(n => n.getAttribute('data-testid')),
+            tr: [...document.querySelectorAll('[class*=page-leave],[class*=page-enter]')].map(n => String(n.className).slice(0, 80)),
+            modal: !!document.querySelector('.ds-panel,.ant-modal-root,.sc-panel'),
+            docOverflow: document.documentElement.scrollWidth - window.innerWidth,
+          }))()`)
+          console.log('  [dbg] ' + p.name + ' ' + dbg)
+        }
         ck(tag + ' 切换:' + p.name, ready === true, '标记 ' + p.marker + ' 24s 内未出现')
         await moveAway()
         await sleep(200) // 鼠标移开是给 :hover 退场用的，没有稳定判据可轮询

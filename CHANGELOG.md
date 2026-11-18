@@ -41,6 +41,7 @@
 
 ### 测试与闸门
 
+- **层叠闸失败必须自证**（`verify_ui_layers.mjs`）：只报「标记 24s 未出现」等于让下一个人从零复现。整批复查时遇到过一次「1920×1080 连红 4 页、单独跑 3 次全绿」的顺序依赖抖动（全量扫描里紧跟 webview 页面之后 reload），当次没有现场可查。现在标记超时时额外打印「当前挂载页 / active nav / 过渡残类 / 弹层 / 文档溢出」，真回归时也是这些字段先露线索。
 - **四个新回归靶真的接上了 + 元闸防复发**（`visual.yml` + `reg_all.mjs` + 新增 `verify_gate_wiring.mjs`）：M1–M7 新增的 `regression:coverfallback/:clickoutside/:panelhead/:backup` 此前**一个入口都没引用**——把 `CoverGrid` 改回 `display:none`，CI 全绿。现在四条进 nightly 视觉闸与 `reg_all`，并加**元闸**：`package.json` 里每个 `regression:*` 必须至少被 `ci.yml` / `visual.yml` / `reg_all.mjs` 之一引用（白名单写明理由），反向也查「入口引用了不存在的键」；负向对照（造 `regression:orphan` + 引用 `regression:ghost`）实测 2/3 红，证明它不是恒真。
 - **`visual.yml` 的多命令 run 块不再只认最后一条退出码**：windows runner 默认 pwsh 看不到中间失败，`hero` 红了也会被后面的绿盖掉。该步骤改 `shell: bash` + 首行 `set -euo pipefail`；唯一例外是明确「不是闸」的 `shots:reina`（写成 `|| true` 并注明理由）。
 - **侧栏边界两处 + 删掉 860 自动收**（`NavSidebar.vue`）：① rail 态下 `.sidebar.rail .nav-item span{display:none}` 连带隐藏了「更多」菜单四个条目的文字（菜单只剩四个无标签图标），选择器收窄到侧栏直属条目与 `.more-toggle`；② 菜单锚点原相对收窄后的 `.more-wrap`，rail 下压住侧栏 6px，改相对整条侧栏（实测 `sbRight=150, menuLeft=157`，四个条目 `text` 非空）；③ 删掉 `matchMedia('(max-width:860px)')` 自动 rail——窄窗点按钮无视觉反馈却把 `'1'` 落盘（拉宽后回不来），且 860→861 侧栏 56→144 有 88px 断崖。实测 820px：侧栏 144 不自动收、无横向溢出、手点可 56⇄144 双向切换。
