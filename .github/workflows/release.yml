@@ -61,15 +61,19 @@ jobs:
         env:
           PYTHONIOENCODING: utf-8
 
+      # 必须在 static 之前：accept_batch22/23 会起真实 Electron（main 指向
+      # out/main/index.js），没有构建产物时只会在约 30s 后报 "no DevTools line"。
+      # 这是 2026-11 首次真跑发版链时暴露的顺序 bug：CI 里 build 在 static 之前，
+      # 所以同一份代码在 PR 链一直绿，这里却一打 tag 就红。
+      - name: build
+        working-directory: app
+        run: npm run build
+
       - name: regression static
         working-directory: app
         run: npm run regression:static
         env:
           PYTHONIOENCODING: utf-8
-
-      - name: build
-        working-directory: app
-        run: npm run build
 
       - name: cargo build release (引擎产物)
         working-directory: engine-rs
